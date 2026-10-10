@@ -4,37 +4,44 @@
 # ==========================================
 
 spring:
+  # Application name
   application:
     name: ledgerbase-backend
 
-  # PostgreSQL database connection
+  # PostgreSQL database running inside Docker
   datasource:
-    # Mac port 5434 maps to Docker's PostgreSQL port 5432
+    # Mac port 5434 maps to PostgreSQL port 5432
     url: jdbc:postgresql://localhost:5434/ledgerbase
-
-    # Database username
     username: ledgerbase
 
-    # Read password from an environment variable
+    # Password loaded from a Terminal environment variable
     password: ${POSTGRES_PASSWORD}
 
-    # PostgreSQL JDBC driver
     driver-class-name: org.postgresql.Driver
 
-# MyBatis configuration
+  # Flyway manages our database schema migrations
+  flyway:
+    enabled: true
+
+    # Folder containing versioned SQL migration files
+    locations: classpath:db/migration
+
+    # Require a clean migration history
+    baseline-on-migrate: false
+
+# MyBatis configuration for executing SQL
 mybatis:
-  # We'll place SQL mapper XML files here later
   mapper-locations: classpath:mapper/*.xml
 
-  # Automatically map snake_case columns to camelCase fields
+  # Map SQL snake_case columns to Java camelCase fields
   configuration:
     map-underscore-to-camel-case: true
 
-# Backend HTTP server
+# Spring Boot HTTP server
 server:
   port: 8080
 
-# Actuator monitoring endpoints
+# Application monitoring
 management:
   endpoints:
     web:
