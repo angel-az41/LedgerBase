@@ -1,0 +1,42 @@
+
+# ==========================================
+# LedgerBase - Spring Boot Configuration
+# ==========================================
+
+spring:
+  application:
+    name: ledgerbase-backend
+
+  # PostgreSQL database connection
+  datasource:
+    # Mac port 5434 maps to Docker's PostgreSQL port 5432
+    url: jdbc:postgresql://localhost:5434/ledgerbase
+
+    # Database username
+    username: ledgerbase
+
+    # Read password from an environment variable
+    password: ${POSTGRES_PASSWORD}
+
+    # PostgreSQL JDBC driver
+    driver-class-name: org.postgresql.Driver
+
+# MyBatis configuration
+mybatis:
+  # We'll place SQL mapper XML files here later
+  mapper-locations: classpath:mapper/*.xml
+
+  # Automatically map snake_case columns to camelCase fields
+  configuration:
+    map-underscore-to-camel-case: true
+
+# Backend HTTP server
+server:
+  port: 8080
+
+# Actuator monitoring endpoints
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

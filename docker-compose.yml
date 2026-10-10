@@ -1,0 +1,56 @@
+
+# ==========================================
+# LedgerBase - Docker Compose Configuration
+# ==========================================
+# This file defines the containers needed
+# to run LedgerBase locally.
+#
+# Currently:
+#   - PostgreSQL database
+#
+# Later:
+#   - Spring Boot backend
+#   - Vue frontend
+#   - Redis (performance optimization)
+
+services:
+
+  # PostgreSQL database service
+  postgres:
+
+    # Use PostgreSQL version 17
+    image: postgres:17
+
+    # Custom name for the Docker container
+    container_name: ledgerbase-postgres
+
+    # Restart automatically unless manually stopped
+    restart: unless-stopped
+
+    # Database configuration
+    environment:
+      POSTGRES_DB: ledgerbase
+      POSTGRES_USER: ledgerbase
+
+      # Read password from the local .env file
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+
+    # Map Mac port 5434 to container port 5432
+    # Connect from DBeaver using localhost:5434
+    ports:
+      - "127.0.0.1:5434:5432"
+
+    # Preserve database data when the container stops
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    # Check if PostgreSQL is ready for connections
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ledgerbase -d ledgerbase"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+# Named Docker volume for persistent database storage
+volumes:
+  postgres_data:

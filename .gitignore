@@ -1,0 +1,27 @@
+
+# ==========================================
+# LedgerBase - Git Ignore
+# ==========================================
+
+# Local environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Java / Maven build output
+target/
+*.class
+
+# Node.js / Vue dependencies
+node_modules/
+dist/
+
+# IDE configuration
+.idea/
+.vscode/
+
+# macOS system files
+.DS_Store
+
+# Log files
+*.log
