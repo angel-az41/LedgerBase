@@ -1,4 +1,3 @@
-
 -- =====================================================
 -- LedgerBase - Migration V1.1
 -- Business-Scoped Account References

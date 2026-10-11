@@ -1,4 +1,3 @@
-
 -- =====================================================
 -- LedgerBase - Database Migration V1
 -- Create Core Tables: Users, Businesses, Accounts

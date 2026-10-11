@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+    PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<!--
+    LedgerBase - Account SQL Mapper
+
+    Maps AccountMapper.java methods to PostgreSQL queries.
+
+    IMPORTANT:
+    The database column is named "is_active".
+    The Java Account model uses the property "active".
+    The resultMap connects these different names.
+-->
+<mapper namespace="com.ledgerbase.backend.mapper.AccountMapper">
+
+    <!-- Convert a PostgreSQL row into a Java Account object. -->
+    <resultMap id="accountResultMap"
+               type="com.ledgerbase.backend.model.Account">
+
+        <id property="id" column="id"/>
+
+        <result property="businessId" column="business_id"/>
+        <result property="code" column="code"/>
+        <result property="name" column="name"/>
+        <result property="accountType" column="account_type"/>
+
+        <!-- PostgreSQL is_active maps to Java active. -->
+        <result property="active" column="is_active"/>
+
+        <result property="createdAt" column="created_at"/>
+    </resultMap>
+
+    <!-- Retrieve all accounts belonging to a business. -->
+    <select id="findByBusinessId" resultMap="accountResultMap">
+        SELECT
+            id,
+            business_id,
+            code,
+            name,
+            account_type,
+            is_active,
+            created_at
+        FROM accounts
+        WHERE business_id = #{businessId}
+        ORDER BY code, id
+    </select>
+
+    <!-- Retrieve one account belonging to a business. -->
+    <select id="findById" resultMap="accountResultMap">
+        SELECT
+            id,
+            business_id,
+            code,
+            name,
+            account_type,
+            is_active,
+            created_at
+        FROM accounts
+        WHERE business_id = #{businessId}
+          AND id = #{accountId}
+    </select>
+
+    <!--
+        Insert a new account.
+
+        PostgreSQL automatically generates:
+        - id
+        - is_active (defaults to TRUE)
+        - created_at
+
+        MyBatis retrieves the generated id.
+    -->
+    <insert id="insert"
+            parameterType="com.ledgerbase.backend.model.Account"
+            useGeneratedKeys="true"
+            keyProperty="id"
+            keyColumn="id">
+
+        INSERT INTO accounts (
+            business_id,
+            code,
+            name,
+            account_type
+        )
+        VALUES (
+            #{businessId},
+            #{code},
+            #{name},
+            #{accountType}
+        )
+    </insert>
+
+    <!-- Rename an account only if it is active. -->
+    <update id="updateName">
+        UPDATE accounts
+        SET name = #{name}
+        WHERE business_id = #{businessId}
+          AND id = #{accountId}
+          AND is_active = TRUE
+    </update>
+
+    <!--
+        Deactivate an account without deleting it.
+
+        Historical ledger entries may still reference
+        this account, so we preserve the record.
+    -->
+    <update id="deactivate">
+        UPDATE accounts
+        SET is_active = FALSE
+        WHERE business_id = #{businessId}
+          AND id = #{accountId}
+          AND is_active = TRUE
+    </update>
+
+</mapper>
