@@ -1,0 +1,32 @@
+# =====================================================
+# LedgerBase - Test Environment Configuration
+# =====================================================
+#
+# This configuration is used only when Spring's
+# "test" profile is active.
+#
+# Automated integration tests must connect to the
+# ledgerbase_test database, not the development database.
+#
+# The password is loaded from the environment variable
+# POSTGRES_PASSWORD. Never store the real password here.
+# =====================================================
+
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5434/ledgerbase_test
+    username: ledgerbase
+    password: ${POSTGRES_PASSWORD}
+
+  # Automatically run our existing Flyway migrations
+  # to create tables in the test database.
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+mybatis:
+  # Load XML SQL mapper files during tests.
+  mapper-locations: classpath:mapper/*.xml
+
+  configuration:
+    map-underscore-to-camel-case: true

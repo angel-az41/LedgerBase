@@ -1,4 +1,3 @@
-
 -- =====================================================
 -- LedgerBase - Database Migration V3
 -- Audit Trail

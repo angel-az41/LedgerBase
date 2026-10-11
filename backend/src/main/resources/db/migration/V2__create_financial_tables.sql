@@ -1,4 +1,3 @@
-
 -- =====================================================
 -- LedgerBase - Database Migration V2
 -- Financial Tables
