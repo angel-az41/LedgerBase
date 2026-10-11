@@ -2,6 +2,11 @@ package com.ledgerbase.backend.service;
 
 import com.ledgerbase.backend.model.LedgerEntry;
 
+import com.ledgerbase.backend.mapper.AccountMapper;
+import com.ledgerbase.backend.mapper.BusinessMapper;
+import com.ledgerbase.backend.mapper.LedgerEntryMapper;
+import com.ledgerbase.backend.mapper.LedgerTransactionMapper;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -9,6 +14,7 @@ import java.math.BigDecimal;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.mock;
 
 /**
  * Unit tests for LedgerBase's double-entry accounting rules.
@@ -25,16 +31,22 @@ class TransactionServiceTest {
 
     // Service containing our accounting validation logic.
     private TransactionService transactionService;
-
+        
     /**
-     * Runs before each test.
+     * Create the service using mock database dependencies.
      *
-     * Creates a fresh service instance so tests
-     * can run independently.
+     * These tests only exercise accounting validation,
+     * so no real PostgreSQL connection is necessary.
      */
     @BeforeEach
     void setUp() {
-        transactionService = new TransactionService();
+
+        transactionService = new TransactionService(
+            mock(LedgerTransactionMapper.class),
+            mock(LedgerEntryMapper.class),
+            mock(AccountMapper.class),
+            mock(BusinessMapper.class)
+        );
     }
 
     /**
