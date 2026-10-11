@@ -325,4 +325,46 @@ class AccountIntegrationTest {
         return !org.springframework.test.context.transaction
             .TestTransaction.isActive();
     }
+
+    /**
+     * Verify that creating an account for a business
+     * that does not exist returns HTTP 404.
+     *
+     * AccountService uses BusinessMapper to check
+     * business existence before attempting the INSERT.
+     *
+     * The test uses the generated testBusinessId plus
+     * a separate database query to ensure the requested
+     * missing business really does not exist.
+     */
+    @Test
+    void rejectsAccountCreationForMissingBusiness() throws Exception {
+
+        MockMvc mvc = MockMvcBuilders
+            .webAppContextSetup(context)
+            .build();
+
+        // PostgreSQL returns no business for this negative ID.
+        // Identity-generated business IDs are positive.
+        long missingBusinessId = -1L;
+
+        String url = "/api/v1/businesses/"
+            + missingBusinessId
+            + "/accounts";
+
+        mvc.perform(post(url)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                    "code": "1000",
+                    "name": "Cash",
+                    "accountType": "ASSET"
+                    }
+                    """))
+            .andExpect(status().isNotFound())
+            .andExpect(
+                jsonPath("$.error")
+                    .value("Business not found: -1")
+            );
+    }
 }
