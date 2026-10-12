@@ -3,6 +3,7 @@ package com.ledgerbase.backend.controller;
 import com.ledgerbase.backend.dto.CreateTransactionRequest;
 import com.ledgerbase.backend.model.LedgerTransaction;
 import com.ledgerbase.backend.service.TransactionService;
+import com.ledgerbase.backend.dto.TransactionDetailResponse;
 
 import jakarta.validation.Valid;
 
@@ -13,6 +14,9 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.GetMapping;
+
+import java.util.List;
 
 /**
  * REST controller for LedgerBase financial transactions.
@@ -75,5 +79,59 @@ public class TransactionController {
         return ResponseEntity
             .status(HttpStatus.CREATED)
             .body(savedTransaction);
+    }
+
+    /**
+     * Retrieve every transaction belonging to a business.
+     *
+     * Example:
+     * GET /api/v1/businesses/1/transactions
+     *
+     * Returns HTTP 200 with a JSON array.
+     *
+     * An existing business without transactions returns
+     * an empty array rather than an error.
+     *
+     * A nonexistent business returns HTTP 404 through
+     * our GlobalExceptionHandler.
+     */
+    @GetMapping
+    public ResponseEntity<List<LedgerTransaction>> getTransactions(
+            @PathVariable("businessId") Long businessId) {
+
+        // Delegate data retrieval to the service layer.
+        List<LedgerTransaction> transactions =
+            transactionService.getTransactions(businessId);
+
+        // Spring serializes the list into a JSON array.
+        return ResponseEntity.ok(transactions);
+    }
+
+    /**
+     * Retrieve a single financial transaction,
+     * including all debit and credit entries.
+     *
+     * Example:
+     * GET /api/v1/businesses/1/transactions/10
+     *
+     * Returns:
+     * - HTTP 200 when the transaction exists.
+     * - HTTP 404 when the business or transaction
+     *   cannot be found.
+     */
+    @GetMapping("/{transactionId}")
+    public ResponseEntity<TransactionDetailResponse> getTransactionDetails(
+            @PathVariable("businessId") Long businessId,
+            @PathVariable("transactionId") Long transactionId) {
+
+        // Retrieve the transaction and its ledger entries.
+        TransactionDetailResponse details =
+            transactionService.getTransactionDetails(
+                businessId,
+                transactionId
+            );
+
+        // Serialize the response into JSON.
+        return ResponseEntity.ok(details);
     }
 }

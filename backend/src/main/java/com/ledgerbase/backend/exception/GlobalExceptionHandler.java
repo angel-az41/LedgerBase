@@ -84,4 +84,20 @@ public class GlobalExceptionHandler {
             .status(HttpStatus.NOT_FOUND)
             .body(Map.of("error", exception.getMessage()));
     }
+
+    /**
+     * Handle requests for financial transactions
+     * that do not exist within the requested business.
+     *
+     * Returns HTTP 404 with a consistent JSON
+     * error response.
+     */
+    @ExceptionHandler(TransactionNotFoundException.class)
+    public ResponseEntity<Map<String, String>> handleTransactionNotFound(
+            TransactionNotFoundException exception) {
+
+        return ResponseEntity
+            .status(HttpStatus.NOT_FOUND)
+            .body(Map.of("error", exception.getMessage()));
+    }
 }

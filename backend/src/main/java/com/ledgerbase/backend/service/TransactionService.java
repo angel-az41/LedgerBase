@@ -10,6 +10,8 @@ import com.ledgerbase.backend.mapper.LedgerTransactionMapper;
 import com.ledgerbase.backend.model.Account;
 import com.ledgerbase.backend.model.LedgerEntry;
 import com.ledgerbase.backend.model.LedgerTransaction;
+import com.ledgerbase.backend.dto.TransactionDetailResponse;
+import com.ledgerbase.backend.exception.TransactionNotFoundException;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -257,6 +259,104 @@ public class TransactionService {
         }
 
         return savedTransaction;
+    }
+
+    /**
+     * Retrieve all financial transactions belonging to a business.
+     *
+     * The transaction mapper automatically returns records
+     * ordered by transaction date, newest first.
+     *
+     * @Transactional(readOnly = true) tells Spring that
+     * this operation only reads database records.
+     *
+     * This method returns transaction headers.
+     * We will retrieve individual ledger entries separately.
+     *
+     * @param businessId The business whose transactions we want.
+     * @return A list of that business's transactions.
+     */
+    @Transactional(readOnly = true)
+    public List<LedgerTransaction> getTransactions(Long businessId) {
+
+        // Reject invalid business IDs.
+        if (businessId == null || businessId <= 0) {
+            throw new IllegalArgumentException(
+                "A valid business ID is required"
+            );
+        }
+
+        // Verify that the requested business actually exists.
+        if (!businessMapper.existsById(businessId)) {
+            throw new BusinessNotFoundException(businessId);
+        }
+
+        // MyBatis retrieves only transactions belonging
+        // to this business.
+        return transactionMapper.findByBusinessId(businessId);
+    }
+
+    /**
+     * Retrieve one financial transaction together
+     * with all its debit and credit entries.
+     *
+     * Both database queries are scoped by businessId.
+     *
+     * @Transactional(readOnly = true) groups the reads
+     * into a read-only database transaction.
+     *
+     * @param businessId Business that owns the transaction.
+     * @param transactionId Requested transaction ID.
+     * @return Transaction header and ledger entries.
+     */
+    @Transactional(readOnly = true)
+    public TransactionDetailResponse getTransactionDetails(
+            Long businessId,
+            Long transactionId) {
+
+        // Validate the requested identifiers.
+        if (businessId == null || businessId <= 0) {
+            throw new IllegalArgumentException(
+                "A valid business ID is required"
+            );
+        }
+
+        if (transactionId == null || transactionId <= 0) {
+            throw new IllegalArgumentException(
+                "A valid transaction ID is required"
+            );
+        }
+
+        // Verify that the business exists.
+        if (!businessMapper.existsById(businessId)) {
+            throw new BusinessNotFoundException(businessId);
+        }
+
+        // Retrieve the transaction header.
+        // This query includes businessId for data isolation.
+        LedgerTransaction transaction = transactionMapper.findById(
+            businessId,
+            transactionId
+        );
+
+        // Return 404 if the transaction doesn't exist
+        // within this business.
+        if (transaction == null) {
+            throw new TransactionNotFoundException(transactionId);
+        }
+
+        // Retrieve all ledger entries for this transaction.
+        List<LedgerEntry> entries = entryMapper.findByTransactionId(
+            businessId,
+            transactionId
+        );
+
+        // Combine the transaction header and entries
+        // into one response object.
+        return new TransactionDetailResponse(
+            transaction,
+            entries
+        );
     }
 
     /**

@@ -20,6 +20,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -534,5 +535,192 @@ class TransactionIntegrationTest {
             0,
             new BigDecimal("500.00").compareTo(totalCredit)
         );
+    }
+
+    /**
+     * Verify that the GET endpoint retrieves transactions
+     * belonging to our test business.
+     *
+     * First create a transaction using the service,
+     * then retrieve it through the HTTP API.
+     *
+     * This exercises the real controller, service,
+     * MyBatis mapper and PostgreSQL database.
+     */
+    @Test
+    void listsTransactionsThroughHttp() throws Exception {
+
+        // Create a balanced transaction using our test accounts.
+        CreateTransactionRequest request =
+            createRequest("500.00", "500.00");
+
+        transactionService.createDraftTransaction(
+            testBusinessId,
+            request
+        );
+
+        // Simulate an HTTP request without starting Tomcat.
+        MockMvc mvc = MockMvcBuilders
+            .webAppContextSetup(context)
+            .build();
+
+        String url = "/api/v1/businesses/"
+            + testBusinessId
+            + "/transactions";
+
+        // Expect one transaction with the correct information.
+        mvc.perform(get(url))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$").isArray())
+            .andExpect(jsonPath("$.length()").value(1))
+            .andExpect(jsonPath("$[0].status").value("DRAFT"))
+            .andExpect(
+                jsonPath("$[0].description")
+                    .value("Consulting payment")
+            )
+            .andExpect(
+                jsonPath("$[0].businessId")
+                    .value(testBusinessId)
+            );
+    }
+
+    /**
+     * Verify that GET /transactions/{transactionId}
+     * returns the transaction header and ledger entries.
+     *
+     * We first create a real transaction in PostgreSQL,
+     * then retrieve it through the HTTP API.
+     */
+    @Test
+    void retrievesTransactionDetailsThroughHttp() throws Exception {
+
+        // Create a balanced transaction using our test accounts.
+        CreateTransactionRequest request =
+            createRequest("500.00", "500.00");
+
+        LedgerTransaction saved =
+            transactionService.createDraftTransaction(
+                testBusinessId,
+                request
+            );
+
+        // Simulate an HTTP request through Spring MVC.
+        MockMvc mvc = MockMvcBuilders
+            .webAppContextSetup(context)
+            .build();
+
+        String url = "/api/v1/businesses/"
+            + testBusinessId
+            + "/transactions/"
+            + saved.getId();
+
+        /*
+        * Verify the transaction header and both entries.
+        *
+        * The entries are ordered by ID because our
+        * LedgerEntryMapper SQL uses ORDER BY id ASC.
+        */
+        mvc.perform(get(url))
+            .andExpect(status().isOk())
+
+            // Verify the transaction header.
+            .andExpect(
+                jsonPath("$.transaction.id").value(saved.getId())
+            )
+            .andExpect(
+                jsonPath("$.transaction.status").value("DRAFT")
+            )
+            .andExpect(
+                jsonPath("$.transaction.description")
+                    .value("Consulting payment")
+            )
+
+            // Verify that two ledger entries are returned.
+            .andExpect(
+                jsonPath("$.entries.length()").value(2)
+            )
+
+            // First entry: Debit Cash $500.
+            .andExpect(
+                jsonPath("$.entries[0].accountId")
+                    .value(cashAccountId)
+            )
+            .andExpect(
+                jsonPath("$.entries[0].debit").value(500.0)
+            )
+            .andExpect(
+                jsonPath("$.entries[0].credit").value(0.0)
+            )
+
+            // Second entry: Credit Revenue $500.
+            .andExpect(
+                jsonPath("$.entries[1].accountId")
+                    .value(revenueAccountId)
+            )
+            .andExpect(
+                jsonPath("$.entries[1].debit").value(0.0)
+            )
+            .andExpect(
+                jsonPath("$.entries[1].credit").value(500.0)
+            );
+    }
+
+    /**
+     * Verify that transaction details are scoped
+     * to the requested business.
+     *
+     * A transaction belonging to Business A
+     * must not be returned through Business B's URL.
+     *
+     * Both businesses use our temporary test user.
+     * This tests database query scoping, not
+     * authentication or ownership authorization.
+     */
+    @Test
+    void rejectsTransactionFromAnotherBusiness() throws Exception {
+
+        // Create a valid transaction for Business A.
+        LedgerTransaction saved =
+            transactionService.createDraftTransaction(
+                testBusinessId,
+                createRequest("500.00", "500.00")
+            );
+
+        // Create Business B in the isolated test database.
+        Long otherBusinessId = jdbcTemplate.queryForObject(
+            """
+            INSERT INTO businesses (
+                owner_id,
+                name,
+                currency
+            )
+            VALUES (?, ?, ?)
+            RETURNING id
+            """,
+            Long.class,
+            testUserId,
+            "Another Test Business",
+            "USD"
+        );
+
+        MockMvc mvc = MockMvcBuilders
+            .webAppContextSetup(context)
+            .build();
+
+        // Attempt to retrieve Business A's transaction
+        // using Business B's URL.
+        String url = "/api/v1/businesses/"
+            + otherBusinessId
+            + "/transactions/"
+            + saved.getId();
+
+        // The API must not return another business's data.
+        mvc.perform(get(url))
+            .andExpect(status().isNotFound())
+            .andExpect(
+                jsonPath("$.error").value(
+                    "Transaction not found: " + saved.getId()
+                )
+            );
     }
 }
