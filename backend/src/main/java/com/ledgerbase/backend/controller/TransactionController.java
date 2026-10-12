@@ -4,6 +4,7 @@ import com.ledgerbase.backend.dto.CreateTransactionRequest;
 import com.ledgerbase.backend.model.LedgerTransaction;
 import com.ledgerbase.backend.service.TransactionService;
 import com.ledgerbase.backend.dto.TransactionDetailResponse;
+import com.ledgerbase.backend.dto.PostTransactionRequest;
 
 import jakarta.validation.Valid;
 
@@ -150,13 +151,15 @@ public class TransactionController {
     @PostMapping("/{transactionId}/post")
     public ResponseEntity<LedgerTransaction> postTransaction(
             @PathVariable("businessId") Long businessId,
-            @PathVariable("transactionId") Long transactionId) {
+            @PathVariable("transactionId") Long transactionId,
+            @Valid @RequestBody PostTransactionRequest request) {
 
         // The service performs locking and all accounting checks.
         LedgerTransaction postedTransaction =
             transactionService.postTransaction(
                 businessId,
-                transactionId
+                transactionId,
+                request.actorId()
             );
 
         // Return the finalized transaction to the client.

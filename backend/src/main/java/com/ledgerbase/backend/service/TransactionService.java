@@ -13,6 +13,8 @@ import com.ledgerbase.backend.model.LedgerTransaction;
 import com.ledgerbase.backend.dto.TransactionDetailResponse;
 import com.ledgerbase.backend.exception.TransactionNotFoundException;
 import com.ledgerbase.backend.exception.TransactionConflictException;
+import com.ledgerbase.backend.mapper.AuditEventMapper;
+import com.ledgerbase.backend.model.AuditEvent;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -48,22 +50,27 @@ public class TransactionService {
     // Used to verify that the business exists.
     private final BusinessMapper businessMapper;
 
+    // Used to record audit events in the audit_events table.
+    private final AuditEventMapper auditEventMapper;
+
     /**
-     * Spring automatically injects the four MyBatis mappers.
+     * Spring injects the MyBatis mappers.
      *
-     * Constructor injection makes dependencies explicit
-     * and allows us to provide mock implementations in tests.
+     * Keeping dependencies in the constructor makes
+     * the service easier to understand and unit test.
      */
     public TransactionService(
             LedgerTransactionMapper transactionMapper,
             LedgerEntryMapper entryMapper,
             AccountMapper accountMapper,
-            BusinessMapper businessMapper) {
+            BusinessMapper businessMapper,
+            AuditEventMapper auditEventMapper) {
 
         this.transactionMapper = transactionMapper;
         this.entryMapper = entryMapper;
         this.accountMapper = accountMapper;
         this.businessMapper = businessMapper;
+        this.auditEventMapper = auditEventMapper;
     }
 
     /**
@@ -241,6 +248,46 @@ public class TransactionService {
             }
         }
 
+    /*
+    * Record an audit event after the transaction header
+    * and all ledger entries have been inserted.
+    *
+    * This operation participates in the same database
+    * transaction because createDraftTransaction()
+    * is annotated with @Transactional.
+    *
+    * If the audit INSERT fails, Spring rolls back the
+    * transaction header and ledger entries too.
+    */
+    AuditEvent auditEvent = new AuditEvent();
+
+    // Record which business this event belongs to.
+    auditEvent.setBusinessId(businessId);
+
+    // For now, the creator ID comes from the request.
+    // Authentication will eventually provide a trusted actor.
+    auditEvent.setActorId(request.createdBy());
+
+    // Describe what action occurred.
+    auditEvent.setAction("TRANSACTION_CREATED");
+
+    // Identify the type and ID of the affected record.
+    auditEvent.setEntityType("TRANSACTION");
+    auditEvent.setEntityId(transaction.getId());
+
+    // Store extra information as a valid JSON string.
+    // AuditEventMapper.xml casts this to PostgreSQL JSONB.
+    auditEvent.setDetails("{\"status\":\"DRAFT\"}");
+
+    // Save the audit event in the same transaction.
+    int insertedAuditEvents = auditEventMapper.insert(auditEvent);
+
+    if (insertedAuditEvents != 1) {
+        throw new IllegalStateException(
+            "Failed to create transaction audit event"
+        );
+    }
+
         /*
          * Retrieve the transaction from PostgreSQL.
          *
@@ -383,7 +430,8 @@ public class TransactionService {
     @Transactional
     public LedgerTransaction postTransaction(
             Long businessId,
-            Long transactionId) {
+            Long transactionId,
+            Long actorId) {
 
         // Validate both IDs before querying PostgreSQL.
         if (businessId == null || businessId <= 0) {
@@ -395,6 +443,12 @@ public class TransactionService {
         if (transactionId == null || transactionId <= 0) {
             throw new IllegalArgumentException(
                 "A valid transaction ID is required"
+            );
+        }
+
+        if (actorId == null || actorId <= 0) {
+            throw new IllegalArgumentException(
+                "A valid posting actor ID is required"
             );
         }
 
@@ -502,6 +556,48 @@ public class TransactionService {
             throw new TransactionConflictException(
                 "Transaction could not be posted: "
                 + transactionId
+            );
+        }
+
+        /*
+        * Record the successful DRAFT -> POSTED transition.
+        *
+        * The audit event is inserted inside the same
+        * @Transactional method as the status update.
+        *
+        * Therefore, if the audit INSERT fails, Spring
+        * rolls back the POSTED status change as well.
+        */
+        AuditEvent postingAudit = new AuditEvent();
+
+        // Identify the business affected by the operation.
+        postingAudit.setBusinessId(businessId);
+
+        // Record the user who performed the posting.
+        // This may be different from transaction.getCreatedBy().
+        postingAudit.setActorId(actorId);
+
+        // Describe the accounting action.
+        postingAudit.setAction("TRANSACTION_POSTED");
+
+        // Identify the affected financial transaction.
+        postingAudit.setEntityType("TRANSACTION");
+        postingAudit.setEntityId(transactionId);
+
+        // Store the status transition in PostgreSQL JSONB.
+        postingAudit.setDetails(
+            "{\"previousStatus\":\"DRAFT\",\"newStatus\":\"POSTED\"}"
+        );
+
+        // Insert the audit record into PostgreSQL.
+        int insertedAuditEvents = auditEventMapper.insert(
+            postingAudit
+        );
+
+        // Fail the entire posting operation if audit logging fails.
+        if (insertedAuditEvents != 1) {
+            throw new IllegalStateException(
+                "Failed to create transaction posting audit event"
             );
         }
 
