@@ -9,9 +9,11 @@ import com.ledgerbase.backend.service.TransactionService;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
@@ -21,6 +23,9 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.context.WebApplicationContext;
 
 import java.math.BigDecimal;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
+import java.sql.Savepoint;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
@@ -33,51 +38,85 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * Integration tests for the LedgerBase transaction engine.
  *
- * These tests exercise Spring MVC, TransactionService, MyBatis,
- * and the dedicated PostgreSQL database (ledgerbase_test).
+ * These tests exercise:
+ * - Spring MVC controllers
+ * - TransactionService
+ * - MyBatis mappers
+ * - PostgreSQL
+ * - Audit logging
+ * - Posted-transaction immutability
  *
- * Each test uses a fresh user, business, and pair of accounts.
- * Spring rolls back each test's changes after it finishes.
+ * The "test" profile connects to ledgerbase_test.
  *
- * The posting tests now send actorId in the HTTP request body.
- * This is temporary until authentication supplies the actor ID.
+ * Each test creates its own temporary records.
+ *
+ * @Transactional ensures that Spring rolls back
+ * the test data after each test finishes.
  */
 @SpringBootTest
 @ActiveProfiles("test")
 @Transactional
 class TransactionIntegrationTest {
 
+    /**
+     * Service responsible for financial transaction
+     * creation, validation, retrieval, and posting.
+     */
     @Autowired
     private TransactionService transactionService;
 
+    /**
+     * MyBatis mapper used to retrieve ledger entries.
+     */
     @Autowired
     private LedgerEntryMapper entryMapper;
 
-    // Used to create fixtures and independently verify database state.
+    /**
+     * JdbcTemplate allows us to execute SQL directly
+     * for test setup and independent verification.
+     */
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
-    // Provides the real Spring MVC application context to MockMvc.
+    /**
+     * The real Spring web context used by MockMvc.
+     */
     @Autowired
     private WebApplicationContext context;
 
+    // Database-generated IDs for each test.
     private Long testUserId;
     private Long testBusinessId;
     private Long cashAccountId;
     private Long revenueAccountId;
 
+    // ============================================================
+    // TEST SETUP
+    // ============================================================
+
     /**
-     * Create test fixtures inside the rollback-only test transaction.
-     * Generated IDs avoid dependence on manually inserted database rows.
+     * Create a test user, business, and two accounts
+     * before each test method.
+     *
+     * These records are inserted into ledgerbase_test
+     * and rolled back automatically afterward.
      */
     @BeforeEach
     void setUpTestData() {
-        String email = "transaction-test-" + UUID.randomUUID()
+
+        // Generate a unique email to avoid collisions.
+        String email = "transaction-test-"
+            + UUID.randomUUID()
             + "@ledgerbase.local";
 
+        // Create a temporary user.
         testUserId = jdbcTemplate.queryForObject(
             """
-            INSERT INTO users (email, password_hash, full_name)
+            INSERT INTO users (
+                email,
+                password_hash,
+                full_name
+            )
             VALUES (?, ?, ?)
             RETURNING id
             """,
@@ -87,9 +126,14 @@ class TransactionIntegrationTest {
             "Transaction Test User"
         );
 
+        // Create a business belonging to the test user.
         testBusinessId = jdbcTemplate.queryForObject(
             """
-            INSERT INTO businesses (owner_id, name, currency)
+            INSERT INTO businesses (
+                owner_id,
+                name,
+                currency
+            )
             VALUES (?, ?, ?)
             RETURNING id
             """,
@@ -99,9 +143,15 @@ class TransactionIntegrationTest {
             "USD"
         );
 
+        // Create the Cash asset account.
         cashAccountId = jdbcTemplate.queryForObject(
             """
-            INSERT INTO accounts (business_id, code, name, account_type)
+            INSERT INTO accounts (
+                business_id,
+                code,
+                name,
+                account_type
+            )
             VALUES (?, ?, ?, ?)
             RETURNING id
             """,
@@ -112,9 +162,15 @@ class TransactionIntegrationTest {
             "ASSET"
         );
 
+        // Create the Consulting Revenue account.
         revenueAccountId = jdbcTemplate.queryForObject(
             """
-            INSERT INTO accounts (business_id, code, name, account_type)
+            INSERT INTO accounts (
+                business_id,
+                code,
+                name,
+                account_type
+            )
             VALUES (?, ?, ?, ?)
             RETURNING id
             """,
@@ -126,8 +182,18 @@ class TransactionIntegrationTest {
         );
     }
 
+    // ============================================================
+    // HELPER METHODS
+    // ============================================================
+
     /**
-     * Create a two-line journal entry using actual test account IDs.
+     * Create a transaction request using the test accounts.
+     *
+     * The first entry debits Cash.
+     * The second entry credits Consulting Revenue.
+     *
+     * Using BigDecimal constructed from strings preserves
+     * exact financial amounts.
      */
     private CreateTransactionRequest createRequest(
             String debitAmount,
@@ -153,24 +219,34 @@ class TransactionIntegrationTest {
     }
 
     /**
-     * Construct MockMvc without starting a separate web server.
+     * Create MockMvc using the real application context.
+     *
+     * MockMvc simulates HTTP requests without starting
+     * a separate web server.
      */
     private MockMvc mvc() {
-        return MockMvcBuilders.webAppContextSetup(context).build();
+        return MockMvcBuilders
+            .webAppContextSetup(context)
+            .build();
     }
 
     /**
-     * Build a URL using the test business ID,
-     * never a hardcoded ID.
+     * Build the transactions API URL using the
+     * generated business ID.
      */
     private String transactionsUrl() {
-        return "/api/v1/businesses/" + testBusinessId + "/transactions";
+        return "/api/v1/businesses/"
+            + testBusinessId
+            + "/transactions";
     }
 
     /**
-     * Send a POST request with the ID of the user performing the posting.
+     * Send a transaction posting request.
      *
-     * The request JSON maps to PostTransactionRequest.java.
+     * The JSON contains the ID of the user performing
+     * the posting operation.
+     *
+     * This currently maps to PostTransactionRequest.
      */
     private ResultActions postAsActor(
             MockMvc mvc,
@@ -191,10 +267,94 @@ class TransactionIntegrationTest {
     }
 
     /**
-     * Test 1:
+     * Verify that PostgreSQL rejects a SQL operation
+     * against a protected POSTED financial record.
      *
-     * A balanced draft creates:
-     * - One transaction
+     * This helper is used to test the V4 triggers.
+     *
+     * Steps:
+     * 1. Create a database savepoint.
+     * 2. Execute a SQL operation expected to fail.
+     * 3. Verify PostgreSQL SQLSTATE 23514.
+     * 4. Roll back to the savepoint.
+     *
+     * PostgreSQL normally aborts a transaction after
+     * a SQL error. The savepoint lets the surrounding
+     * JUnit test transaction continue.
+     *
+     * @param sql SQL statement expected to be rejected.
+     * @param parameters Values for SQL placeholders.
+     */
+    private void assertPostedRecordChangeRejected(
+            String sql,
+            Object... parameters) {
+
+        jdbcTemplate.execute(
+            (ConnectionCallback<Void>) connection -> {
+
+                // Create a recovery point.
+                Savepoint savepoint = connection.setSavepoint();
+
+                try (PreparedStatement statement =
+                        connection.prepareStatement(sql)) {
+
+                    /*
+                     * Safely bind SQL parameters.
+                     *
+                     * JDBC parameters are indexed from 1,
+                     * while Java arrays are indexed from 0.
+                     */
+                    for (int i = 0; i < parameters.length; i++) {
+                        statement.setObject(
+                            i + 1,
+                            parameters[i]
+                        );
+                    }
+
+                    /*
+                     * The database trigger must reject
+                     * this SQL operation.
+                     */
+                    SQLException exception = assertThrows(
+                        SQLException.class,
+                        () -> statement.executeUpdate()
+                    );
+
+                    /*
+                     * SQLSTATE 23514 indicates the
+                     * constraint violation raised
+                     * by our V4 triggers.
+                     */
+                    assertEquals(
+                        "23514",
+                        exception.getSQLState()
+                    );
+
+                } finally {
+
+                    /*
+                     * Roll back only the failed operation,
+                     * preserving the surrounding test data.
+                     */
+                    connection.rollback(savepoint);
+
+                    // Release the savepoint after recovery.
+                    connection.releaseSavepoint(savepoint);
+                }
+
+                return null;
+            }
+        );
+    }
+
+    // ============================================================
+    // TEST 1 — CREATE A BALANCED DRAFT
+    // ============================================================
+
+    /**
+     * Verify that a balanced transaction creates:
+     *
+     * - One DRAFT transaction
      * - Two ledger entries
      * - One TRANSACTION_CREATED audit event
      */
@@ -207,12 +367,12 @@ class TransactionIntegrationTest {
                 createRequest("500.00", "500.00")
             );
 
+        // Verify the transaction header.
         assertNotNull(saved.getId());
         assertEquals("DRAFT", saved.getStatus());
         assertEquals(testBusinessId, saved.getBusinessId());
         assertEquals(testUserId, saved.getCreatedBy());
 
-        // Verify the transaction header exists.
         Integer transactionCount = jdbcTemplate.queryForObject(
             """
             SELECT COUNT(*)
@@ -228,7 +388,7 @@ class TransactionIntegrationTest {
 
         assertEquals(1, transactionCount);
 
-        // Retrieve the saved ledger entries using MyBatis.
+        // Retrieve the saved ledger entries.
         List<LedgerEntry> entries =
             entryMapper.findByTransactionId(
                 testBusinessId,
@@ -240,35 +400,50 @@ class TransactionIntegrationTest {
         LedgerEntry debitEntry = entries.get(0);
         LedgerEntry creditEntry = entries.get(1);
 
-        // First entry: Debit Cash $500.
-        assertEquals(cashAccountId, debitEntry.getAccountId());
-
+        // Verify the Cash debit.
         assertEquals(
-            0,
-            new BigDecimal("500.00").compareTo(debitEntry.getDebit())
+            cashAccountId,
+            debitEntry.getAccountId()
         );
 
         assertEquals(
             0,
-            BigDecimal.ZERO.compareTo(debitEntry.getCredit())
+            new BigDecimal("500.00").compareTo(
+                debitEntry.getDebit()
+            )
         );
 
+        assertEquals(
+            0,
+            BigDecimal.ZERO.compareTo(
+                debitEntry.getCredit()
+            )
+        );
+
+        // Verify the Revenue credit.
+        assertEquals(
+            revenueAccountId,
+            creditEntry.getAccountId()
+        );
+
+        assertEquals(
+            0,
+            BigDecimal.ZERO.compareTo(
+                creditEntry.getDebit()
+            )
+        );
+
+        assertEquals(
+            0,
+            new BigDecimal("500.00").compareTo(
+                creditEntry.getCredit()
+            )
+        );
+
+        // Both entries belong to the same transaction.
         assertEquals(
             saved.getId(),
             debitEntry.getTransactionId()
-        );
-
-        // Second entry: Credit Revenue $500.
-        assertEquals(revenueAccountId, creditEntry.getAccountId());
-
-        assertEquals(
-            0,
-            BigDecimal.ZERO.compareTo(creditEntry.getDebit())
-        );
-
-        assertEquals(
-            0,
-            new BigDecimal("500.00").compareTo(creditEntry.getCredit())
         );
 
         assertEquals(
@@ -277,12 +452,12 @@ class TransactionIntegrationTest {
         );
 
         /*
-         * Verify creation audit logging.
+         * Verify the creation audit event.
          *
-         * JSONB's ->> operator extracts the status
+         * PostgreSQL's ->> operator extracts a JSONB
          * property as text.
          */
-        Integer creationAuditCount = jdbcTemplate.queryForObject(
+        Integer auditCount = jdbcTemplate.queryForObject(
             """
             SELECT COUNT(*)
             FROM audit_events
@@ -299,14 +474,19 @@ class TransactionIntegrationTest {
             saved.getId()
         );
 
-        assertEquals(1, creationAuditCount);
+        assertEquals(1, auditCount);
     }
 
+    // ============================================================
+    // TEST 2 — REJECT UNBALANCED TRANSACTIONS
+    // ============================================================
+
     /**
-     * Test 2:
+     * An unbalanced transaction must be rejected
+     * before saving financial records.
      *
-     * Unbalanced amounts must be rejected
-     * before any financial records are inserted.
+     * Debit:  500.00
+     * Credit: 400.00
      */
     @Test
     void rejectsUnbalancedTransactionWithoutSaving() {
@@ -324,7 +504,7 @@ class TransactionIntegrationTest {
             exception.getMessage()
         );
 
-        // Verify no transaction header was saved.
+        // No transaction should have been saved.
         Integer transactionCount = jdbcTemplate.queryForObject(
             """
             SELECT COUNT(*)
@@ -335,7 +515,7 @@ class TransactionIntegrationTest {
             testBusinessId
         );
 
-        // Verify no ledger entries were saved.
+        // No ledger entries should have been saved.
         Integer entryCount = jdbcTemplate.queryForObject(
             """
             SELECT COUNT(*)
@@ -346,7 +526,7 @@ class TransactionIntegrationTest {
             testBusinessId
         );
 
-        // Verify no audit events were created.
+        // No audit events should have been saved.
         Integer auditCount = jdbcTemplate.queryForObject(
             """
             SELECT COUNT(*)
@@ -362,11 +542,13 @@ class TransactionIntegrationTest {
         assertEquals(0, auditCount);
     }
 
+    // ============================================================
+    // TEST 3 — CREATE THROUGH HTTP
+    // ============================================================
+
     /**
-     * Test 3:
-     *
-     * The REST API must create a balanced DRAFT transaction
-     * and return HTTP 201 Created.
+     * Verify that the REST API creates a valid
+     * DRAFT transaction through HTTP.
      */
     @Test
     void createsDraftTransactionThroughHttp() throws Exception {
@@ -395,7 +577,7 @@ class TransactionIntegrationTest {
                 revenueAccountId
             );
 
-        // Send the HTTP request through Spring MVC.
+        // Send the HTTP request.
         mvc().perform(
                 post(transactionsUrl())
                     .contentType(MediaType.APPLICATION_JSON)
@@ -408,10 +590,11 @@ class TransactionIntegrationTest {
                 jsonPath("$.businessId").value(testBusinessId)
             )
             .andExpect(
-                jsonPath("$.description").value("Consulting payment")
+                jsonPath("$.description")
+                    .value("Consulting payment")
             );
 
-        // Verify PostgreSQL saved the transaction.
+        // Verify one saved transaction.
         Integer transactionCount = jdbcTemplate.queryForObject(
             """
             SELECT COUNT(*)
@@ -423,7 +606,7 @@ class TransactionIntegrationTest {
             testBusinessId
         );
 
-        // Verify PostgreSQL saved two ledger entries.
+        // Verify two ledger entries.
         Integer entryCount = jdbcTemplate.queryForObject(
             """
             SELECT COUNT(*)
@@ -434,7 +617,10 @@ class TransactionIntegrationTest {
             testBusinessId
         );
 
-        // Calculate the total debit amount.
+        assertEquals(1, transactionCount);
+        assertEquals(2, entryCount);
+
+        // Independently calculate debit and credit totals.
         BigDecimal totalDebit = jdbcTemplate.queryForObject(
             """
             SELECT SUM(debit)
@@ -445,7 +631,6 @@ class TransactionIntegrationTest {
             testBusinessId
         );
 
-        // Calculate the total credit amount.
         BigDecimal totalCredit = jdbcTemplate.queryForObject(
             """
             SELECT SUM(credit)
@@ -455,9 +640,6 @@ class TransactionIntegrationTest {
             BigDecimal.class,
             testBusinessId
         );
-
-        assertEquals(1, transactionCount);
-        assertEquals(2, entryCount);
 
         assertNotNull(totalDebit);
         assertNotNull(totalCredit);
@@ -473,22 +655,21 @@ class TransactionIntegrationTest {
         );
     }
 
+    // ============================================================
+    // TEST 4 — LIST TRANSACTIONS THROUGH HTTP
+    // ============================================================
+
     /**
-     * Test 4:
-     *
-     * GET /transactions must return the business's
-     * financial transactions as a JSON array.
+     * Verify the transaction listing REST endpoint.
      */
     @Test
     void listsTransactionsThroughHttp() throws Exception {
 
-        // Create a transaction for the test business.
         transactionService.createDraftTransaction(
             testBusinessId,
             createRequest("500.00", "500.00")
         );
 
-        // Retrieve the transaction list through HTTP.
         mvc().perform(get(transactionsUrl()))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$").isArray())
@@ -497,18 +678,22 @@ class TransactionIntegrationTest {
                 jsonPath("$[0].status").value("DRAFT")
             )
             .andExpect(
-                jsonPath("$[0].description").value("Consulting payment")
+                jsonPath("$[0].description")
+                    .value("Consulting payment")
             )
             .andExpect(
-                jsonPath("$[0].businessId").value(testBusinessId)
+                jsonPath("$[0].businessId")
+                    .value(testBusinessId)
             );
     }
 
+    // ============================================================
+    // TEST 5 — RETRIEVE TRANSACTION DETAILS
+    // ============================================================
+
     /**
-     * Test 5:
-     *
-     * GET /transactions/{transactionId} must return
-     * the transaction header and its debit/credit entries.
+     * Verify that the transaction detail endpoint
+     * returns both the header and ledger entries.
      */
     @Test
     void retrievesTransactionDetailsThroughHttp() throws Exception {
@@ -519,30 +704,32 @@ class TransactionIntegrationTest {
                 createRequest("500.00", "500.00")
             );
 
-        String url = transactionsUrl() + "/" + saved.getId();
+        String url = transactionsUrl()
+            + "/" + saved.getId();
 
-        // Retrieve transaction details through HTTP.
         mvc().perform(get(url))
             .andExpect(status().isOk())
 
             // Verify the transaction header.
             .andExpect(
-                jsonPath("$.transaction.id").value(saved.getId())
+                jsonPath("$.transaction.id")
+                    .value(saved.getId())
             )
             .andExpect(
-                jsonPath("$.transaction.status").value("DRAFT")
+                jsonPath("$.transaction.status")
+                    .value("DRAFT")
             )
             .andExpect(
                 jsonPath("$.transaction.description")
                     .value("Consulting payment")
             )
 
-            // Verify the number of entries.
+            // Verify two returned entries.
             .andExpect(
                 jsonPath("$.entries.length()").value(2)
             )
 
-            // First entry: Debit Cash $500.
+            // First entry: Cash debit.
             .andExpect(
                 jsonPath("$.entries[0].accountId")
                     .value(cashAccountId)
@@ -554,7 +741,7 @@ class TransactionIntegrationTest {
                 jsonPath("$.entries[0].credit").value(0.0)
             )
 
-            // Second entry: Credit Revenue $500.
+            // Second entry: Revenue credit.
             .andExpect(
                 jsonPath("$.entries[1].accountId")
                     .value(revenueAccountId)
@@ -567,25 +754,27 @@ class TransactionIntegrationTest {
             );
     }
 
+    // ============================================================
+    // TEST 6 — BUSINESS ISOLATION
+    // ============================================================
+
     /**
-     * Test 6:
+     * A transaction belonging to Business A must not
+     * be returned through Business B's API URL.
      *
-     * A transaction belonging to Business A
-     * must not appear under Business B.
-     *
-     * This checks query scoping, not user authorization.
+     * This tests business-scoped database queries,
+     * not authentication or user permissions.
      */
     @Test
     void rejectsTransactionFromAnotherBusiness() throws Exception {
 
-        // Create a transaction for Business A.
         LedgerTransaction saved =
             transactionService.createDraftTransaction(
                 testBusinessId,
                 createRequest("500.00", "500.00")
             );
 
-        // Create another test business.
+        // Create a second business.
         Long otherBusinessId = jdbcTemplate.queryForObject(
             """
             INSERT INTO businesses (
@@ -602,8 +791,6 @@ class TransactionIntegrationTest {
             "USD"
         );
 
-        // Attempt to retrieve Business A's transaction
-        // through Business B's URL.
         String url = "/api/v1/businesses/"
             + otherBusinessId
             + "/transactions/"
@@ -613,29 +800,29 @@ class TransactionIntegrationTest {
             .andExpect(status().isNotFound())
             .andExpect(
                 jsonPath("$.error").value(
-                    "Transaction not found: " + saved.getId()
+                    "Transaction not found: "
+                    + saved.getId()
                 )
             );
     }
 
+    // ============================================================
+    // TEST 7 — POST A VALID TRANSACTION
+    // ============================================================
+
     /**
-     * Test 7:
+     * Verify that:
+     * 1. A DRAFT transaction becomes POSTED.
+     * 2. Ledger entries remain unchanged.
+     * 3. The posting audit records the actual actor.
+     * 4. Creation and posting generate separate events.
      *
-     * A DRAFT transaction can be posted by a different
-     * user from its original creator.
-     *
-     * Verify:
-     * 1. The transaction becomes POSTED.
-     * 2. Ledger entries remain intact.
-     * 3. The posting audit identifies the actual poster.
-     * 4. Creation and posting create separate audit events.
-     *
-     * This checks audit attribution, not authorization.
+     * A different user performs the posting.
      */
     @Test
     void postsBalancedDraftTransaction() throws Exception {
 
-        // User 1 creates the draft transaction.
+        // User 1 creates the draft.
         LedgerTransaction draft =
             transactionService.createDraftTransaction(
                 testBusinessId,
@@ -644,12 +831,7 @@ class TransactionIntegrationTest {
 
         assertEquals("DRAFT", draft.getStatus());
 
-        /*
-         * Create User 2 to perform the posting.
-         *
-         * The draft was created by testUserId.
-         * This separate user will be the posting actor.
-         */
+        // Create User 2 to post the transaction.
         Long postingActorId = jdbcTemplate.queryForObject(
             """
             INSERT INTO users (
@@ -671,15 +853,7 @@ class TransactionIntegrationTest {
             + "/" + draft.getId()
             + "/post";
 
-        /*
-         * User 2 posts the transaction through HTTP.
-         *
-         * Our postAsActor() helper sends:
-         *
-         * {
-         *   "actorId": postingActorId
-         * }
-         */
+        // User 2 posts the draft through HTTP.
         postAsActor(mvc(), url, postingActorId)
             .andExpect(status().isOk())
             .andExpect(
@@ -689,7 +863,7 @@ class TransactionIntegrationTest {
                 jsonPath("$.status").value("POSTED")
             );
 
-        // Independently verify the database status.
+        // Check the actual database status.
         String databaseStatus = jdbcTemplate.queryForObject(
             """
             SELECT status
@@ -704,7 +878,7 @@ class TransactionIntegrationTest {
 
         assertEquals("POSTED", databaseStatus);
 
-        // Posting must not remove or duplicate ledger entries.
+        // Posting must not change the number of entries.
         Integer entryCount = jdbcTemplate.queryForObject(
             """
             SELECT COUNT(*)
@@ -719,13 +893,7 @@ class TransactionIntegrationTest {
 
         assertEquals(2, entryCount);
 
-        /*
-         * Verify the posting audit identifies User 2.
-         *
-         * The JSONB details must record:
-         * previousStatus = DRAFT
-         * newStatus = POSTED
-         */
+        // Verify User 2 is recorded as the posting actor.
         Integer postingAuditCount = jdbcTemplate.queryForObject(
             """
             SELECT COUNT(*)
@@ -746,15 +914,10 @@ class TransactionIntegrationTest {
 
         assertEquals(1, postingAuditCount);
 
-        // The creator and posting actor are different users.
+        // Verify the poster differs from the creator.
         assertNotEquals(testUserId, postingActorId);
 
-        /*
-         * Exactly two audit events should exist:
-         *
-         * 1. TRANSACTION_CREATED
-         * 2. TRANSACTION_POSTED
-         */
+        // Exactly two audit events should exist.
         Integer historyCount = jdbcTemplate.queryForObject(
             """
             SELECT COUNT(*)
@@ -771,14 +934,16 @@ class TransactionIntegrationTest {
         assertEquals(2, historyCount);
     }
 
+    // ============================================================
+    // TEST 8 — PREVENT DUPLICATE POSTING
+    // ============================================================
+
     /**
-     * Test 8:
+     * Posting an already POSTED transaction must fail
+     * with HTTP 409 Conflict.
      *
-     * An already-posted transaction must return
-     * HTTP 409 Conflict if posted again.
-     *
-     * A rejected second request must not create
-     * a duplicate posting audit event.
+     * The second request must not create another
+     * posting audit event.
      */
     @Test
     void rejectsPostingAlreadyPostedTransaction() throws Exception {
@@ -795,14 +960,14 @@ class TransactionIntegrationTest {
 
         MockMvc mockMvc = mvc();
 
-        // First posting request succeeds.
+        // First posting succeeds.
         postAsActor(mockMvc, url, testUserId)
             .andExpect(status().isOk())
             .andExpect(
                 jsonPath("$.status").value("POSTED")
             );
 
-        // Second posting request must be rejected.
+        // Second posting is rejected.
         postAsActor(mockMvc, url, testUserId)
             .andExpect(status().isConflict())
             .andExpect(
@@ -812,10 +977,7 @@ class TransactionIntegrationTest {
                 )
             );
 
-        /*
-         * The rejected request must not create another
-         * TRANSACTION_POSTED audit event.
-         */
+        // Only one posting audit event should exist.
         Integer postingAuditCount = jdbcTemplate.queryForObject(
             """
             SELECT COUNT(*)
@@ -833,17 +995,19 @@ class TransactionIntegrationTest {
         assertEquals(1, postingAuditCount);
     }
 
+    // ============================================================
+    // TEST 9 — REJECT POSTING A MISSING TRANSACTION
+    // ============================================================
+
     /**
-     * Test 9:
+     * Posting a nonexistent transaction should return 404.
      *
-     * Posting a positive transaction ID that doesn't
-     * exist must return HTTP 404 Not Found.
+     * Long.MAX_VALUE is a valid positive Long ID,
+     * but should not exist in the test database.
      */
     @Test
     void rejectsPostingNonexistentTransaction() throws Exception {
 
-        // Long.MAX_VALUE is a positive ID unlikely
-        // to exist in our isolated test database.
         long missingTransactionId = Long.MAX_VALUE;
 
         String url = transactionsUrl()
@@ -860,19 +1024,20 @@ class TransactionIntegrationTest {
             );
     }
 
+    // ============================================================
+    // TEST 10 — REJECT POSTING WITH AN INACTIVE ACCOUNT
+    // ============================================================
+
     /**
-     * Test 10:
+     * A transaction cannot be posted if one of its
+     * referenced accounts becomes inactive.
      *
-     * If an account is deactivated after draft creation,
-     * posting must fail with HTTP 409 Conflict.
-     *
-     * The transaction must remain DRAFT and no
-     * TRANSACTION_POSTED audit event should be created.
+     * The transaction must remain DRAFT,
+     * and no posting audit should be created.
      */
     @Test
     void rejectsPostingWithInactiveAccount() throws Exception {
 
-        // Create a valid draft while both accounts are active.
         LedgerTransaction draft =
             transactionService.createDraftTransaction(
                 testBusinessId,
@@ -880,7 +1045,6 @@ class TransactionIntegrationTest {
             );
 
         // Deactivate the Cash account.
-        // The database column is is_active, not active.
         jdbcTemplate.update(
             """
             UPDATE accounts
@@ -896,7 +1060,7 @@ class TransactionIntegrationTest {
             + "/" + draft.getId()
             + "/post";
 
-        // Posting should fail due to the inactive account.
+        // Posting must fail.
         postAsActor(mvc(), url, testUserId)
             .andExpect(status().isConflict())
             .andExpect(
@@ -906,8 +1070,8 @@ class TransactionIntegrationTest {
                 )
             );
 
-        // The transaction should still be DRAFT.
-        String databaseStatus = jdbcTemplate.queryForObject(
+        // Transaction must remain DRAFT.
+        String status = jdbcTemplate.queryForObject(
             """
             SELECT status
             FROM transactions
@@ -919,13 +1083,10 @@ class TransactionIntegrationTest {
             testBusinessId
         );
 
-        assertEquals("DRAFT", databaseStatus);
+        assertEquals("DRAFT", status);
 
-        /*
-         * Posting was rejected, so no posting audit
-         * event should exist for this transaction.
-         */
-        Integer postingAuditCount = jdbcTemplate.queryForObject(
+        // No posting audit event should exist.
+        Integer auditCount = jdbcTemplate.queryForObject(
             """
             SELECT COUNT(*)
             FROM audit_events
@@ -939,6 +1100,492 @@ class TransactionIntegrationTest {
             draft.getId()
         );
 
-        assertEquals(0, postingAuditCount);
+        assertEquals(0, auditCount);
+    }
+
+    // ============================================================
+    // TEST 11 — PREVENT EDITING POSTED LEDGER ENTRIES
+    // ============================================================
+
+    /**
+     * Verify that PostgreSQL prevents modifying
+     * existing ledger entries after posting.
+     *
+     * Scenario:
+     * 1. Create a balanced $500 transaction.
+     * 2. Post the transaction.
+     * 3. Attempt to change the Cash debit to $800.
+     * 4. Verify PostgreSQL rejects the UPDATE.
+     * 5. Confirm the original $500 remains unchanged.
+     *
+     * This tests the V4 protection trigger.
+     */
+    @Test
+    void preventsEditingPostedLedgerEntry() {
+
+        // Create a balanced DRAFT.
+        LedgerTransaction draft =
+            transactionService.createDraftTransaction(
+                testBusinessId,
+                createRequest("500.00", "500.00")
+            );
+
+        // Post the transaction.
+        LedgerTransaction posted =
+            transactionService.postTransaction(
+                testBusinessId,
+                draft.getId(),
+                testUserId
+            );
+
+        assertEquals("POSTED", posted.getStatus());
+
+        // Find the existing Cash ledger entry.
+        Long cashEntryId = jdbcTemplate.queryForObject(
+            """
+            SELECT id
+            FROM ledger_entries
+            WHERE business_id = ?
+              AND transaction_id = ?
+              AND account_id = ?
+            """,
+            Long.class,
+            testBusinessId,
+            posted.getId(),
+            cashAccountId
+        );
+
+        assertNotNull(cashEntryId);
+
+        /*
+         * Attempt to overwrite the posted debit.
+         *
+         * The V4 trigger must reject this change.
+         */
+        assertPostedRecordChangeRejected(
+            """
+            UPDATE ledger_entries
+            SET debit = ?
+            WHERE id = ?
+            """,
+            new BigDecimal("800.00"),
+            cashEntryId
+        );
+
+        // Verify that the original $500 remains.
+        BigDecimal savedDebit = jdbcTemplate.queryForObject(
+            """
+            SELECT debit
+            FROM ledger_entries
+            WHERE id = ?
+            """,
+            BigDecimal.class,
+            cashEntryId
+        );
+
+        assertNotNull(savedDebit);
+
+        assertEquals(
+            0,
+            new BigDecimal("500.00").compareTo(savedDebit)
+        );
+
+        // Parent transaction must still be POSTED.
+        String status = jdbcTemplate.queryForObject(
+            """
+            SELECT status
+            FROM transactions
+            WHERE id = ?
+              AND business_id = ?
+            """,
+            String.class,
+            posted.getId(),
+            testBusinessId
+        );
+
+        assertEquals("POSTED", status);
+    }
+
+    // ============================================================
+    // TEST 12 — PREVENT ADDING ENTRIES AFTER POSTING
+    // ============================================================
+
+    /**
+     * Verify that PostgreSQL prevents inserting
+     * additional entries into POSTED transactions.
+     *
+     * Adding a new debit after posting could change
+     * the accounting balance, so it must be rejected.
+     */
+    @Test
+    void preventsAddingEntryToPostedTransaction() {
+
+        // Create a balanced DRAFT transaction.
+        LedgerTransaction draft =
+            transactionService.createDraftTransaction(
+                testBusinessId,
+                createRequest("500.00", "500.00")
+            );
+
+        // Finalize the transaction.
+        LedgerTransaction posted =
+            transactionService.postTransaction(
+                testBusinessId,
+                draft.getId(),
+                testUserId
+            );
+
+        assertEquals("POSTED", posted.getStatus());
+
+        /*
+         * Attempt to add another debit entry.
+         *
+         * This INSERT must be rejected by PostgreSQL.
+         */
+        assertPostedRecordChangeRejected(
+            """
+            INSERT INTO ledger_entries (
+                business_id,
+                transaction_id,
+                account_id,
+                debit,
+                credit
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            testBusinessId,
+            posted.getId(),
+            cashAccountId,
+            new BigDecimal("100.00"),
+            new BigDecimal("0.00")
+        );
+
+        // Verify only the original two entries remain.
+        Integer entryCount = jdbcTemplate.queryForObject(
+            """
+            SELECT COUNT(*)
+            FROM ledger_entries
+            WHERE business_id = ?
+              AND transaction_id = ?
+            """,
+            Integer.class,
+            testBusinessId,
+            posted.getId()
+        );
+
+        assertEquals(2, entryCount);
+
+        // The parent must remain POSTED.
+        String status = jdbcTemplate.queryForObject(
+            """
+            SELECT status
+            FROM transactions
+            WHERE id = ?
+              AND business_id = ?
+            """,
+            String.class,
+            posted.getId(),
+            testBusinessId
+        );
+
+        assertEquals("POSTED", status);
+    }
+
+    // ============================================================
+    // TEST 13 — PREVENT DELETING ENTRIES AFTER POSTING
+    // ============================================================
+
+    /**
+     * Verify that PostgreSQL prevents deleting
+     * ledger entries belonging to POSTED transactions.
+     *
+     * Removing an entry would erase part of the
+     * finalized accounting history.
+     */
+    @Test
+    void preventsDeletingEntryFromPostedTransaction() {
+
+        // Create a balanced transaction.
+        LedgerTransaction draft =
+            transactionService.createDraftTransaction(
+                testBusinessId,
+                createRequest("500.00", "500.00")
+            );
+
+        // Finalize the transaction.
+        LedgerTransaction posted =
+            transactionService.postTransaction(
+                testBusinessId,
+                draft.getId(),
+                testUserId
+            );
+
+        assertEquals("POSTED", posted.getStatus());
+
+        // Find an existing entry to attempt to delete.
+        Long entryId = jdbcTemplate.queryForObject(
+            """
+            SELECT id
+            FROM ledger_entries
+            WHERE business_id = ?
+              AND transaction_id = ?
+            ORDER BY id
+            LIMIT 1
+            """,
+            Long.class,
+            testBusinessId,
+            posted.getId()
+        );
+
+        assertNotNull(entryId);
+
+        /*
+         * Attempt to delete the posted entry.
+         *
+         * PostgreSQL must reject this DELETE.
+         */
+        assertPostedRecordChangeRejected(
+            """
+            DELETE FROM ledger_entries
+            WHERE id = ?
+            """,
+            entryId
+        );
+
+        // Verify that the original entry still exists.
+        Integer remainingCount = jdbcTemplate.queryForObject(
+            """
+            SELECT COUNT(*)
+            FROM ledger_entries
+            WHERE id = ?
+              AND business_id = ?
+              AND transaction_id = ?
+            """,
+            Integer.class,
+            entryId,
+            testBusinessId,
+            posted.getId()
+        );
+
+        assertEquals(1, remainingCount);
+
+        // Verify that all original entries remain.
+        Integer totalEntries = jdbcTemplate.queryForObject(
+            """
+            SELECT COUNT(*)
+            FROM ledger_entries
+            WHERE business_id = ?
+              AND transaction_id = ?
+            """,
+            Integer.class,
+            testBusinessId,
+            posted.getId()
+        );
+
+        assertEquals(2, totalEntries);
+
+        // The parent transaction must remain POSTED.
+        String status = jdbcTemplate.queryForObject(
+            """
+            SELECT status
+            FROM transactions
+            WHERE id = ?
+              AND business_id = ?
+            """,
+            String.class,
+            posted.getId(),
+            testBusinessId
+        );
+
+        assertEquals("POSTED", status);
+    }
+
+    // ============================================================
+    // TEST 14 — PREVENT EDITING POSTED TRANSACTION HEADERS
+    // ============================================================
+
+    /**
+     * Verify that a POSTED transaction header cannot
+     * be modified after finalization.
+     */
+    @Test
+    void preventsEditingPostedTransactionHeader() {
+
+        // Create a balanced DRAFT transaction.
+        LedgerTransaction draft =
+            transactionService.createDraftTransaction(
+                testBusinessId,
+                createRequest("500.00", "500.00")
+            );
+
+        // Finalize the transaction.
+        LedgerTransaction posted =
+            transactionService.postTransaction(
+                testBusinessId,
+                draft.getId(),
+                testUserId
+            );
+
+        assertEquals("POSTED", posted.getStatus());
+
+        /*
+        * Attempt 1:
+        * Change the description of a POSTED transaction.
+        *
+        * PostgreSQL should reject this UPDATE.
+        */
+        assertPostedRecordChangeRejected(
+            """
+            UPDATE transactions
+            SET description = ?
+            WHERE id = ?
+            AND business_id = ?
+            """,
+            "Modified consulting payment",
+            posted.getId(),
+            testBusinessId
+        );
+
+        /*
+        * Attempt 2:
+        * Change POSTED back to DRAFT.
+        *
+        * A finalized transaction must never return
+        * to its editable draft state.
+        */
+        assertPostedRecordChangeRejected(
+            """
+            UPDATE transactions
+            SET status = 'DRAFT'
+            WHERE id = ?
+            AND business_id = ?
+            """,
+            posted.getId(),
+            testBusinessId
+        );
+
+        // Verify the original description is preserved.
+        String savedDescription = jdbcTemplate.queryForObject(
+            """
+            SELECT description
+            FROM transactions
+            WHERE id = ?
+            AND business_id = ?
+            """,
+            String.class,
+            posted.getId(),
+            testBusinessId
+        );
+
+        assertEquals(
+            "Consulting payment",
+            savedDescription
+        );
+
+        // Verify the transaction remains POSTED.
+        String savedStatus = jdbcTemplate.queryForObject(
+            """
+            SELECT status
+            FROM transactions
+            WHERE id = ?
+            AND business_id = ?
+            """,
+            String.class,
+            posted.getId(),
+            testBusinessId
+        );
+
+        assertEquals("POSTED", savedStatus);
+    }
+
+    // ============================================================
+    // TEST 15 — PREVENT DELETING POSTED TRANSACTIONS
+    // ============================================================
+
+    /**
+     * Verify that a POSTED transaction cannot be deleted.
+     */
+    @Test
+    void preventsDeletingPostedTransaction() {
+
+        // Create a valid DRAFT transaction.
+        LedgerTransaction draft =
+            transactionService.createDraftTransaction(
+                testBusinessId,
+                createRequest("500.00", "500.00")
+            );
+
+        // Post the transaction.
+        LedgerTransaction posted =
+            transactionService.postTransaction(
+                testBusinessId,
+                draft.getId(),
+                testUserId
+            );
+
+        assertEquals("POSTED", posted.getStatus());
+
+        /*
+        * Attempt to delete the transaction header.
+        *
+        * The V4 trigger must reject this operation
+        * with PostgreSQL SQLSTATE 23514.
+        */
+        assertPostedRecordChangeRejected(
+            """
+            DELETE FROM transactions
+            WHERE id = ?
+            AND business_id = ?
+            """,
+            posted.getId(),
+            testBusinessId
+        );
+
+        // Verify that the original transaction still exists.
+        Integer transactionCount = jdbcTemplate.queryForObject(
+            """
+            SELECT COUNT(*)
+            FROM transactions
+            WHERE id = ?
+            AND business_id = ?
+            AND status = 'POSTED'
+            """,
+            Integer.class,
+            posted.getId(),
+            testBusinessId
+        );
+
+        assertEquals(1, transactionCount);
+
+        // Verify both ledger entries are preserved.
+        Integer entryCount = jdbcTemplate.queryForObject(
+            """
+            SELECT COUNT(*)
+            FROM ledger_entries
+            WHERE transaction_id = ?
+            AND business_id = ?
+            """,
+            Integer.class,
+            posted.getId(),
+            testBusinessId
+        );
+
+        assertEquals(2, entryCount);
+
+        // Verify both creation and posting audit records remain.
+        Integer auditCount = jdbcTemplate.queryForObject(
+            """
+            SELECT COUNT(*)
+            FROM audit_events
+            WHERE business_id = ?
+            AND entity_type = 'TRANSACTION'
+            AND entity_id = ?
+            """,
+            Integer.class,
+            testBusinessId,
+            posted.getId()
+        );
+
+        assertEquals(2, auditCount);
     }
 }
