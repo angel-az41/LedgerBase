@@ -154,4 +154,42 @@
 
     </update>
 
+    <!--
+        Retrieve and lock one transaction for posting.
+
+        SELECT ... FOR UPDATE acquires a PostgreSQL row lock.
+
+        If another database transaction already holds a
+        conflicting lock on this row, this query waits.
+
+        We deliberately do not filter by status here.
+        TransactionService needs to distinguish:
+        - A transaction that does not exist
+        - A transaction that is already POSTED
+        - A transaction that is still DRAFT
+
+        This lock is held until the surrounding
+        database transaction commits or rolls back.
+    -->
+    <select id="findByIdForUpdate"
+            resultMap="LedgerTransactionResultMap">
+
+        SELECT
+            id,
+            business_id,
+            created_by,
+            category_id,
+            customer_id,
+            vendor_id,
+            description,
+            transaction_date,
+            status,
+            created_at
+        FROM transactions
+        WHERE business_id = #{businessId}
+          AND id = #{transactionId}
+        FOR UPDATE
+
+    </select>
+
 </mapper>

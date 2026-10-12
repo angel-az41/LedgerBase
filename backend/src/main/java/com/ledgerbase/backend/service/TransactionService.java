@@ -12,6 +12,7 @@ import com.ledgerbase.backend.model.LedgerEntry;
 import com.ledgerbase.backend.model.LedgerTransaction;
 import com.ledgerbase.backend.dto.TransactionDetailResponse;
 import com.ledgerbase.backend.exception.TransactionNotFoundException;
+import com.ledgerbase.backend.exception.TransactionConflictException;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -357,6 +358,173 @@ public class TransactionService {
             transaction,
             entries
         );
+    }
+
+    /**
+     * Finalize a DRAFT financial transaction.
+     *
+     * The entire posting operation runs inside one
+     * PostgreSQL database transaction.
+     *
+     * Steps:
+     * 1. Lock the transaction row.
+     * 2. Verify that its status is DRAFT.
+     * 3. Retrieve and validate its ledger entries.
+     * 4. Check that all accounts are still active.
+     * 5. Update the transaction status to POSTED.
+     *
+     * The database row lock prevents two concurrent
+     * posting requests from posting the same transaction.
+     *
+     * @param businessId Business that owns the transaction.
+     * @param transactionId Transaction to post.
+     * @return The updated transaction with POSTED status.
+     */
+    @Transactional
+    public LedgerTransaction postTransaction(
+            Long businessId,
+            Long transactionId) {
+
+        // Validate both IDs before querying PostgreSQL.
+        if (businessId == null || businessId <= 0) {
+            throw new IllegalArgumentException(
+                "A valid business ID is required"
+            );
+        }
+
+        if (transactionId == null || transactionId <= 0) {
+            throw new IllegalArgumentException(
+                "A valid transaction ID is required"
+            );
+        }
+
+        // Return 404 when the requested business does not exist.
+        if (!businessMapper.existsById(businessId)) {
+            throw new BusinessNotFoundException(businessId);
+        }
+
+        /*
+        * Lock the transaction row using SELECT ... FOR UPDATE.
+        *
+        * Another posting request for the same transaction
+        * must wait until this database transaction finishes.
+        */
+        LedgerTransaction transaction =
+            transactionMapper.findByIdForUpdate(
+                businessId,
+                transactionId
+            );
+
+        // Return 404 if the transaction cannot be found.
+        if (transaction == null) {
+            throw new TransactionNotFoundException(transactionId);
+        }
+
+        /*
+        * Only DRAFT transactions can be posted.
+        *
+        * This prevents posting an already-posted transaction
+        * a second time.
+        */
+        if (!"DRAFT".equals(transaction.getStatus())) {
+            throw new TransactionConflictException(
+                "Transaction is not in DRAFT status: "
+                + transactionId
+            );
+        }
+
+        /*
+        * Retrieve the transaction's ledger entries.
+        *
+        * The existing MyBatis query returns entries
+        * belonging to this business and transaction.
+        */
+        List<LedgerEntry> entries =
+            entryMapper.findByTransactionId(
+                businessId,
+                transactionId
+            );
+
+        /*
+        * Validate double-entry accounting rules again.
+        *
+        * A transaction must still be balanced at the
+        * moment it is posted, even if it was valid
+        * when originally created.
+        */
+        validateBalancedEntries(entries);
+
+        /*
+        * Verify that each account still exists
+        * and belongs to the correct business.
+        *
+        * We also reject inactive accounts.
+        */
+        for (LedgerEntry entry : entries) {
+
+            Account account = accountMapper.findById(
+                businessId,
+                entry.getAccountId()
+            );
+
+            if (account == null) {
+                throw new TransactionConflictException(
+                    "Transaction references a missing account: "
+                    + entry.getAccountId()
+                );
+            }
+
+            if (!Boolean.TRUE.equals(account.getActive())) {
+                throw new TransactionConflictException(
+                    "Transaction references an inactive account: "
+                    + entry.getAccountId()
+                );
+            }
+        }
+
+        /*
+        * Update the transaction status.
+        *
+        * The SQL includes:
+        *
+        * WHERE business_id = ?
+        *   AND id = ?
+        *   AND status = 'DRAFT'
+        *
+        * The update should affect exactly one row.
+        */
+        int updatedRows = transactionMapper.markAsPosted(
+            businessId,
+            transactionId
+        );
+
+        if (updatedRows != 1) {
+            throw new TransactionConflictException(
+                "Transaction could not be posted: "
+                + transactionId
+            );
+        }
+
+        /*
+        * Retrieve the latest record from PostgreSQL.
+        *
+        * This ensures that the returned status reflects
+        * the database rather than only changing a
+        * Java object's in-memory property.
+        */
+        LedgerTransaction postedTransaction =
+            transactionMapper.findById(
+                businessId,
+                transactionId
+            );
+
+        if (postedTransaction == null) {
+            throw new IllegalStateException(
+                "Posted transaction could not be retrieved"
+            );
+        }
+
+        return postedTransaction;
     }
 
     /**

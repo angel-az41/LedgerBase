@@ -134,4 +134,32 @@ public class TransactionController {
         // Serialize the response into JSON.
         return ResponseEntity.ok(details);
     }
+
+    /**
+     * Post (finalize) an existing DRAFT transaction.
+     *
+     * Example:
+     * POST /api/v1/businesses/1/transactions/10/post
+     *
+     * Returns:
+     * - HTTP 200 when successfully posted.
+     * - HTTP 404 when the transaction does not exist.
+     * - HTTP 409 when the transaction cannot be posted
+     *   because of its current state.
+     */
+    @PostMapping("/{transactionId}/post")
+    public ResponseEntity<LedgerTransaction> postTransaction(
+            @PathVariable("businessId") Long businessId,
+            @PathVariable("transactionId") Long transactionId) {
+
+        // The service performs locking and all accounting checks.
+        LedgerTransaction postedTransaction =
+            transactionService.postTransaction(
+                businessId,
+                transactionId
+            );
+
+        // Return the finalized transaction to the client.
+        return ResponseEntity.ok(postedTransaction);
+    }
 }

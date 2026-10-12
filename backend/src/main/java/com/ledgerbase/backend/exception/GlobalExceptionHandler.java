@@ -100,4 +100,21 @@ public class GlobalExceptionHandler {
             .status(HttpStatus.NOT_FOUND)
             .body(Map.of("error", exception.getMessage()));
     }
+
+    /**
+     * Handle transaction posting conflicts.
+     *
+     * For example, a POSTED transaction cannot
+     * be posted a second time.
+     *
+     * Returns HTTP 409 Conflict.
+     */
+    @ExceptionHandler(TransactionConflictException.class)
+    public ResponseEntity<Map<String, String>> handleTransactionConflict(
+            TransactionConflictException exception) {
+
+        return ResponseEntity
+            .status(HttpStatus.CONFLICT)
+            .body(Map.of("error", exception.getMessage()));
+    }
 }

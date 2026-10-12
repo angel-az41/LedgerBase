@@ -64,4 +64,24 @@ public interface LedgerTransactionMapper {
         @Param("businessId") Long businessId,
         @Param("transactionId") Long transactionId
     );
+
+    /**
+     * Retrieve and lock a transaction row for posting.
+     *
+     * PostgreSQL's SELECT ... FOR UPDATE prevents
+     * another transaction from locking the same row
+     * until the current database transaction finishes.
+     *
+     * IMPORTANT:
+     * This method must be called inside a Spring
+     * @Transactional service method so the lock
+     * remains held during validation and posting.
+     *
+     * Returns null when the transaction does not exist
+     * within the specified business.
+     */
+    LedgerTransaction findByIdForUpdate(
+        @Param("businessId") Long businessId,
+        @Param("transactionId") Long transactionId
+    );
 }

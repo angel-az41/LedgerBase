@@ -723,4 +723,229 @@ class TransactionIntegrationTest {
                 )
             );
     }
+
+    /**
+     * Test posting a balanced DRAFT transaction.
+     *
+     * Workflow:
+     * 1. Create a balanced transaction.
+     * 2. POST to the posting endpoint.
+     * 3. Verify HTTP 200 and POSTED status.
+     * 4. Independently verify PostgreSQL was updated.
+     */
+    @Test
+    void postsBalancedDraftTransaction() throws Exception {
+
+        // Create a DRAFT transaction with balanced entries.
+        LedgerTransaction draft =
+            transactionService.createDraftTransaction(
+                testBusinessId,
+                createRequest("500.00", "500.00")
+            );
+
+        assertEquals("DRAFT", draft.getStatus());
+
+        // Build a MockMvc instance using the real application.
+        MockMvc mvc = MockMvcBuilders
+            .webAppContextSetup(context)
+            .build();
+
+        String url = "/api/v1/businesses/"
+            + testBusinessId
+            + "/transactions/"
+            + draft.getId()
+            + "/post";
+
+        // Post the transaction through our REST API.
+        mvc.perform(post(url))
+            .andExpect(status().isOk())
+            .andExpect(
+                jsonPath("$.id").value(draft.getId())
+            )
+            .andExpect(
+                jsonPath("$.status").value("POSTED")
+            );
+
+        // Check the actual database status.
+        String databaseStatus = jdbcTemplate.queryForObject(
+            """
+            SELECT status
+            FROM transactions
+            WHERE id = ?
+            AND business_id = ?
+            """,
+            String.class,
+            draft.getId(),
+            testBusinessId
+        );
+
+        assertEquals("POSTED", databaseStatus);
+
+        // Posting must not remove or duplicate entries.
+        Integer entryCount = jdbcTemplate.queryForObject(
+            """
+            SELECT COUNT(*)
+            FROM ledger_entries
+            WHERE transaction_id = ?
+            AND business_id = ?
+            """,
+            Integer.class,
+            draft.getId(),
+            testBusinessId
+        );
+
+        assertEquals(2, entryCount);
+    }
+
+    /**
+     * A POSTED transaction cannot be posted again.
+     *
+     * The second request must return HTTP 409 Conflict.
+     *
+     * This prevents repeated state transitions and
+     * provides a predictable API response.
+     */
+    @Test
+    void rejectsPostingAlreadyPostedTransaction() throws Exception {
+
+        // Create an ordinary balanced DRAFT.
+        LedgerTransaction draft =
+            transactionService.createDraftTransaction(
+                testBusinessId,
+                createRequest("500.00", "500.00")
+            );
+
+        MockMvc mvc = MockMvcBuilders
+            .webAppContextSetup(context)
+            .build();
+
+        String url = "/api/v1/businesses/"
+            + testBusinessId
+            + "/transactions/"
+            + draft.getId()
+            + "/post";
+
+        // First request succeeds.
+        mvc.perform(post(url))
+            .andExpect(status().isOk())
+            .andExpect(
+                jsonPath("$.status").value("POSTED")
+            );
+
+        // Second request must be rejected.
+        mvc.perform(post(url))
+            .andExpect(status().isConflict())
+            .andExpect(
+                jsonPath("$.error").value(
+                    "Transaction is not in DRAFT status: "
+                    + draft.getId()
+                )
+            );
+    }
+
+    /**
+     * Posting a transaction that does not exist
+     * must return HTTP 404 Not Found.
+     *
+     * We use Long.MAX_VALUE as an ID that should not
+     * exist in our isolated test database.
+     *
+     * A negative ID would trigger our input validation
+     * and return 400 instead, so we use a positive ID.
+     */
+    @Test
+    void rejectsPostingNonexistentTransaction() throws Exception {
+
+        MockMvc mvc = MockMvcBuilders
+            .webAppContextSetup(context)
+            .build();
+
+        long missingTransactionId = Long.MAX_VALUE;
+
+        String url = "/api/v1/businesses/"
+            + testBusinessId
+            + "/transactions/"
+            + missingTransactionId
+            + "/post";
+
+        mvc.perform(post(url))
+            .andExpect(status().isNotFound())
+            .andExpect(
+                jsonPath("$.error").value(
+                    "Transaction not found: "
+                    + missingTransactionId
+                )
+            );
+    }
+
+    /**
+     * A transaction must not be posted if one of
+     * its referenced accounts has been deactivated.
+     *
+     * This simulates a real accounting scenario:
+     * 1. A transaction is created as a DRAFT.
+     * 2. The Cash account becomes inactive.
+     * 3. Someone attempts to post the transaction.
+     * 4. The posting operation must be rejected.
+     */
+    @Test
+    void rejectsPostingWithInactiveAccount() throws Exception {
+
+        // Create a valid DRAFT while both accounts are active.
+        LedgerTransaction draft =
+            transactionService.createDraftTransaction(
+                testBusinessId,
+                createRequest("500.00", "500.00")
+            );
+
+        // Deactivate the Cash account in PostgreSQL.
+        //
+        // Our accounts table uses the column is_active,
+        // not active.
+        jdbcTemplate.update(
+            """
+            UPDATE accounts
+            SET is_active = FALSE
+            WHERE id = ?
+            AND business_id = ?
+            """,
+            cashAccountId,
+            testBusinessId
+        );
+
+        MockMvc mvc = MockMvcBuilders
+            .webAppContextSetup(context)
+            .build();
+
+        String url = "/api/v1/businesses/"
+            + testBusinessId
+            + "/transactions/"
+            + draft.getId()
+            + "/post";
+
+        // Posting must fail because Cash is inactive.
+        mvc.perform(post(url))
+            .andExpect(status().isConflict())
+            .andExpect(
+                jsonPath("$.error").value(
+                    "Transaction references an inactive account: "
+                    + cashAccountId
+                )
+            );
+
+        // The transaction should still be a DRAFT.
+        String databaseStatus = jdbcTemplate.queryForObject(
+            """
+            SELECT status
+            FROM transactions
+            WHERE id = ?
+            AND business_id = ?
+            """,
+            String.class,
+            draft.getId(),
+            testBusinessId
+        );
+
+        assertEquals("DRAFT", databaseStatus);
+    }
 }
