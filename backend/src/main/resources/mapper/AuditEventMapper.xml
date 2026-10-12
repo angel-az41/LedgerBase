@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+    PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<!--
+    MyBatis SQL mapper for the audit_events table.
+
+    This file implements the methods declared in
+    AuditEventMapper.java.
+
+    Audit records describe important application actions,
+    such as creating and posting financial transactions.
+-->
+<mapper namespace="com.ledgerbase.backend.mapper.AuditEventMapper">
+
+    <!--
+        Map PostgreSQL audit_events columns to Java fields.
+
+        PostgreSQL uses snake_case column names,
+        while Java uses camelCase property names.
+
+        The details column stores JSONB in PostgreSQL,
+        but is represented as a JSON string in Java.
+    -->
+    <resultMap id="AuditEventResultMap"
+               type="com.ledgerbase.backend.model.AuditEvent">
+
+        <id property="id" column="id"/>
+
+        <result property="businessId" column="business_id"/>
+        <result property="actorId" column="actor_id"/>
+
+        <result property="action" column="action"/>
+        <result property="entityType" column="entity_type"/>
+        <result property="entityId" column="entity_id"/>
+
+        <result property="details" column="details"/>
+        <result property="createdAt" column="created_at"/>
+
+    </resultMap>
+
+    <!--
+        Insert an audit event.
+
+        PostgreSQL automatically generates:
+        - id
+        - created_at
+
+        MyBatis populates the generated ID in event.id.
+
+        CAST(... AS jsonb) converts the Java JSON string
+        into PostgreSQL's native JSONB type.
+
+        PostgreSQL rejects malformed JSON strings,
+        so details must contain valid JSON or null.
+    -->
+    <insert id="insert"
+            parameterType="com.ledgerbase.backend.model.AuditEvent"
+            useGeneratedKeys="true"
+            keyProperty="id"
+            keyColumn="id">
+
+        INSERT INTO audit_events (
+            business_id,
+            actor_id,
+            action,
+            entity_type,
+            entity_id,
+            details
+        )
+        VALUES (
+            #{businessId},
+            #{actorId},
+            #{action},
+            #{entityType},
+            #{entityId},
+            CAST(#{details,jdbcType=VARCHAR} AS jsonb)
+        )
+
+    </insert>
+
+    <!--
+        Retrieve audit events for a specific entity.
+
+        Example:
+        businessId = 1
+        entityType = TRANSACTION
+        entityId = 10
+
+        Both business_id and entity information are used
+        so the query remains scoped to one business.
+
+        Convert JSONB details to text for our Java String.
+
+        Events are ordered from oldest to newest.
+        The ID provides stable ordering if timestamps match.
+    -->
+    <select id="findByEntity"
+            resultMap="AuditEventResultMap">
+
+        SELECT
+            id,
+            business_id,
+            actor_id,
+            action,
+            entity_type,
+            entity_id,
+            details::text AS details,
+            created_at
+        FROM audit_events
+        WHERE business_id = #{businessId}
+          AND entity_type = #{entityType}
+          AND entity_id = #{entityId}
+        ORDER BY created_at ASC, id ASC
+
+    </select>
+
+</mapper>

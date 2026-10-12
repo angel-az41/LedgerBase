@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+    PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<!--
+    MyBatis SQL mapper for the ledger_entries table.
+
+    This file implements the methods declared in
+    LedgerEntryMapper.java.
+
+    Each ledger entry belongs to:
+    - One business
+    - One financial transaction
+    - One account in the Chart of Accounts
+-->
+<mapper namespace="com.ledgerbase.backend.mapper.LedgerEntryMapper">
+
+    <!--
+        Map PostgreSQL columns to LedgerEntry Java properties.
+
+        Examples:
+        business_id    -> businessId
+        transaction_id -> transactionId
+        account_id     -> accountId
+
+        The debit and credit NUMERIC columns map to
+        Java BigDecimal for accurate financial calculations.
+    -->
+    <resultMap id="LedgerEntryResultMap"
+               type="com.ledgerbase.backend.model.LedgerEntry">
+
+        <id property="id" column="id"/>
+
+        <result property="businessId" column="business_id"/>
+        <result property="transactionId" column="transaction_id"/>
+        <result property="accountId" column="account_id"/>
+
+        <result property="debit" column="debit"/>
+        <result property="credit" column="credit"/>
+
+        <result property="createdAt" column="created_at"/>
+
+    </resultMap>
+
+    <!--
+        Insert one debit or credit entry.
+
+        PostgreSQL generates the primary key automatically,
+        and MyBatis stores it in the LedgerEntry object's id.
+
+        The transactionId links this entry to its parent
+        transaction in the transactions table.
+
+        IMPORTANT:
+        The service layer will validate amounts and ensure
+        that entries form a balanced transaction before posting.
+    -->
+    <insert id="insert"
+            parameterType="com.ledgerbase.backend.model.LedgerEntry"
+            useGeneratedKeys="true"
+            keyProperty="id"
+            keyColumn="id">
+
+        INSERT INTO ledger_entries (
+            business_id,
+            transaction_id,
+            account_id,
+            debit,
+            credit
+        )
+        VALUES (
+            #{businessId},
+            #{transactionId},
+            #{accountId},
+            #{debit},
+            #{credit}
+        )
+
+    </insert>
+
+    <!--
+        Retrieve all entries belonging to one transaction.
+
+        Both business_id and transaction_id are included
+        so that records are scoped to the correct business.
+
+        Ordering by id provides a consistent entry order.
+    -->
+    <select id="findByTransactionId"
+            resultMap="LedgerEntryResultMap">
+
+        SELECT
+            id,
+            business_id,
+            transaction_id,
+            account_id,
+            debit,
+            credit,
+            created_at
+        FROM ledger_entries
+        WHERE business_id = #{businessId}
+          AND transaction_id = #{transactionId}
+        ORDER BY id ASC
+
+    </select>
+
+</mapper>

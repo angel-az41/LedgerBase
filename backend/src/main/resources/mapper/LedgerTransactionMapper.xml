@@ -1,0 +1,195 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+    PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<!--
+    MyBatis SQL mapper for the transactions table.
+
+    This file implements the methods declared in
+    LedgerTransactionMapper.java.
+-->
+<mapper namespace="com.ledgerbase.backend.mapper.LedgerTransactionMapper">
+
+    <!--
+        Map PostgreSQL columns to Java model properties.
+
+        Example:
+        business_id -> businessId
+        transaction_date -> transactionDate
+        created_at -> createdAt
+    -->
+    <resultMap id="LedgerTransactionResultMap"
+               type="com.ledgerbase.backend.model.LedgerTransaction">
+
+        <id property="id" column="id"/>
+
+        <result property="businessId" column="business_id"/>
+        <result property="createdBy" column="created_by"/>
+
+        <result property="categoryId" column="category_id"/>
+        <result property="customerId" column="customer_id"/>
+        <result property="vendorId" column="vendor_id"/>
+
+        <result property="description" column="description"/>
+        <result property="transactionDate" column="transaction_date"/>
+        <result property="status" column="status"/>
+        <result property="createdAt" column="created_at"/>
+
+    </resultMap>
+
+    <!--
+        Insert a new DRAFT transaction.
+
+        PostgreSQL automatically generates the ID.
+        MyBatis stores that generated ID in transaction.id.
+
+        We explicitly set status to DRAFT because a newly
+        created transaction has not yet been posted.
+
+        The optional category/customer/vendor IDs may be null.
+    -->
+    <insert id="insert"
+            parameterType="com.ledgerbase.backend.model.LedgerTransaction"
+            useGeneratedKeys="true"
+            keyProperty="id"
+            keyColumn="id">
+
+        INSERT INTO transactions (
+            business_id,
+            created_by,
+            category_id,
+            customer_id,
+            vendor_id,
+            description,
+            transaction_date,
+            status
+        )
+        VALUES (
+            #{businessId},
+            #{createdBy},
+            #{categoryId},
+            #{customerId},
+            #{vendorId},
+            #{description},
+            #{transactionDate},
+            'DRAFT'
+        )
+
+    </insert>
+
+    <!--
+        Retrieve one transaction belonging to a specific business.
+
+        Including business_id prevents a query from accidentally
+        returning a transaction belonging to another business.
+    -->
+    <select id="findById"
+            resultMap="LedgerTransactionResultMap">
+
+        SELECT
+            id,
+            business_id,
+            created_by,
+            category_id,
+            customer_id,
+            vendor_id,
+            description,
+            transaction_date,
+            status,
+            created_at
+        FROM transactions
+        WHERE business_id = #{businessId}
+          AND id = #{transactionId}
+
+    </select>
+
+    <!--
+        Retrieve all transactions belonging to a business.
+
+        Results are ordered by accounting date, then creation
+        timestamp, with the most recent transactions first.
+    -->
+    <select id="findByBusinessId"
+            resultMap="LedgerTransactionResultMap">
+
+        SELECT
+            id,
+            business_id,
+            created_by,
+            category_id,
+            customer_id,
+            vendor_id,
+            description,
+            transaction_date,
+            status,
+            created_at
+        FROM transactions
+        WHERE business_id = #{businessId}
+        ORDER BY
+            transaction_date DESC,
+            created_at DESC,
+            id DESC
+
+    </select>
+
+    <!--
+        Mark a transaction as POSTED.
+
+        The status condition ensures only DRAFT transactions
+        can transition to POSTED.
+
+        IMPORTANT:
+        This SQL does not check debit/credit balancing.
+        TransactionService will validate the ledger entries
+        and perform posting atomically in a database transaction.
+    -->
+    <update id="markAsPosted">
+
+        UPDATE transactions
+        SET status = 'POSTED'
+        WHERE business_id = #{businessId}
+          AND id = #{transactionId}
+          AND status = 'DRAFT'
+
+    </update>
+
+    <!--
+        Retrieve and lock one transaction for posting.
+
+        SELECT ... FOR UPDATE acquires a PostgreSQL row lock.
+
+        If another database transaction already holds a
+        conflicting lock on this row, this query waits.
+
+        We deliberately do not filter by status here.
+        TransactionService needs to distinguish:
+        - A transaction that does not exist
+        - A transaction that is already POSTED
+        - A transaction that is still DRAFT
+
+        This lock is held until the surrounding
+        database transaction commits or rolls back.
+    -->
+    <select id="findByIdForUpdate"
+            resultMap="LedgerTransactionResultMap">
+
+        SELECT
+            id,
+            business_id,
+            created_by,
+            category_id,
+            customer_id,
+            vendor_id,
+            description,
+            transaction_date,
+            status,
+            created_at
+        FROM transactions
+        WHERE business_id = #{businessId}
+          AND id = #{transactionId}
+        FOR UPDATE
+
+    </select>
+
+</mapper>
