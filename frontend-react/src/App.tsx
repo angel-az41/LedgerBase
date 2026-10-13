@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import './App.css'
+import AccountsPage from './pages/AccountsPage'
 
 // ============================================================
 // LEDGERBASE — APPLICATION TYPES
@@ -322,30 +323,21 @@ function App() {
           </div>
 
         )}
-
+        
         {/* ==================================================== */}
-        {/* CHART OF ACCOUNTS PLACEHOLDER */}
+        {/* CHART OF ACCOUNTS PAGE */}
         {/* ==================================================== */}
 
         {activePage === 'accounts' && (
 
-          <section className="placeholder-card">
-
-            <div className="placeholder-icon">▤</div>
-
-            <h2>Chart of Accounts</h2>
-
-            <p>
-              The React account management interface will
-              appear here after we migrate the existing
-              account functionality.
-            </p>
-
-            <span className="placeholder-status">
-              React migration in progress
-            </span>
-
-          </section>
+          /**
+           * The business ID is temporarily fixed to 1
+           * for our local LedgerBase demo business.
+           *
+           * Later, this will come from the authenticated
+           * user's selected business.
+           */
+          <AccountsPage businessId={1} />
 
         )}
 

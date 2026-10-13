@@ -1,0 +1,196 @@
+/* ============================================================ */
+/* LEDGERBASE — NEW ACCOUNT FORM */
+/* ============================================================ */
+
+/**
+ * Styles follow the existing LedgerBase design:
+ * white cards, subtle borders, navy text, teal actions.
+ *
+ * All class names begin with "new-account-"
+ * to avoid affecting unrelated components.
+ */
+
+/* ============================================================ */
+/* FORM CONTAINER */
+/* ============================================================ */
+
+.new-account-card {
+  margin-bottom: 25px;
+  overflow: hidden;
+  border: 1px solid #e6ebf1;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+/* ============================================================ */
+/* FORM HEADING */
+/* ============================================================ */
+
+.new-account-heading {
+  padding: 24px 26px 18px;
+  border-bottom: 1px solid #edf1f5;
+}
+
+.new-account-heading h2 {
+  margin: 0 0 7px;
+  color: #22334b;
+  font-size: 17px;
+  font-weight: 750;
+}
+
+.new-account-heading p {
+  margin: 0;
+  color: #8493a7;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+/* ============================================================ */
+/* FORM BODY */
+/* ============================================================ */
+
+.new-account-form {
+  padding: 24px 26px;
+}
+
+.new-account-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 22px;
+}
+
+/* ============================================================ */
+/* INPUT FIELDS */
+/* ============================================================ */
+
+.new-account-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.new-account-field > span {
+  color: #34475f;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.new-account-field > span strong {
+  color: #b95d5d;
+}
+
+.new-account-field input,
+.new-account-field select {
+  width: 100%;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px solid #dce5ec;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #243249;
+  font-size: 12px;
+}
+
+.new-account-field input::placeholder {
+  color: #9aa7b6;
+}
+
+.new-account-field input:focus,
+.new-account-field select:focus {
+  border-color: #35aa94;
+  outline: 2px solid #35aa9430;
+  outline-offset: 1px;
+}
+
+.new-account-field input:disabled,
+.new-account-field select:disabled {
+  background: #f7f9fb;
+  cursor: not-allowed;
+}
+
+.new-account-field small {
+  color: #96a3b4;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+/* ============================================================ */
+/* ERROR MESSAGE */
+/* ============================================================ */
+
+.new-account-error {
+  margin: 22px 0 0;
+  padding: 12px 14px;
+  border: 1px solid #f0d0d0;
+  border-radius: 8px;
+  background: #fff5f5;
+  color: #ad454b;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* ============================================================ */
+/* FORM ACTIONS */
+/* ============================================================ */
+
+.new-account-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 11px;
+  margin-top: 25px;
+  padding-top: 20px;
+  border-top: 1px solid #edf1f5;
+}
+
+.new-account-cancel,
+.new-account-submit {
+  min-height: 40px;
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.new-account-cancel {
+  border: 1px solid #dce5ec;
+  background: #ffffff;
+  color: #53657b;
+}
+
+.new-account-cancel:hover:not(:disabled) {
+  background: #f3f7fa;
+}
+
+.new-account-submit {
+  border: 1px solid #188a76;
+  background: #198f79;
+  color: #ffffff;
+}
+
+.new-account-submit:hover:not(:disabled) {
+  background: #147b68;
+}
+
+.new-account-cancel:disabled,
+.new-account-submit:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ============================================================ */
+/* RESPONSIVE LAYOUT */
+/* ============================================================ */
+
+@media (max-width: 760px) {
+
+  .new-account-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .new-account-heading,
+  .new-account-form {
+    padding-right: 18px;
+    padding-left: 18px;
+  }
+}

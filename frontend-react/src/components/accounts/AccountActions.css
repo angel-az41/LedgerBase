@@ -1,0 +1,489 @@
+/* ============================================================ */
+/* LEDGERBASE — ACCOUNT MANAGEMENT ACTIONS */
+/* ============================================================ */
+
+/**
+ * Styles for Rename and Deactivate account actions.
+ *
+ * Design standards:
+ *
+ * - Navy text and white surfaces
+ * - Teal primary actions
+ * - Red for potentially irreversible actions
+ * - Clear confirmation and error messages
+ * - Accessible modal dialogs
+ */
+
+/* ============================================================ */
+/* ACCOUNT ROW ACTIONS */
+/* ============================================================ */
+
+.coa-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 13px;
+  white-space: nowrap;
+}
+
+/* ============================================================ */
+/* ACTION LINKS */
+/* ============================================================ */
+
+.coa-row-action-button {
+  padding: 6px 0;
+  border: none;
+  background: transparent;
+  color: #277f75;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.coa-row-action-button:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.coa-row-action-danger {
+  color: #b35858;
+}
+
+.coa-row-action-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ============================================================ */
+/* INACTIVE ACCOUNTS */
+/* ============================================================ */
+
+.coa-row-action-unavailable {
+  color: #a1aab6;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* ============================================================ */
+/* MODAL DIALOG */
+/* ============================================================ */
+
+/**
+ * The native dialog appears above the application.
+ *
+ * CSS dimensions keep the dialog readable
+ * on both desktop and mobile screens.
+ */
+.coa-action-dialog {
+  width: min(480px, calc(100% - 32px));
+  max-height: calc(100vh - 48px);
+  padding: 0;
+  overflow-y: auto;
+  border: 1px solid #e1e7ee;
+  border-radius: 14px;
+  background: #ffffff;
+  color: #243249;
+  box-shadow: 0 24px 70px #101b2f35;
+}
+
+/* ============================================================ */
+/* MODAL BACKDROP */
+/* ============================================================ */
+
+/**
+ * Dim the application while the user
+ * is reviewing an account modification.
+ */
+.coa-action-dialog::backdrop {
+  background: #101b2f85;
+}
+
+/* ============================================================ */
+/* DIALOG CONTENT */
+/* ============================================================ */
+
+.coa-action-form {
+  padding: 27px;
+}
+
+.coa-action-dialog-heading h2 {
+  margin: 0 0 10px;
+  color: #243249;
+  font-size: 19px;
+  font-weight: 750;
+}
+
+.coa-action-dialog-heading p {
+  margin: 0;
+  color: #77869a;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+/* ============================================================ */
+/* SELECTED ACCOUNT SUMMARY */
+/* ============================================================ */
+
+.coa-action-account-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 21px 0;
+  padding: 16px;
+  border: 1px solid #e8edf3;
+  border-radius: 9px;
+  background: #f8fafc;
+}
+
+.coa-action-account-code {
+  color: #287e75;
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    monospace;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.coa-action-account-summary strong {
+  color: #243249;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+/* ============================================================ */
+/* RENAME INPUT FIELD */
+/* ============================================================ */
+
+.coa-action-field {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-bottom: 20px;
+}
+
+.coa-action-field span {
+  color: #34475f;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.coa-action-field input {
+  width: 100%;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px solid #dce5ec;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #243249;
+  font-size: 13px;
+}
+
+.coa-action-field input:focus {
+  border-color: #35aa94;
+  outline: 2px solid #35aa9430;
+  outline-offset: 1px;
+}
+
+.coa-action-field input:disabled {
+  background: #f7f9fb;
+  cursor: not-allowed;
+}
+
+/* ============================================================ */
+/* DEACTIVATION WARNING */
+/* ============================================================ */
+
+.coa-action-warning {
+  margin: 12px 0;
+  color: #697b90;
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+/* ============================================================ */
+/* ERROR MESSAGE */
+/* ============================================================ */
+
+.coa-action-error {
+  margin: 16px 0;
+  padding: 12px 14px;
+  border: 1px solid #f1d4d4;
+  border-radius: 8px;
+  background: #fff5f5;
+  color: #a33c42;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* ============================================================ */
+/* DIALOG ACTION BUTTONS */
+/* ============================================================ */
+
+.coa-action-dialog-buttons {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 11px;
+  margin-top: 25px;
+  padding-top: 20px;
+  border-top: 1px solid #edf1f5;
+}
+
+.coa-action-cancel-button,
+.coa-action-save-button,
+.coa-action-deactivate-button {
+  min-height: 41px;
+  padding: 10px 15px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+/* ============================================================ */
+/* CANCEL BUTTON */
+/* ============================================================ */
+
+.coa-action-cancel-button {
+  border: 1px solid #dce5ec;
+  background: #ffffff;
+  color: #53657b;
+}
+
+.coa-action-cancel-button:hover:not(:disabled) {
+  background: #f3f7fa;
+}
+
+/* ============================================================ */
+/* SAVE CHANGES BUTTON */
+/* ============================================================ */
+
+.coa-action-save-button {
+  border: 1px solid #188a76;
+  background: #198f79;
+  color: #ffffff;
+}
+
+.coa-action-save-button:hover:not(:disabled) {
+  background: #147b68;
+}
+
+/* ============================================================ */
+/* DEACTIVATE BUTTON */
+/* ============================================================ */
+
+/**
+ * Red communicates an important change that
+ * the user should review before confirming.
+ */
+.coa-action-deactivate-button {
+  border: 1px solid #ab4646;
+  background: #b94f4f;
+  color: #ffffff;
+}
+
+.coa-action-deactivate-button:hover:not(:disabled) {
+  background: #a84343;
+}
+
+/* ============================================================ */
+/* DISABLED BUTTONS */
+/* ============================================================ */
+
+.coa-action-cancel-button:disabled,
+.coa-action-save-button:disabled,
+.coa-action-deactivate-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ============================================================ */
+/* ACCESSIBILITY */
+/* ============================================================ */
+
+.coa-row-action-button:focus-visible,
+.coa-action-dialog button:focus-visible {
+  outline: 2px solid #35aa94;
+  outline-offset: 3px;
+}
+
+/* ============================================================ */
+/* RESPONSIVE LAYOUT */
+/* ============================================================ */
+
+@media (max-width: 760px) {
+
+  .coa-action-form {
+    padding: 20px;
+  }
+
+  .coa-action-dialog-buttons {
+    gap: 9px;
+  }
+}
+
+/* ============================================================ */
+/* ACCOUNT DIALOG — LAYOUT AND DESIGN REFINEMENTS */
+/* ============================================================ */
+
+/**
+ * IMPORTANT:
+ *
+ * AccountActions is rendered inside the Actions
+ * column of the accounts table.
+ *
+ * That table column uses:
+ *
+ * text-align: right;
+ * white-space: nowrap;
+ *
+ * These properties can be inherited by the dialog,
+ * causing overflowing text and incorrect alignment.
+ *
+ * Explicitly reset those properties here.
+ */
+.coa-action-dialog {
+  text-align: left;
+  white-space: normal;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* ============================================================ */
+/* DIALOG CONTENT SPACING */
+/* ============================================================ */
+
+/**
+ * Give the content enough breathing room
+ * without making the dialog unnecessarily large.
+ */
+.coa-action-form {
+  width: 100%;
+  min-width: 0;
+  padding: 30px;
+}
+
+/* ============================================================ */
+/* DIALOG TITLE AND DESCRIPTION */
+/* ============================================================ */
+
+.coa-action-dialog-heading {
+  text-align: left;
+}
+
+.coa-action-dialog-heading h2 {
+  margin: 0 0 8px;
+  color: #1e3047;
+  font-size: 20px;
+  font-weight: 750;
+  letter-spacing: -0.4px;
+  line-height: 1.4;
+}
+
+.coa-action-dialog-heading p {
+  margin: 0;
+  color: #8392a5;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+/* ============================================================ */
+/* SELECTED ACCOUNT INFORMATION */
+/* ============================================================ */
+
+/**
+ * Present the account being modified as a
+ * compact summary rather than a form field.
+ */
+.coa-action-account-summary {
+  align-items: flex-start;
+  margin: 22px 0;
+  padding: 17px 18px;
+  border: 1px solid #e5ebf1;
+  border-radius: 9px;
+  background: #f7f9fc;
+  text-align: left;
+  white-space: normal;
+}
+
+.coa-action-account-code {
+  color: #188a76;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.coa-action-account-summary strong {
+  color: #25364d;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+/* ============================================================ */
+/* DEACTIVATION WARNING MESSAGES */
+/* ============================================================ */
+
+/**
+ * Display warnings inside readable containers.
+ *
+ * The first message explains the accounting impact.
+ * The second emphasizes that reactivation is not
+ * currently available.
+ */
+.coa-action-warning {
+  margin: 0 0 12px;
+  padding: 13px 15px;
+  border: 1px solid #e8edf3;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #596b80;
+  font-size: 12px;
+  line-height: 1.8;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/**
+ * Give the reactivation warning a subtle
+ * amber appearance without overwhelming the UI.
+ */
+.coa-action-warning + .coa-action-warning {
+  border-color: #f3e4cc;
+  background: #fffaf1;
+  color: #986c34;
+}
+
+/* ============================================================ */
+/* MODAL ACTION BUTTONS */
+/* ============================================================ */
+
+.coa-action-dialog-buttons {
+  align-items: center;
+  justify-content: flex-end;
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid #edf1f5;
+  text-align: right;
+}
+
+/* ============================================================ */
+/* MOBILE DIALOG REFINEMENTS */
+/* ============================================================ */
+
+@media (max-width: 760px) {
+
+  .coa-action-form {
+    padding: 22px;
+  }
+
+  .coa-action-dialog-heading h2 {
+    font-size: 18px;
+  }
+
+  .coa-action-dialog-buttons {
+    gap: 9px;
+  }
+}
