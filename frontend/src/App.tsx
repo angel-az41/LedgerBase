@@ -123,9 +123,16 @@ function App() {
         {/* Application branding */}
         <div className="sidebar-brand">
 
-          <div className="brand-logo">
-            L
-          </div>
+          {/* ====================================================== */}
+          {/* LEDGERBASE BRAND LOGO */}
+          {/* ====================================================== */}
+
+          <img
+            src="/ledgerbase-favicon.png"
+            alt=""
+            aria-hidden="true"
+            className="brand-logo"
+          />
 
           <div className="brand-copy">
             <strong>LedgerBase</strong>
