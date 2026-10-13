@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import './App.css'
 import AccountsPage from './pages/AccountsPage'
+import TransactionsPage from './pages/TransactionsPage'
 
 // ============================================================
 // LEDGERBASE — APPLICATION TYPES
@@ -349,27 +350,21 @@ function App() {
         )}
 
         {/* ==================================================== */}
-        {/* TRANSACTIONS PLACEHOLDER */}
+        {/* TRANSACTIONS PAGE */}
         {/* ==================================================== */}
 
         {activePage === 'transactions' && (
 
-          <section className="placeholder-card">
-
-            <div className="placeholder-icon">⇄</div>
-
-            <h2>Transaction Management</h2>
-
-            <p>
-              This workspace will display journal entries,
-              transaction details, and posting workflows.
-            </p>
-
-            <span className="placeholder-status">
-              Coming next
-            </span>
-
-          </section>
+          /**
+           * Display the Transaction Register for our
+           * local LedgerBase demo business.
+           *
+           * businessId is temporarily set to 1.
+           *
+           * Later, authentication and business selection
+           * will determine the current business.
+           */
+          <TransactionsPage businessId={1} />
 
         )}
 
