@@ -1,0 +1,73 @@
+/* ============================================================ */
+/* LEDGERBASE — GLOBAL STYLES */
+/* ============================================================ */
+
+/**
+ * Apply consistent box sizing throughout the application.
+ */
+* {
+  box-sizing: border-box;
+}
+
+/* ============================================================ */
+/* DOCUMENT DEFAULTS */
+/* ============================================================ */
+
+:root {
+  font-family:
+    Inter,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+
+  color: #1e293b;
+  background: #f4f7fb;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  min-width: 320px;
+}
+
+/* ============================================================ */
+/* COMMON ELEMENTS */
+/* ============================================================ */
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:focus-visible {
+  outline: 2px solid #28b49a;
+  outline-offset: 3px;
+}
+
+a {
+  color: inherit;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin-top: 0;
+}

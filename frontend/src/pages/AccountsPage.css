@@ -1,0 +1,625 @@
+/* ============================================================ */
+/* LEDGERBASE — CHART OF ACCOUNTS STYLES */
+/* ============================================================ */
+
+/**
+ * This stylesheet controls the Chart of Accounts page.
+ *
+ * Design principles:
+ *
+ * - Professional enterprise accounting interface
+ * - Navy text and restrained teal accents
+ * - White cards with subtle borders
+ * - Readable account tables
+ * - Clear status indicators
+ * - Consistent action buttons
+ * - Responsive layouts
+ *
+ * All classes use the "coa-" prefix to avoid
+ * conflicts with other React components.
+ */
+
+/* ============================================================ */
+/* PAGE CONTAINER */
+/* ============================================================ */
+
+.coa-page {
+  width: 100%;
+}
+
+/* ============================================================ */
+/* ACCOUNT SUMMARY GRID */
+/* ============================================================ */
+
+.coa-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+  margin-bottom: 25px;
+}
+
+/* ============================================================ */
+/* ACCOUNT SUMMARY CARDS */
+/* ============================================================ */
+
+.coa-summary-card {
+  padding: 24px;
+  border: 1px solid #e6ebf1;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.coa-summary-card p {
+  margin: 0 0 12px;
+  color: #76879e;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.coa-summary-card strong {
+  color: #1e3047;
+  font-size: 29px;
+  font-weight: 750;
+}
+
+/* ============================================================ */
+/* ACCOUNT OPERATION SUCCESS NOTIFICATION */
+/* ============================================================ */
+
+/**
+ * Display confirmation after account operations:
+ *
+ * - Creating an account
+ * - Renaming an account
+ * - Deactivating an account
+ *
+ * The message comes from the completed API operation.
+ */
+.coa-success-notice {
+  margin: 0 0 20px;
+  padding: 14px 17px;
+  border: 1px solid #cbe9dd;
+  border-radius: 8px;
+  background: #eef9f3;
+  color: #237b5d;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+/* ============================================================ */
+/* ACCOUNT TABLE CONTAINER */
+/* ============================================================ */
+
+.coa-table-card {
+  overflow: hidden;
+  border: 1px solid #e6ebf1;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+/* ============================================================ */
+/* ACCOUNT TABLE HEADING */
+/* ============================================================ */
+
+.coa-table-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 25px;
+}
+
+.coa-table-heading h2 {
+  margin: 0 0 8px;
+  color: #22334b;
+  font-size: 17px;
+  font-weight: 750;
+}
+
+.coa-table-heading p {
+  margin: 0;
+  color: #8493a7;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* ============================================================ */
+/* TABLE ACTION BUTTON CONTAINER */
+/* ============================================================ */
+
+/**
+ * Place New Account and Refresh next to each other
+ * in the upper-right corner of the table.
+ */
+.coa-table-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* ============================================================ */
+/* NEW ACCOUNT BUTTON */
+/* ============================================================ */
+
+/**
+ * Teal represents primary actions.
+ *
+ * Creating an account is the primary action
+ * available on the Chart of Accounts page.
+ */
+.coa-create-button {
+  padding: 10px 16px;
+  border: 1px solid #188a76;
+  border-radius: 8px;
+  background: #198f79;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.coa-create-button:hover:not(:disabled) {
+  background: #147b68;
+}
+
+.coa-create-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ============================================================ */
+/* REFRESH AND RETRY BUTTONS */
+/* ============================================================ */
+
+/**
+ * Secondary actions use white backgrounds
+ * and subtle borders rather than solid fills.
+ */
+.coa-refresh-button {
+  padding: 10px 15px;
+  border: 1px solid #dce5ec;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #38546a;
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.coa-refresh-button:hover:not(:disabled) {
+  background: #f3f7fa;
+}
+
+.coa-refresh-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ============================================================ */
+/* ACCOUNT SEARCH AND FILTER TOOLBAR */
+/* ============================================================ */
+
+.coa-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  padding: 0 25px 20px;
+}
+
+/* ============================================================ */
+/* ACCOUNT SEARCH FIELD */
+/* ============================================================ */
+
+/**
+ * The search input is wrapped in a label
+ * so its icon and input appear as one field.
+ */
+.coa-search {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+  max-width: 430px;
+  min-height: 41px;
+  padding: 0 13px;
+  border: 1px solid #dce5ec;
+  border-radius: 8px;
+  color: #8c9caf;
+}
+
+.coa-search:focus-within {
+  border-color: #35aa94;
+}
+
+.coa-search input {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: #243249;
+  font-size: 12px;
+}
+
+.coa-search input::placeholder {
+  color: #9aa7b6;
+}
+
+/* ============================================================ */
+/* ACCOUNT STATUS FILTER */
+/* ============================================================ */
+
+.coa-status-filter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #77869a;
+  font-size: 12px;
+}
+
+.coa-status-filter select {
+  min-height: 41px;
+  padding: 0 12px;
+  border: 1px solid #dce5ec;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #34475f;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.coa-status-filter select:focus {
+  border-color: #35aa94;
+}
+
+/* ============================================================ */
+/* ACCOUNT DATA TABLE WRAPPER */
+/* ============================================================ */
+
+/**
+ * Allow horizontal scrolling if the table
+ * becomes wider than the viewport.
+ *
+ * This is especially useful on mobile devices.
+ */
+.coa-table-scroll {
+  width: 100%;
+  overflow-x: auto;
+}
+
+/* ============================================================ */
+/* ACCOUNT DATA TABLE */
+/* ============================================================ */
+
+/**
+ * The table now contains six columns:
+ *
+ * 1. Account Code
+ * 2. Account Name
+ * 3. Account Type
+ * 4. Status
+ * 5. Created
+ * 6. Actions
+ *
+ * Increase minimum width to accommodate
+ * Rename and Deactivate controls.
+ */
+.coa-table {
+  width: 100%;
+  min-width: 850px;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+/* ============================================================ */
+/* TABLE HEADER */
+/* ============================================================ */
+
+.coa-table thead {
+  background: #f8fafc;
+}
+
+.coa-table th {
+  padding: 15px 20px;
+  border-top: 1px solid #edf1f5;
+  border-bottom: 1px solid #edf1f5;
+  color: #8491a3;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* ============================================================ */
+/* TABLE ROWS AND CELLS */
+/* ============================================================ */
+
+.coa-table td {
+  padding: 18px 20px;
+  border-bottom: 1px solid #f0f3f6;
+  color: #53647b;
+  font-size: 12px;
+}
+
+.coa-table tbody tr:hover {
+  background: #fbfcfd;
+}
+
+/* ============================================================ */
+/* ACCOUNT CODE COLUMN */
+/* ============================================================ */
+
+/**
+ * Use a monospace font for account codes
+ * to make numeric identifiers easier to scan.
+ */
+.coa-account-code {
+  color: #287e75 !important;
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    monospace;
+  font-weight: 700;
+}
+
+/* ============================================================ */
+/* ACCOUNT NAME COLUMN */
+/* ============================================================ */
+
+.coa-account-name {
+  color: #25364d !important;
+  font-weight: 650;
+}
+
+/* ============================================================ */
+/* ACCOUNT CREATION DATE COLUMN */
+/* ============================================================ */
+
+.coa-date {
+  color: #8e9bae;
+  white-space: nowrap;
+}
+
+/* ============================================================ */
+/* ACCOUNT MANAGEMENT ACTIONS COLUMN */
+/* ============================================================ */
+
+/**
+ * Keep the Actions column aligned to the right.
+ *
+ * AccountActions supplies the Rename and
+ * Deactivate buttons for each active account.
+ *
+ * Inactive accounts display "No actions".
+ */
+.coa-actions-column {
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* ============================================================ */
+/* ACCOUNT STATUS BADGES */
+/* ============================================================ */
+
+/**
+ * Display account status using subtle colors.
+ *
+ * Active:
+ *   Green
+ *
+ * Inactive:
+ *   Neutral gray
+ */
+.coa-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+/* ============================================================ */
+/* ACTIVE ACCOUNT STATUS */
+/* ============================================================ */
+
+.coa-status-badge.is-active {
+  background: #e8f8f1;
+  color: #218666;
+}
+
+/* ============================================================ */
+/* INACTIVE ACCOUNT STATUS */
+/* ============================================================ */
+
+.coa-status-badge.is-inactive {
+  background: #f1f3f6;
+  color: #7b8798;
+}
+
+/* ============================================================ */
+/* STATUS INDICATOR DOT */
+/* ============================================================ */
+
+.coa-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* ============================================================ */
+/* LOADING, EMPTY, AND ERROR STATES */
+/* ============================================================ */
+
+/**
+ * Center informational messages inside the table
+ * when no data is available.
+ */
+.coa-message {
+  display: flex;
+  min-height: 235px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 35px;
+  text-align: center;
+}
+
+.coa-message h3 {
+  margin: 0;
+  color: #25364d;
+  font-size: 16px;
+}
+
+.coa-message p {
+  max-width: 370px;
+  margin: 0;
+  color: #8c9aac;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+/* ============================================================ */
+/* ERROR STATE */
+/* ============================================================ */
+
+/**
+ * Highlight the heading if the account listing
+ * request fails.
+ *
+ * The user can retry through Try Again.
+ */
+.coa-error-state h3 {
+  color: #b53f46;
+}
+
+/* ============================================================ */
+/* LOADING SPINNER */
+/* ============================================================ */
+
+.coa-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid #e2ebe8;
+  border-top-color: #39b49c;
+  border-radius: 50%;
+  animation: coa-spin 0.8s linear infinite;
+}
+
+/**
+ * Rotate the loading indicator continuously.
+ */
+@keyframes coa-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ============================================================ */
+/* ACCOUNT TABLE FOOTER */
+/* ============================================================ */
+
+.coa-table-footer {
+  padding: 17px 25px;
+  border-top: 1px solid #f0f3f6;
+  color: #8d99aa;
+  font-size: 11px;
+}
+
+/* ============================================================ */
+/* ACCESSIBILITY UTILITIES */
+/* ============================================================ */
+
+/**
+ * Hide text visually while keeping it
+ * accessible to screen readers.
+ */
+.coa-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ============================================================ */
+/* KEYBOARD FOCUS */
+/* ============================================================ */
+
+/**
+ * Provide visible keyboard focus indicators.
+ */
+.coa-create-button:focus-visible,
+.coa-refresh-button:focus-visible,
+.coa-status-filter select:focus-visible,
+.coa-search:focus-within {
+  outline: 2px solid #35aa94;
+  outline-offset: 2px;
+}
+
+/* ============================================================ */
+/* RESPONSIVE LAYOUT */
+/* ============================================================ */
+
+@media (max-width: 760px) {
+
+  /* Stack account summary cards vertically. */
+  .coa-summary-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  /* Stack the table heading and toolbar. */
+  .coa-table-heading,
+  .coa-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  /* Allow primary and secondary buttons to wrap. */
+  .coa-table-actions {
+    flex-wrap: wrap;
+  }
+
+  /* Allow the search input to fill the page width. */
+  .coa-search {
+    max-width: none;
+  }
+
+  /* Keep the status dropdown accessible. */
+  .coa-status-filter {
+    justify-content: space-between;
+  }
+
+  /**
+   * The account table remains horizontally scrollable,
+   * preserving all six columns without overcrowding.
+   */
+  .coa-table-scroll {
+    overflow-x: auto;
+  }
+}
+
+/* ============================================================ */
+/* REDUCED MOTION PREFERENCES */
+/* ============================================================ */
+
+/**
+ * Respect users who prefer reduced animation.
+ */
+@media (prefers-reduced-motion: reduce) {
+
+  .coa-spinner {
+    animation: none;
+  }
+}
