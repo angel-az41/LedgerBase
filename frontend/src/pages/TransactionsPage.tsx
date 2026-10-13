@@ -7,6 +7,8 @@ import {
 
 import NewJournalEntryForm from '../components/transactions/NewJournalEntryForm'
 
+import TransactionDetails from '../components/transactions/TransactionDetails'
+
 import './TransactionsPage.css'
 
 // ============================================================
@@ -27,16 +29,15 @@ import './TransactionsPage.css'
  * - Filter by posting status
  * - Sort transactions by accounting date
  * - Refresh transaction data
- * - Open the New Journal Entry form
- * - Create draft transactions
+ * - Create draft journal entries
+ * - View transaction details and ledger entries
  * - Display success notifications
  * - Handle loading, error, and empty states
  *
  * Future enhancements:
  *
- * - View transaction details and ledger entries
  * - Post draft transactions
- * - Display transaction amounts
+ * - Display transaction amounts in the register
  * - Implement transaction reversal workflows
  */
 
@@ -49,9 +50,6 @@ import './TransactionsPage.css'
  * from its parent component, App.tsx.
  *
  * During local development, businessId is set to 1.
- *
- * Authentication and business selection will eventually
- * determine the correct business automatically.
  */
 interface TransactionsPageProps {
   businessId: number
@@ -61,10 +59,6 @@ interface TransactionsPageProps {
 // TRANSACTION FILTER TYPES
 // ============================================================
 
-/**
- * Define the posting status filters supported
- * by our current transaction backend.
- */
 type TransactionStatusFilter = 'all' | 'DRAFT' | 'POSTED'
 
 // ============================================================
@@ -83,6 +77,7 @@ type TransactionStatusFilter = 'all' | 'DRAFT' | 'POSTED'
  * shifting due to browser time zones.
  */
 function formatTransactionDate(date: string): string {
+
   return new Intl.DateTimeFormat('en-US', {
     year: 'numeric',
     month: 'short',
@@ -116,28 +111,16 @@ function TransactionsPage({
   // API REQUEST STATE
   // ============================================================
 
-  /**
-   * Track whether transaction data is currently loading.
-   */
   const [isLoading, setIsLoading] = useState(true)
 
-  /**
-   * Store API errors returned by the backend.
-   */
   const [errorMessage, setErrorMessage] = useState('')
 
   // ============================================================
   // SEARCH AND FILTER STATE
   // ============================================================
 
-  /**
-   * Store the search text entered by the user.
-   */
   const [searchQuery, setSearchQuery] = useState('')
 
-  /**
-   * Track the selected transaction status filter.
-   */
   const [statusFilter, setStatusFilter] =
     useState<TransactionStatusFilter>('all')
 
@@ -158,20 +141,31 @@ function TransactionsPage({
   /**
    * Control whether the New Journal Entry form
    * appears above the Transaction Register.
-   *
-   * false: Form is hidden.
-   * true:  Form is visible.
    */
   const [isCreateFormOpen, setIsCreateFormOpen] =
     useState(false)
+
+  // ============================================================
+  // SELECTED TRANSACTION DETAILS STATE
+  // ============================================================
+
+  /**
+   * Store the ID of the transaction being viewed.
+   *
+   * null means the Transaction Details panel is closed.
+   *
+   * This is a new feature.
+   */
+  const [selectedTransactionId, setSelectedTransactionId] =
+    useState<number | null>(null)
 
   // ============================================================
   // SUCCESS NOTIFICATION STATE
   // ============================================================
 
   /**
-   * Display a confirmation message after
-   * successfully creating a draft transaction.
+   * Display a confirmation after successfully
+   * creating a draft transaction.
    */
   const [successMessage, setSuccessMessage] =
     useState('')
@@ -207,8 +201,6 @@ function TransactionsPage({
       try {
 
         /**
-         * Send:
-         *
          * GET /api/v1/businesses/{businessId}/transactions
          *
          * Spring Boot retrieves records from PostgreSQL.
@@ -238,10 +230,8 @@ function TransactionsPage({
       }
     }
 
-    // Start the backend request.
     void loadTransactions()
 
-    // Ignore responses after the component unmounts.
     return () => {
       cancelled = true
     }
@@ -253,7 +243,7 @@ function TransactionsPage({
   // ============================================================
 
   /**
-   * Calculate summary metrics from actual database records.
+   * Calculate summary metrics from real database records.
    *
    * These statistics are not hardcoded.
    */
@@ -268,8 +258,8 @@ function TransactionsPage({
   ).length
 
   /**
-   * Hide summary values while loading or if an
-   * API error occurs, avoiding misleading results.
+   * Hide summary values while loading or if
+   * an API error occurs.
    */
   const showStatistics = !isLoading && !errorMessage
 
@@ -323,7 +313,7 @@ function TransactionsPage({
        * Display newest accounting dates first.
        *
        * When two transactions share a date,
-       * display the higher transaction ID first.
+       * show the higher transaction ID first.
        */
       .sort((first, second) => {
 
@@ -361,11 +351,14 @@ function TransactionsPage({
   /**
    * Open the transaction creation form.
    *
-   * Clear any previous success notification.
+   * Close Transaction Details so only one
+   * panel is displayed at a time.
    */
   function handleOpenCreateForm(): void {
 
     setSuccessMessage('')
+
+    setSelectedTransactionId(null)
 
     setIsCreateFormOpen(true)
   }
@@ -388,43 +381,66 @@ function TransactionsPage({
   // ============================================================
 
   /**
-   * NewJournalEntryForm calls this function after
-   * the backend successfully saves a transaction.
+   * Called when the backend successfully
+   * creates a draft transaction.
    *
    * We then:
    *
    * 1. Close the creation form.
    * 2. Display a success notification.
-   * 3. Refresh the transaction list.
-   *
-   * The newly created transaction is a DRAFT.
-   * Posting happens in a separate workflow.
+   * 3. Refresh the Transaction Register.
    */
   function handleTransactionCreated(
     transaction: LedgerTransaction,
   ): void {
 
-    // ==========================================================
-    // CLOSE JOURNAL ENTRY FORM
-    // ==========================================================
-
     setIsCreateFormOpen(false)
 
-    // ==========================================================
-    // DISPLAY SUCCESS NOTIFICATION
-    // ==========================================================
+    setSelectedTransactionId(null)
 
     setSuccessMessage(
       `Draft transaction #${transaction.id} created successfully.`,
     )
 
-    // ==========================================================
-    // REFRESH TRANSACTION REGISTER
-    // ==========================================================
-
     setRefreshVersion(
       (previousVersion) => previousVersion + 1,
     )
+  }
+
+  // ============================================================
+  // OPEN TRANSACTION DETAILS
+  // ============================================================
+
+  /**
+   * NEW FEATURE
+   *
+   * Open the Transaction Details component
+   * for the selected transaction.
+   *
+   * TransactionDetails will fetch the actual
+   * journal entries from Spring Boot.
+   */
+  function handleViewDetails(transactionId: number): void {
+
+    setIsCreateFormOpen(false)
+
+    setSuccessMessage('')
+
+    setSelectedTransactionId(transactionId)
+  }
+
+  // ============================================================
+  // CLOSE TRANSACTION DETAILS
+  // ============================================================
+
+  /**
+   * Closing the details panel is read-only.
+   *
+   * No database records are changed.
+   */
+  function handleCloseDetails(): void {
+
+    setSelectedTransactionId(null)
   }
 
   // ============================================================
@@ -463,6 +479,20 @@ function TransactionsPage({
           businessId={businessId}
           onCreated={handleTransactionCreated}
           onCancel={handleCancelCreateForm}
+        />
+
+      )}
+
+      {/* ====================================================== */}
+      {/* TRANSACTION DETAILS PANEL — NEW */}
+      {/* ====================================================== */}
+
+      {selectedTransactionId !== null && (
+
+        <TransactionDetails
+          businessId={businessId}
+          transactionId={selectedTransactionId}
+          onClose={handleCloseDetails}
         />
 
       )}
@@ -530,6 +560,7 @@ function TransactionsPage({
         <div className="transactions-table-heading">
 
           {/* Transaction Register title */}
+
           <div>
 
             <h2>Transaction Register</h2>
@@ -765,6 +796,17 @@ function TransactionsPage({
                       Created By
                     </th>
 
+                    {/* ======================================== */}
+                    {/* ACTIONS COLUMN — NEW */}
+                    {/* ======================================== */}
+
+                    <th
+                      scope="col"
+                      className="transactions-actions-column"
+                    >
+                      Actions
+                    </th>
+
                   </tr>
 
                 </thead>
@@ -841,6 +883,25 @@ function TransactionsPage({
                         User #{transaction.createdBy}
                       </td>
 
+                      {/* ======================================== */}
+                      {/* VIEW DETAILS BUTTON — NEW */}
+                      {/* ======================================== */}
+
+                      <td className="transactions-actions-column">
+
+                        <button
+                          type="button"
+                          className="transactions-view-button"
+                          aria-label={`View transaction ${transaction.id} details`}
+                          onClick={() =>
+                            handleViewDetails(transaction.id)
+                          }
+                        >
+                          View Details
+                        </button>
+
+                      </td>
+
                     </tr>
 
                   ))}
@@ -872,7 +933,6 @@ function TransactionsPage({
       </section>
 
     </section>
-
   )
 }
 

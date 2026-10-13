@@ -591,3 +591,47 @@
   font-weight: 600;
   line-height: 1.6;
 }
+
+/* ============================================================ */
+/* TRANSACTION ACTIONS COLUMN */
+/* ============================================================ */
+
+.transactions-actions-column {
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* ============================================================ */
+/* VIEW DETAILS BUTTON */
+/* ============================================================ */
+
+/**
+ * Use a subtle outlined button for viewing
+ * transaction details.
+ *
+ * This is a read-only action and does not
+ * modify any financial records.
+ */
+
+.transactions-view-button {
+  padding: 9px 13px;
+  border: 1px solid #dce5ec;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #287e75;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.transactions-view-button:hover {
+  border-color: #b9e2d7;
+  background: #f2faf7;
+}
+
+.transactions-view-button:focus-visible {
+  outline: 2px solid #35aa94;
+  outline-offset: 2px;
+}
