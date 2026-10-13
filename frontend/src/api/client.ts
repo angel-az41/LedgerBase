@@ -1,74 +1,69 @@
 // ============================================================
-// LEDGERBASE API CLIENT
+// LEDGERBASE — SHARED API CLIENT
 // ============================================================
 
 /**
- * Shared HTTP client for communicating with Spring Boot.
+ * This module provides reusable functions for sending
+ * HTTP requests from React to our Spring Boot backend.
+ *
+ * React components should not repeatedly implement
+ * fetch(), JSON parsing, and HTTP error handling.
+ *
+ * Instead, each accounting feature uses these helpers.
  *
  * During local development, Vite forwards requests
  * beginning with /api to http://localhost:8080.
- *
- * This file centralizes:
- * - GET requests
- * - POST requests
- * - PATCH requests
- * - JSON response handling
- * - API error handling
  */
 
 // ============================================================
-// HTTP RESPONSE VALIDATION
+// HTTP ERROR HANDLING
 // ============================================================
 
 /**
- * Check whether a backend request succeeded.
+ * Verify that an HTTP request succeeded.
  *
- * Successful HTTP status codes range from 200 to 299.
+ * response.ok is true for HTTP status codes 200–299.
  *
- * If the request fails, attempt to extract the
- * error message returned by Spring Boot.
- *
- * This method works for both JSON responses
- * and responses without a body.
+ * If a request fails, try to read an error message
+ * returned by the Spring Boot backend.
  */
 async function ensureSuccessfulResponse(
   response: Response,
 ): Promise<void> {
 
-  // A successful response requires no error handling.
+  // A successful response requires no further checks.
   if (response.ok) {
     return
   }
 
-  // Provide a default error message.
+  // Fall back to the HTTP status when no message exists.
   let errorMessage = `API request failed (${response.status})`
 
   try {
 
-    /**
-     * Attempt to read Spring Boot's JSON error body.
-     *
-     * Example:
-     *
-     * {
-     *   "error": "Account not found"
-     * }
-     */
+    // Read the backend response as JSON.
     const errorBody: unknown = await response.json()
 
+    /**
+     * Spring Boot may return an error object.
+     *
+     * We only use its "error" property when it
+     * contains a meaningful string.
+     */
     if (
       typeof errorBody === 'object' &&
       errorBody !== null &&
       'error' in errorBody &&
-      typeof errorBody.error === 'string'
+      typeof errorBody.error === 'string' &&
+      errorBody.error.trim().length > 0
     ) {
       errorMessage = errorBody.error
     }
 
   } catch {
 
-    // Keep the default message if the response
-    // is empty or does not contain valid JSON.
+    // The response may be empty or may not contain JSON.
+    // Keep the default error message in that case.
   }
 
   throw new Error(errorMessage)
@@ -79,37 +74,40 @@ async function ensureSuccessfulResponse(
 // ============================================================
 
 /**
- * Read a successful JSON response.
+ * Convert a successful HTTP response into typed data.
  *
- * T represents the expected TypeScript data type.
+ * T represents the data structure we expect.
  *
- * This function should only be used for endpoints
- * that return a JSON response body.
+ * Examples:
  *
- * Endpoints returning HTTP 204 No Content should
- * use ensureSuccessfulResponse() instead.
+ * T = Account[]
+ * T = Account
+ * T = LedgerTransaction[]
+ *
+ * TypeScript helps check how the returned data is used.
+ *
+ * Note: A TypeScript type does not validate JSON at
+ * runtime. The backend remains responsible for
+ * returning data that matches the API contract.
  */
 async function parseJsonResponse<T>(
   response: Response,
 ): Promise<T> {
 
-  // Check the response status before parsing JSON.
   await ensureSuccessfulResponse(response)
 
-  // Convert the response body into a JavaScript value.
   return (await response.json()) as T
 }
 
 // ============================================================
-// HTTP GET REQUESTS
+// HTTP GET
 // ============================================================
 
 /**
  * Retrieve JSON data from Spring Boot.
  *
- * Example:
- *
- * getJson<Account[]>('/api/v1/businesses/1/accounts')
+ * GET requests should only retrieve information,
+ * not modify financial records.
  */
 export async function getJson<T>(
   path: string,
@@ -126,17 +124,19 @@ export async function getJson<T>(
 }
 
 // ============================================================
-// HTTP POST REQUESTS
+// HTTP POST
 // ============================================================
 
 /**
- * Send JSON data to Spring Boot.
+ * Send JSON data to the backend.
  *
- * TResponse represents the returned data type.
- * TRequest represents the request body type.
+ * POST will be used to create:
+ * - General ledger accounts
+ * - Financial transactions
+ * - Draft journal entries
  *
- * This is used when creating accounts
- * and will also support transaction creation.
+ * TResponse describes the returned data.
+ * TRequest describes the submitted data.
  */
 export async function postJson<TResponse, TRequest>(
   path: string,
@@ -156,69 +156,51 @@ export async function postJson<TResponse, TRequest>(
 }
 
 // ============================================================
-// HTTP PATCH REQUESTS
+// HTTP PATCH
 // ============================================================
 
 /**
- * Send a PATCH request to update an existing record.
+ * Send an update request to Spring Boot.
  *
- * The request body is optional because our backend
- * currently supports two PATCH operations:
+ * The request body is optional.
  *
- * 1. Rename an account:
+ * Current examples:
  *
- * PATCH /api/v1/businesses/1/accounts/2
+ * Rename account:
+ * PATCH /api/v1/businesses/1/accounts/6
+ * Body: { "name": "Operating Checking Account" }
  *
- * Body:
- * {
- *   "name": "Updated Account Name"
- * }
- *
- * 2. Deactivate an account:
- *
- * PATCH /api/v1/businesses/1/accounts/2/deactivate
- *
- * No request body is required.
+ * Deactivate account:
+ * PATCH /api/v1/businesses/1/accounts/6/deactivate
  *
  * Both endpoints return HTTP 204 No Content.
  *
- * Therefore, we validate the response status
- * without attempting to parse an empty JSON body.
+ * Therefore, we must not attempt to parse their
+ * successful responses as JSON.
  */
 export async function patchNoContent(
   path: string,
   body?: object,
 ): Promise<void> {
 
-  // Construct the request headers.
   const headers: Record<string, string> = {
     Accept: 'application/json',
   }
 
-  /**
-   * Only include Content-Type when sending JSON.
-   *
-   * The deactivate endpoint does not need
-   * a request body.
-   */
+  // Only declare JSON content when a body is present.
   if (body !== undefined) {
     headers['Content-Type'] = 'application/json'
   }
 
-  // Send the PATCH request.
   const response = await fetch(path, {
     method: 'PATCH',
     headers,
-    body: body === undefined
-      ? undefined
-      : JSON.stringify(body),
+    body:
+      body === undefined
+        ? undefined
+        : JSON.stringify(body),
   })
 
-  /**
-   * Check whether Spring Boot accepted the update.
-   *
-   * HTTP 204 is successful, even though the
-   * response does not contain JSON.
-   */
+  // HTTP 204 is a successful response without JSON.
   await ensureSuccessfulResponse(response)
 }

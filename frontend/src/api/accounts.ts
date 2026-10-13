@@ -5,13 +5,37 @@ import {
 } from './client'
 
 // ============================================================
+// LEDGERBASE — ACCOUNTS API
+// ============================================================
+
+/**
+ * This module defines the account data structures
+ * and API functions used by the React frontend.
+ *
+ * All account operations communicate with our
+ * existing Java Spring Boot REST API.
+ *
+ * The backend remains responsible for:
+ * - Account validation
+ * - Business logic
+ * - Database operations
+ * - Preventing duplicate account codes
+ * - Preserving accounting history
+ */
+
+// ============================================================
 // ACCOUNT TYPE DEFINITIONS
 // ============================================================
 
 /**
- * LedgerBase's supported account classifications.
+ * The five account classifications supported
+ * by our current LedgerBase backend.
  *
- * These values match our Spring Boot backend.
+ * These values match the accountType values
+ * returned by Spring Boot.
+ *
+ * Example:
+ * "ASSET"
  */
 export type AccountType =
   | 'ASSET'
@@ -21,14 +45,26 @@ export type AccountType =
   | 'EXPENSE'
 
 /**
- * Represent an account returned by Spring Boot.
+ * Represent a general ledger account.
  *
- * These fields match the JSON returned
- * by our Accounts REST API.
+ * This interface matches the account JSON
+ * returned by the backend.
+ *
+ * Example:
+ *
+ * {
+ *   "id": 6,
+ *   "businessId": 1,
+ *   "code": "1010",
+ *   "name": "Operating Checking Account",
+ *   "accountType": "ASSET",
+ *   "active": true,
+ *   "createdAt": "2026-10-12T20:05:02.433124Z"
+ * }
  */
 export interface Account {
 
-  // Unique account identifier.
+  // Unique database identifier.
   id: number
 
   // Business that owns the account.
@@ -43,24 +79,22 @@ export interface Account {
   // Financial account classification.
   accountType: AccountType
 
-  // Indicates whether the account is active.
+  // Whether the account can be used in new entries.
   active: boolean
 
-  // Database creation timestamp.
+  // Timestamp when the account was created.
   createdAt: string
 }
 
 // ============================================================
-// CREATE ACCOUNT REQUEST DTO
+// CREATE ACCOUNT REQUEST
 // ============================================================
 
 /**
- * Information required to create an account.
+ * Data required when creating an account.
  *
- * The backend generates:
- * - Account ID
- * - Creation timestamp
- * - Initial active status
+ * Spring Boot automatically generates the
+ * account ID and creation timestamp.
  */
 export interface CreateAccountRequest {
   code: string
@@ -69,17 +103,15 @@ export interface CreateAccountRequest {
 }
 
 // ============================================================
-// RENAME ACCOUNT REQUEST DTO
+// RENAME ACCOUNT REQUEST
 // ============================================================
 
 /**
- * Information required to rename an account.
+ * Data required when renaming an account.
  *
- * This matches the backend RenameAccountRequest DTO.
+ * Only the account name changes.
  *
- * Only the name changes.
- *
- * The account code and type remain unchanged.
+ * The account code and account type remain unchanged.
  */
 export interface RenameAccountRequest {
   name: string
@@ -90,9 +122,16 @@ export interface RenameAccountRequest {
 // ============================================================
 
 /**
- * Retrieve all accounts belonging to one business.
+ * Retrieve all accounts for a business.
  *
- * GET /api/v1/businesses/{businessId}/accounts
+ * Example:
+ *
+ * getAccounts(1)
+ *
+ * Sends:
+ * GET /api/v1/businesses/1/accounts
+ *
+ * Returns an array of Account objects.
  */
 export async function getAccounts(
   businessId: number,
@@ -110,9 +149,18 @@ export async function getAccounts(
 /**
  * Create a new general ledger account.
  *
- * POST /api/v1/businesses/{businessId}/accounts
+ * Example:
  *
- * Returns the newly created Account object.
+ * createAccount(1, {
+ *   code: '1020',
+ *   name: 'Business Savings',
+ *   accountType: 'ASSET',
+ * })
+ *
+ * Sends:
+ * POST /api/v1/businesses/1/accounts
+ *
+ * Returns the newly created account.
  */
 export async function createAccount(
   businessId: number,
@@ -130,20 +178,19 @@ export async function createAccount(
 // ============================================================
 
 /**
- * Change the name of an existing account.
- *
- * PATCH /api/v1/businesses/{businessId}/accounts/{accountId}
+ * Rename an existing active account.
  *
  * Example:
  *
- * renameAccount(1, 2, {
+ * renameAccount(1, 6, {
  *   name: 'Operating Checking Account',
  * })
  *
- * The backend currently allows renaming
- * existing active accounts.
+ * Sends:
+ * PATCH /api/v1/businesses/1/accounts/6
  *
- * On success, Spring Boot returns HTTP 204.
+ * Spring Boot returns HTTP 204 No Content
+ * when the operation succeeds.
  */
 export async function renameAccount(
   businessId: number,
@@ -162,23 +209,26 @@ export async function renameAccount(
 // ============================================================
 
 /**
- * Deactivate an existing account without deleting it.
- *
- * PATCH /api/v1/businesses/{businessId}/accounts/{accountId}/deactivate
+ * Deactivate an existing account.
  *
  * Example:
  *
- * deactivateAccount(1, 2)
+ * deactivateAccount(1, 6)
  *
- * This operation:
- * - Sets the account to inactive.
- * - Preserves the account's accounting history.
- * - Prevents it from being used in new transactions
- *   through the current service validation.
+ * Sends:
+ * PATCH /api/v1/businesses/1/accounts/6/deactivate
  *
- * The endpoint requires no JSON request body.
+ * The account is marked inactive instead of
+ * being deleted from PostgreSQL.
  *
- * On success, Spring Boot returns HTTP 204.
+ * Existing financial history is preserved.
+ *
+ * IMPORTANT:
+ * Our backend does not currently provide a
+ * reactivation endpoint. The React interface
+ * will require confirmation before deactivation.
+ *
+ * Spring Boot returns HTTP 204 No Content.
  */
 export async function deactivateAccount(
   businessId: number,
