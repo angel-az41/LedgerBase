@@ -1,3 +1,4 @@
+
 import { useEffect, useMemo, useState } from 'react'
 
 import {
@@ -25,20 +26,22 @@ import './TransactionsPage.css'
  *
  * - Retrieve financial transactions
  * - Display transaction statistics
- * - Search transactions
+ * - Search transactions by description or ID
  * - Filter by posting status
  * - Sort transactions by accounting date
  * - Refresh transaction data
  * - Create draft journal entries
  * - View transaction details and ledger entries
+ * - Post draft transactions
+ * - Refresh the register after posting
  * - Display success notifications
  * - Handle loading, error, and empty states
  *
  * Future enhancements:
  *
- * - Post draft transactions
  * - Display transaction amounts in the register
  * - Implement transaction reversal workflows
+ * - Support authenticated users and permissions
  */
 
 // ============================================================
@@ -59,6 +62,10 @@ interface TransactionsPageProps {
 // TRANSACTION FILTER TYPES
 // ============================================================
 
+/**
+ * Filter values must match the transaction statuses
+ * returned by the Spring Boot backend.
+ */
 type TransactionStatusFilter = 'all' | 'DRAFT' | 'POSTED'
 
 // ============================================================
@@ -73,8 +80,8 @@ type TransactionStatusFilter = 'all' | 'DRAFT' | 'POSTED'
  *
  * 2026-10-13 -> Oct 13, 2026
  *
- * Using UTC prevents the accounting date from
- * shifting due to browser time zones.
+ * UTC prevents the accounting date from shifting
+ * when the browser is in a different timezone.
  */
 function formatTransactionDate(date: string): string {
 
@@ -111,16 +118,28 @@ function TransactionsPage({
   // API REQUEST STATE
   // ============================================================
 
+  /**
+   * Track whether the transaction register is loading.
+   */
   const [isLoading, setIsLoading] = useState(true)
 
+  /**
+   * Store any backend errors.
+   */
   const [errorMessage, setErrorMessage] = useState('')
 
   // ============================================================
   // SEARCH AND FILTER STATE
   // ============================================================
 
+  /**
+   * Store the text used to search transactions.
+   */
   const [searchQuery, setSearchQuery] = useState('')
 
+  /**
+   * Track the currently selected posting status filter.
+   */
   const [statusFilter, setStatusFilter] =
     useState<TransactionStatusFilter>('all')
 
@@ -129,8 +148,14 @@ function TransactionsPage({
   // ============================================================
 
   /**
-   * Increasing refreshVersion causes useEffect
-   * to retrieve the latest transactions.
+   * Increasing refreshVersion triggers useEffect,
+   * retrieving the latest records from Spring Boot.
+   *
+   * This is used after:
+   *
+   * - Clicking Refresh
+   * - Creating a draft transaction
+   * - Posting an existing transaction
    */
   const [refreshVersion, setRefreshVersion] = useState(0)
 
@@ -146,15 +171,13 @@ function TransactionsPage({
     useState(false)
 
   // ============================================================
-  // SELECTED TRANSACTION DETAILS STATE
+  // TRANSACTION DETAILS STATE
   // ============================================================
 
   /**
    * Store the ID of the transaction being viewed.
    *
    * null means the Transaction Details panel is closed.
-   *
-   * This is a new feature.
    */
   const [selectedTransactionId, setSelectedTransactionId] =
     useState<number | null>(null)
@@ -164,8 +187,8 @@ function TransactionsPage({
   // ============================================================
 
   /**
-   * Display a confirmation after successfully
-   * creating a draft transaction.
+   * Display success messages after creating
+   * or posting a financial transaction.
    */
   const [successMessage, setSuccessMessage] =
     useState('')
@@ -181,6 +204,7 @@ function TransactionsPage({
    * 2. The business ID changes.
    * 3. The user clicks Refresh.
    * 4. A new draft transaction is created.
+   * 5. A draft transaction is successfully posted.
    *
    * The cancelled flag prevents outdated requests
    * from modifying React state.
@@ -203,7 +227,8 @@ function TransactionsPage({
         /**
          * GET /api/v1/businesses/{businessId}/transactions
          *
-         * Spring Boot retrieves records from PostgreSQL.
+         * Spring Boot retrieves real records
+         * from our PostgreSQL database.
          */
         const transactionData =
           await getTransactions(businessId)
@@ -232,6 +257,7 @@ function TransactionsPage({
 
     void loadTransactions()
 
+    // Ignore responses from outdated API requests.
     return () => {
       cancelled = true
     }
@@ -243,9 +269,9 @@ function TransactionsPage({
   // ============================================================
 
   /**
-   * Calculate summary metrics from real database records.
+   * Calculate statistics from real database records.
    *
-   * These statistics are not hardcoded.
+   * These values are not hardcoded.
    */
   const totalTransactions = transactions.length
 
@@ -258,8 +284,9 @@ function TransactionsPage({
   ).length
 
   /**
-   * Hide summary values while loading or if
-   * an API error occurs.
+   * Hide statistics during loading or API errors.
+   *
+   * This avoids displaying potentially outdated results.
    */
   const showStatistics = !isLoading && !errorMessage
 
@@ -312,8 +339,8 @@ function TransactionsPage({
       /**
        * Display newest accounting dates first.
        *
-       * When two transactions share a date,
-       * show the higher transaction ID first.
+       * When two transactions have the same date,
+       * display the higher transaction ID first.
        */
       .sort((first, second) => {
 
@@ -351,8 +378,8 @@ function TransactionsPage({
   /**
    * Open the transaction creation form.
    *
-   * Close Transaction Details so only one
-   * panel is displayed at a time.
+   * Close the Transaction Details panel so
+   * the user is focused on one workflow.
    */
   function handleOpenCreateForm(): void {
 
@@ -381,10 +408,10 @@ function TransactionsPage({
   // ============================================================
 
   /**
-   * Called when the backend successfully
-   * creates a draft transaction.
+   * NewJournalEntryForm calls this function after
+   * successfully creating a draft transaction.
    *
-   * We then:
+   * We:
    *
    * 1. Close the creation form.
    * 2. Display a success notification.
@@ -394,17 +421,27 @@ function TransactionsPage({
     transaction: LedgerTransaction,
   ): void {
 
+    // ==========================================================
+    // CLOSE JOURNAL ENTRY FORM
+    // ==========================================================
+
     setIsCreateFormOpen(false)
 
     setSelectedTransactionId(null)
+
+    // ==========================================================
+    // DISPLAY SUCCESS NOTIFICATION
+    // ==========================================================
 
     setSuccessMessage(
       `Draft transaction #${transaction.id} created successfully.`,
     )
 
-    setRefreshVersion(
-      (previousVersion) => previousVersion + 1,
-    )
+    // ==========================================================
+    // REFRESH TRANSACTION REGISTER
+    // ==========================================================
+
+    handleRefresh()
   }
 
   // ============================================================
@@ -412,13 +449,11 @@ function TransactionsPage({
   // ============================================================
 
   /**
-   * NEW FEATURE
-   *
-   * Open the Transaction Details component
-   * for the selected transaction.
-   *
-   * TransactionDetails will fetch the actual
+   * Display the selected transaction's actual
    * journal entries from Spring Boot.
+   *
+   * Close the creation form to avoid
+   * displaying two panels simultaneously.
    */
   function handleViewDetails(transactionId: number): void {
 
@@ -434,13 +469,60 @@ function TransactionsPage({
   // ============================================================
 
   /**
-   * Closing the details panel is read-only.
-   *
-   * No database records are changed.
+   * Closing the details panel does not modify
+   * any database records.
    */
   function handleCloseDetails(): void {
 
     setSelectedTransactionId(null)
+  }
+
+  // ============================================================
+  // TRANSACTION POSTING SUCCESS
+  // ============================================================
+
+  /**
+   * TransactionDetails calls this function only
+   * after Spring Boot successfully posts a transaction.
+   *
+   * We:
+   *
+   * 1. Display a success notification.
+   * 2. Refresh the Transaction Register.
+   * 3. Update the draft and posted statistics.
+   *
+   * The Transaction Details panel remains open.
+   *
+   * TransactionDetails independently updates its
+   * local transaction status to POSTED.
+   */
+  function handleTransactionPosted(
+    transaction: LedgerTransaction,
+  ): void {
+
+    // ==========================================================
+    // DISPLAY SUCCESS NOTIFICATION
+    // ==========================================================
+
+    setSuccessMessage(
+      `Transaction #${transaction.id} posted successfully.`,
+    )
+
+    // ==========================================================
+    // REFRESH TRANSACTION REGISTER
+    // ==========================================================
+
+    /**
+     * Increasing refreshVersion triggers useEffect.
+     *
+     * The updated data will reflect:
+     *
+     * - One fewer draft transaction
+     * - One additional posted transaction
+     *
+     * Total transaction count remains unchanged.
+     */
+    handleRefresh()
   }
 
   // ============================================================
@@ -455,7 +537,7 @@ function TransactionsPage({
     >
 
       {/* ====================================================== */}
-      {/* TRANSACTION CREATION SUCCESS MESSAGE */}
+      {/* TRANSACTION SUCCESS NOTIFICATION */}
       {/* ====================================================== */}
 
       {successMessage && (
@@ -484,7 +566,7 @@ function TransactionsPage({
       )}
 
       {/* ====================================================== */}
-      {/* TRANSACTION DETAILS PANEL — NEW */}
+      {/* TRANSACTION DETAILS PANEL */}
       {/* ====================================================== */}
 
       {selectedTransactionId !== null && (
@@ -493,6 +575,7 @@ function TransactionsPage({
           businessId={businessId}
           transactionId={selectedTransactionId}
           onClose={handleCloseDetails}
+          onPosted={handleTransactionPosted}
         />
 
       )}
@@ -797,7 +880,7 @@ function TransactionsPage({
                     </th>
 
                     {/* ======================================== */}
-                    {/* ACTIONS COLUMN — NEW */}
+                    {/* ACTIONS COLUMN */}
                     {/* ======================================== */}
 
                     <th
@@ -884,7 +967,7 @@ function TransactionsPage({
                       </td>
 
                       {/* ======================================== */}
-                      {/* VIEW DETAILS BUTTON — NEW */}
+                      {/* VIEW TRANSACTION DETAILS */}
                       {/* ======================================== */}
 
                       <td className="transactions-actions-column">

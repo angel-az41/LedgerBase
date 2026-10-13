@@ -1,7 +1,13 @@
-import { useEffect, useMemo, useState } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useState,
+} from 'react'
 
 import {
   getTransactionDetails,
+  postTransaction,
+  type LedgerTransaction,
   type TransactionDetailResponse,
 } from '../../api/transactions'
 
@@ -24,15 +30,20 @@ import './TransactionDetails.css'
 /**
  * Display a financial transaction and its ledger entries.
  *
- * This component retrieves:
+ * Features:
  *
- * - Transaction header information
- * - Individual debit and credit entries
- * - Account names and account codes
+ * - Retrieve transaction details from Spring Boot
+ * - Display account codes and names
+ * - Display debit and credit amounts
+ * - Calculate total debits and credits
+ * - Display the transaction posting status
+ * - Confirm before posting a draft transaction
+ * - Post transactions through the backend API
  *
- * The data comes from Spring Boot and PostgreSQL.
+ * Posting changes a transaction from DRAFT to POSTED.
  *
- * Transaction posting will be added in a later step.
+ * The backend and PostgreSQL enforce the accounting
+ * rules and immutability of posted transactions.
  */
 
 // ============================================================
@@ -43,16 +54,35 @@ interface TransactionDetailsProps {
   businessId: number
   transactionId: number
   onClose: () => void
+
+  /**
+   * The parent page will use this callback to
+   * refresh the register after successful posting.
+   *
+   * Optional for now so we can update the parent
+   * in a separate step.
+   */
+  onPosted?: (transaction: LedgerTransaction) => void
 }
+
+// ============================================================
+// TEMPORARY DEVELOPMENT ACTOR
+// ============================================================
+
+/**
+ * Authentication has not been implemented yet.
+ *
+ * We verified that developer user #1 exists
+ * in our PostgreSQL development database.
+ */
+const DEMO_ACTOR_ID = 1
 
 // ============================================================
 // ACCOUNTING DATE FORMATTING
 // ============================================================
 
-/**
- * Display an accounting date without timezone shifts.
- */
 function formatDate(value: string): string {
+
   return new Intl.DateTimeFormat('en-US', {
     year: 'numeric',
     month: 'short',
@@ -62,21 +92,19 @@ function formatDate(value: string): string {
 }
 
 // ============================================================
-// LEDGER AMOUNT FORMATTING
+// MONETARY AMOUNT PARSING
 // ============================================================
 
 /**
- * Convert an amount returned by Spring Boot
- * into integer cents for display.
+ * Convert the backend's current numeric responses
+ * into bigint cents for totals and formatting.
  *
- * The current API returns BigDecimal as JSON numbers.
- * We avoid additional floating-point arithmetic here.
- *
- * Before production, the read API should return
- * monetary values as decimal strings to guarantee
- * exact precision for the full NUMERIC(18,2) range.
+ * Production should eventually serialize monetary
+ * amounts as decimal strings to preserve precision
+ * across the full PostgreSQL NUMERIC(18,2) range.
  */
 function amountToCents(amount: number): bigint | null {
+
   if (!Number.isFinite(amount)) {
     return null
   }
@@ -84,11 +112,17 @@ function amountToCents(amount: number): bigint | null {
   return parseMoneyToCents(String(amount))
 }
 
+// ============================================================
+// MONETARY AMOUNT FORMATTING
+// ============================================================
+
 /**
- * Show zero amounts as a dash, following common
- * accounting table presentation conventions.
+ * Show zero amounts as a dash.
+ *
+ * This is common in accounting reports.
  */
 function formatEntryAmount(amount: number): string {
+
   const cents = amountToCents(amount)
 
   if (cents === null) {
@@ -108,6 +142,7 @@ function TransactionDetails({
   businessId,
   transactionId,
   onClose,
+  onPosted,
 }: TransactionDetailsProps) {
 
   // ============================================================
@@ -120,7 +155,7 @@ function TransactionDetails({
   const [accounts, setAccounts] = useState<Account[]>([])
 
   // ============================================================
-  // REQUEST STATE
+  // DATA LOADING STATE
   // ============================================================
 
   const [isLoading, setIsLoading] = useState(true)
@@ -128,14 +163,34 @@ function TransactionDetails({
   const [errorMessage, setErrorMessage] = useState('')
 
   // ============================================================
+  // POSTING CONFIRMATION STATE
+  // ============================================================
+
+  /**
+   * Controls whether the posting confirmation
+   * is visible inside the details panel.
+   */
+  const [isConfirmingPost, setIsConfirmingPost] =
+    useState(false)
+
+  // ============================================================
+  // POST REQUEST STATE
+  // ============================================================
+
+  const [isPosting, setIsPosting] = useState(false)
+
+  const [postError, setPostError] = useState('')
+
+  // ============================================================
   // LOAD TRANSACTION DETAILS
   // ============================================================
 
   /**
-   * Retrieve both the transaction and account list.
+   * Load transaction details and the business's
+   * general ledger accounts.
    *
-   * The transaction detail endpoint returns account IDs.
-   * The Accounts API provides their human-readable names.
+   * Account data is needed to display readable
+   * codes and names rather than just database IDs.
    */
   useEffect(() => {
 
@@ -146,6 +201,8 @@ function TransactionDetails({
       setIsLoading(true)
       setErrorMessage('')
       setDetails(null)
+      setPostError('')
+      setIsConfirmingPost(false)
 
       try {
 
@@ -194,15 +251,11 @@ function TransactionDetails({
   // ============================================================
 
   /**
-   * Build a map from account ID to Account.
+   * Build a map for looking up account names.
    *
-   * This makes it easy to display:
+   * Example:
    *
    * 1020 — Business Savings
-   *
-   * instead of only:
-   *
-   * Account #4
    */
   const accountsById = useMemo(() => {
 
@@ -216,15 +269,12 @@ function TransactionDetails({
   }, [accounts])
 
   // ============================================================
-  // EXACT DEBIT AND CREDIT TOTALS
+  // CALCULATE DEBIT AND CREDIT TOTALS
   // ============================================================
 
   /**
-   * Add the retrieved amounts using integer cents.
-   *
-   * If a value cannot be represented safely by
-   * our current parsing utility, omit totals
-   * rather than displaying misleading figures.
+   * Sum amounts using bigint cents rather
+   * than JavaScript floating-point arithmetic.
    */
   const totals = useMemo(() => {
 
@@ -257,6 +307,155 @@ function TransactionDetails({
   }, [details])
 
   // ============================================================
+  // CHECK WHETHER TRANSACTION CAN BE POSTED
+  // ============================================================
+
+  /**
+   * Only DRAFT transactions may be posted.
+   *
+   * The backend repeats this validation
+   * before changing the database status.
+   */
+  const canPost =
+    !isLoading &&
+    !isPosting &&
+    details?.transaction.status === 'DRAFT' &&
+    totals !== null &&
+    totals.balanced
+
+  // ============================================================
+  // OPEN POSTING CONFIRMATION
+  // ============================================================
+
+  /**
+   * Clicking Post Transaction does not
+   * immediately modify PostgreSQL.
+   *
+   * It opens a confirmation first.
+   */
+  function handleOpenPostConfirmation(): void {
+
+    if (!canPost) {
+      return
+    }
+
+    setPostError('')
+    setIsConfirmingPost(true)
+  }
+
+  // ============================================================
+  // CANCEL POSTING CONFIRMATION
+  // ============================================================
+
+  /**
+   * Canceling does not send any API request.
+   */
+  function handleCancelPost(): void {
+
+    setIsConfirmingPost(false)
+    setPostError('')
+  }
+
+  // ============================================================
+  // CONFIRM AND POST TRANSACTION
+  // ============================================================
+
+  /**
+   * Send:
+   *
+   * POST /api/v1/businesses/{businessId}/transactions/
+   *      {transactionId}/post
+   *
+   * Body:
+   *
+   * {
+   *   "actorId": 1
+   * }
+   *
+   * Spring Boot will:
+   *
+   * - Verify the transaction belongs to the business
+   * - Verify its status is DRAFT
+   * - Perform its posting validation
+   * - Change its status to POSTED
+   * - Create an audit event
+   *
+   * PostgreSQL rules protect posted entries.
+   */
+  async function handleConfirmPost(): Promise<void> {
+
+    if (!canPost || !details) {
+      return
+    }
+
+    setIsPosting(true)
+    setPostError('')
+
+    try {
+
+      // ========================================================
+      // CALL SPRING BOOT POST ENDPOINT
+      // ========================================================
+
+      const postedTransaction = await postTransaction(
+        businessId,
+        transactionId,
+        {
+          actorId: DEMO_ACTOR_ID,
+        },
+      )
+
+      // ========================================================
+      // UPDATE THE LOCAL TRANSACTION STATUS
+      // ========================================================
+
+      /**
+       * Immediately show POSTED in this panel
+       * after the backend confirms success.
+       */
+      setDetails((previousDetails) => {
+
+        if (!previousDetails) {
+          return previousDetails
+        }
+
+        return {
+          ...previousDetails,
+          transaction: postedTransaction,
+        }
+      })
+
+      // ========================================================
+      // CLOSE CONFIRMATION
+      // ========================================================
+
+      setIsConfirmingPost(false)
+
+      // ========================================================
+      // NOTIFY THE PARENT PAGE
+      // ========================================================
+
+      /**
+       * We'll connect this callback to the
+       * Transaction Register in a later step.
+       */
+      onPosted?.(postedTransaction)
+
+    } catch (error: unknown) {
+
+      setPostError(
+        error instanceof Error
+          ? error.message
+          : 'Unable to post transaction.',
+      )
+
+    } finally {
+
+      setIsPosting(false)
+    }
+  }
+
+  // ============================================================
   // RENDER TRANSACTION DETAILS
   // ============================================================
 
@@ -264,7 +463,7 @@ function TransactionDetails({
 
     <section
       className="transaction-details-card"
-      aria-busy={isLoading}
+      aria-busy={isLoading || isPosting}
     >
 
       {/* ====================================================== */}
@@ -274,6 +473,7 @@ function TransactionDetails({
       <div className="transaction-details-heading">
 
         <div>
+
           <h2>
             Transaction #{transactionId}
           </h2>
@@ -281,11 +481,13 @@ function TransactionDetails({
           <p>
             Review the transaction and its journal entries.
           </p>
+
         </div>
 
         <button
           type="button"
           className="transaction-details-close"
+          disabled={isPosting}
           onClick={onClose}
         >
           Close
@@ -321,37 +523,49 @@ function TransactionDetails({
       )}
 
       {/* ====================================================== */}
-      {/* TRANSACTION HEADER INFORMATION */}
+      {/* TRANSACTION DATA */}
       {/* ====================================================== */}
 
       {!isLoading && !errorMessage && details && (
 
         <>
 
+          {/* ================================================== */}
+          {/* HEADER INFORMATION */}
+          {/* ================================================== */}
+
           <div className="transaction-details-info">
 
             <div>
+
               <span>Description</span>
+
               <strong>
                 {details.transaction.description}
               </strong>
+
             </div>
 
             <div>
+
               <span>Accounting Date</span>
+
               <strong>
                 {formatDate(
                   details.transaction.transactionDate,
                 )}
               </strong>
+
             </div>
 
             <div>
+
               <span>Status</span>
 
               <strong>
                 {details.transaction.status}
               </strong>
+
             </div>
 
           </div>
@@ -394,15 +608,11 @@ function TransactionDetails({
                       </td>
 
                       <td className="transaction-details-amount">
-
                         {formatEntryAmount(entry.debit)}
-
                       </td>
 
                       <td className="transaction-details-amount">
-
                         {formatEntryAmount(entry.credit)}
-
                       </td>
 
                     </tr>
@@ -466,12 +676,128 @@ function TransactionDetails({
 
           )}
 
+          {/* ================================================== */}
+          {/* POSTING ACTIONS */}
+          {/* ================================================== */}
+
+          {details.transaction.status === 'DRAFT' &&
+            !isConfirmingPost && (
+
+              <div className="transaction-details-actions">
+
+                <p>
+                  Draft transactions can be reviewed before
+                  being finalized in the general ledger.
+                </p>
+
+                <button
+                  type="button"
+                  className="transaction-details-post-button"
+                  disabled={!canPost}
+                  onClick={handleOpenPostConfirmation}
+                >
+                  Post Transaction
+                </button>
+
+              </div>
+
+            )
+          }
+
+          {/* ================================================== */}
+          {/* POSTING CONFIRMATION */}
+          {/* ================================================== */}
+
+          {details.transaction.status === 'DRAFT' &&
+            isConfirmingPost && (
+
+              <div
+                className="transaction-post-confirmation"
+                role="alertdialog"
+                aria-labelledby="transaction-post-confirm-title"
+                aria-describedby="transaction-post-confirm-description"
+              >
+
+                <div>
+
+                  <h3 id="transaction-post-confirm-title">
+                    Confirm Transaction Posting
+                  </h3>
+
+                  <p id="transaction-post-confirm-description">
+                    You are about to post transaction
+                    {' '}#{transactionId}.
+                    Once posted, this journal entry becomes
+                    finalized and its financial entries
+                    cannot be edited or deleted.
+                  </p>
+
+                </div>
+
+                <div className="transaction-post-confirm-actions">
+
+                  <button
+                    type="button"
+                    className="transaction-post-cancel-button"
+                    disabled={isPosting}
+                    onClick={handleCancelPost}
+                  >
+                    Cancel
+                  </button>
+
+                  <button
+                    type="button"
+                    className="transaction-post-confirm-button"
+                    disabled={!canPost}
+                    onClick={() => void handleConfirmPost()}
+                  >
+                    {isPosting
+                      ? 'Posting...'
+                      : 'Confirm & Post'}
+                  </button>
+
+                </div>
+
+              </div>
+
+            )
+          }
+
+          {/* ================================================== */}
+          {/* POSTING ERROR */}
+          {/* ================================================== */}
+
+          {postError && (
+
+            <p
+              className="transaction-post-error"
+              role="alert"
+            >
+              {postError}
+            </p>
+
+          )}
+
+          {/* ================================================== */}
+          {/* POSTED CONFIRMATION */}
+          {/* ================================================== */}
+
+          {details.transaction.status === 'POSTED' && (
+
+            <p
+              className="transaction-posted-notice"
+              role="status"
+            >
+              ✓ This transaction is posted and finalized.
+            </p>
+
+          )}
+
         </>
 
       )}
 
     </section>
-
   )
 }
 
