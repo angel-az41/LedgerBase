@@ -21,6 +21,7 @@ import {
  * - Database operations
  * - Preventing duplicate account codes
  * - Preserving accounting history
+ * - Calculating posted account balances
  */
 
 // ============================================================
@@ -87,6 +88,102 @@ export interface Account {
 }
 
 // ============================================================
+// ACCOUNT BALANCE DEFINITIONS
+// ============================================================
+
+/**
+ * Represents an account together with its calculated
+ * posted debit totals, credit totals, and balance.
+ *
+ * These fields come from:
+ *
+ * GET /api/v1/businesses/{businessId}/accounts/balances
+ *
+ * Unlike Account, AccountBalance does not include
+ * createdAt because our balance query does not
+ * currently return that column.
+ *
+ * Example:
+ *
+ * {
+ *   "id": 8,
+ *   "businessId": 1,
+ *   "code": "1020",
+ *   "name": "Business Savings",
+ *   "accountType": "ASSET",
+ *   "active": true,
+ *   "postedDebits": 500.0,
+ *   "postedCredits": 0.0,
+ *   "balance": 500.0
+ * }
+ *
+ * IMPORTANT ACCOUNTING RULES:
+ *
+ * - Only POSTED journal entries affect these values.
+ * - DRAFT entries do not affect balances.
+ * - Accounts with no posted entries return zero.
+ * - Inactive accounts are included.
+ * - A balance can be negative.
+ *
+ * The API currently sends decimal values as JSON
+ * numbers, so these fields use TypeScript number.
+ *
+ * JavaScript numbers are not lossless for every
+ * possible financial value. Before finalizing our
+ * financial reporting UI, we will change the API
+ * contract to transmit monetary decimals as strings
+ * so that React can handle them precisely.
+ */
+export interface AccountBalance {
+
+  // Unique account identifier.
+  id: number
+
+  // Business that owns this account.
+  businessId: number
+
+  // Customizable account code.
+  code: string
+
+  // Human-readable account name.
+  name: string
+
+  // Fundamental accounting classification.
+  accountType: AccountType
+
+  // Whether the account is active.
+  active: boolean
+
+  // ============================================================
+  // EXACT MONETARY VALUES FROM SPRING BOOT
+  // ============================================================
+
+  /**
+   * Monetary values arrive as decimal strings.
+   *
+   * Examples:
+   * "500.00"
+   * "-500.00"
+   * "0"
+   *
+   * Keeping them as strings prevents JavaScript
+   * from introducing floating-point precision errors.
+   *
+   * The backend remains responsible for all
+   * accounting calculations.
+   */
+
+  // Total debits from POSTED journal entries.
+  postedDebits: string
+
+  // Total credits from POSTED journal entries.
+  postedCredits: string
+
+  // Signed balance based on the account's normal balance.
+  balance: string
+}
+
+// ============================================================
 // CREATE ACCOUNT REQUEST
 // ============================================================
 
@@ -139,6 +236,48 @@ export async function getAccounts(
 
   return getJson<Account[]>(
     `/api/v1/businesses/${businessId}/accounts`,
+  )
+}
+
+// ============================================================
+// ACCOUNTS API — READ BALANCES
+// ============================================================
+
+/**
+ * Retrieve calculated balances for every account
+ * belonging to the specified business.
+ *
+ * Example:
+ *
+ * getAccountBalances(1)
+ *
+ * Sends:
+ *
+ * GET /api/v1/businesses/1/accounts/balances
+ *
+ * Returns:
+ *
+ * An array of AccountBalance objects containing
+ * real, calculated financial values.
+ *
+ * The Spring Boot backend:
+ *
+ * 1. Verifies that the business exists.
+ * 2. Retrieves POSTED ledger entry totals.
+ * 3. Calculates balances using account type.
+ * 4. Includes zero-balance and inactive accounts.
+ *
+ * IMPORTANT:
+ *
+ * We do not hardcode balances in React.
+ * Every value comes from PostgreSQL.
+ */
+export async function getAccountBalances(
+  businessId: number,
+): Promise<AccountBalance[]> {
+
+  return getJson<AccountBalance[]>(
+    `/api/v1/businesses/${businessId}/accounts/balances`,
   )
 }
 

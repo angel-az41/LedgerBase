@@ -1,5 +1,7 @@
 package com.ledgerbase.backend.model;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
+
 import java.math.BigDecimal;
 
 // ============================================================
@@ -7,118 +9,56 @@ import java.math.BigDecimal;
 // ============================================================
 
 /**
- * Represents an account together with its calculated
- * posted debit totals, credit totals, and balance.
+ * Represents a general ledger account together with
+ * its calculated posted debits, credits, and balance.
+ *
+ * Account balances are calculated from PostgreSQL
+ * ledger entries rather than stored in accounts.
  *
  * IMPORTANT:
  *
- * Account balances are NOT stored in the accounts table.
+ * - PostgreSQL uses NUMERIC for monetary amounts.
+ * - Java uses BigDecimal for monetary amounts.
+ * - JSON sends monetary amounts as decimal strings.
  *
- * They are calculated dynamically from ledger_entries
- * joined with transactions where status = 'POSTED'.
- *
- * This model is populated by MyBatis and will
- * eventually be returned through the REST API.
- *
- * Monetary values use BigDecimal to preserve
- * exact decimal precision.
+ * Sending decimal strings prevents JavaScript from
+ * losing monetary precision when parsing responses.
  */
 public class AccountBalance {
 
     // ========================================================
-    // ACCOUNT IDENTIFICATION
+    // ACCOUNT INFORMATION
     // ========================================================
 
-    /**
-     * Unique database ID of the account.
-     */
     private Long id;
-
-    /**
-     * Business that owns the account.
-     *
-     * This preserves LedgerBase's
-     * multi-business data separation.
-     */
     private Long businessId;
-
-    /**
-     * Account code in the Chart of Accounts.
-     *
-     * Example: "1010"
-     */
     private String code;
-
-    /**
-     * Human-readable account name.
-     *
-     * Example: "Operating Checking Account"
-     */
     private String name;
-
-    // ========================================================
-    // ACCOUNT CLASSIFICATION
-    // ========================================================
-
-    /**
-     * Accounting classification:
-     *
-     * ASSET
-     * LIABILITY
-     * EQUITY
-     * REVENUE
-     * EXPENSE
-     *
-     * Account type determines the account's
-     * normal debit or credit balance direction.
-     */
     private String accountType;
-
-    /**
-     * Whether the account is currently active.
-     *
-     * Inactive accounts may still have historical
-     * posted entries and nonzero balances.
-     */
     private boolean active;
 
     // ========================================================
-    // POSTED DEBIT AND CREDIT TOTALS
+    // CALCULATED MONETARY VALUES
     // ========================================================
 
     /**
-     * Sum of debit amounts from POSTED transactions.
-     *
-     * Example: 500.00
+     * Sum of debit amounts from POSTED journal entries.
      */
     private BigDecimal postedDebits;
 
     /**
-     * Sum of credit amounts from POSTED transactions.
-     *
-     * Example: 0.00
+     * Sum of credit amounts from POSTED journal entries.
      */
     private BigDecimal postedCredits;
 
-    // ========================================================
-    // CALCULATED ACCOUNT BALANCE
-    // ========================================================
-
     /**
-     * Signed account balance, based on account type.
+     * Signed balance calculated according to account type.
      *
-     * For ASSET and EXPENSE accounts:
+     * ASSET / EXPENSE:
+     *     Debits - Credits
      *
-     *     balance = postedDebits - postedCredits
-     *
-     * For LIABILITY, EQUITY, and REVENUE accounts:
-     *
-     *     balance = postedCredits - postedDebits
-     *
-     * Negative balances are allowed and preserved.
-     *
-     * All calculations are performed in PostgreSQL,
-     * not by this model.
+     * LIABILITY / EQUITY / REVENUE:
+     *     Credits - Debits
      */
     private BigDecimal balance;
 
@@ -127,14 +67,14 @@ public class AccountBalance {
     // ========================================================
 
     /**
-     * MyBatis requires a way to instantiate the model
-     * before populating its properties.
+     * MyBatis uses the no-argument constructor
+     * when creating account balance objects.
      */
     public AccountBalance() {
     }
 
     // ========================================================
-    // ACCOUNT IDENTIFICATION GETTERS AND SETTERS
+    // ACCOUNT IDENTIFICATION
     // ========================================================
 
     public Long getId() {
@@ -153,6 +93,10 @@ public class AccountBalance {
         this.businessId = businessId;
     }
 
+    // ========================================================
+    // ACCOUNT DETAILS
+    // ========================================================
+
     public String getCode() {
         return code;
     }
@@ -168,10 +112,6 @@ public class AccountBalance {
     public void setName(String name) {
         this.name = name;
     }
-
-    // ========================================================
-    // ACCOUNT CLASSIFICATION GETTERS AND SETTERS
-    // ========================================================
 
     public String getAccountType() {
         return accountType;
@@ -190,9 +130,16 @@ public class AccountBalance {
     }
 
     // ========================================================
-    // POSTED DEBIT TOTAL GETTERS AND SETTERS
+    // POSTED DEBIT TOTAL
     // ========================================================
 
+    /**
+     * Serialize the BigDecimal as a JSON string.
+     *
+     * Java retains BigDecimal for calculations,
+     * while React receives an exact decimal string.
+     */
+    @JsonFormat(shape = JsonFormat.Shape.STRING)
     public BigDecimal getPostedDebits() {
         return postedDebits;
     }
@@ -202,9 +149,10 @@ public class AccountBalance {
     }
 
     // ========================================================
-    // POSTED CREDIT TOTAL GETTERS AND SETTERS
+    // POSTED CREDIT TOTAL
     // ========================================================
 
+    @JsonFormat(shape = JsonFormat.Shape.STRING)
     public BigDecimal getPostedCredits() {
         return postedCredits;
     }
@@ -214,9 +162,10 @@ public class AccountBalance {
     }
 
     // ========================================================
-    // ACCOUNT BALANCE GETTERS AND SETTERS
+    // CALCULATED ACCOUNT BALANCE
     // ========================================================
 
+    @JsonFormat(shape = JsonFormat.Shape.STRING)
     public BigDecimal getBalance() {
         return balance;
     }

@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 
 import {
   getAccounts,
+  getAccountBalances,
   type Account,
+  type AccountBalance,
 } from '../api/accounts'
 
 import NewAccountForm from '../components/accounts/NewAccountForm'
@@ -15,30 +17,27 @@ import './AccountsPage.css'
 // ============================================================
 
 /**
- * This React component manages the Chart of Accounts
- * interface for the selected business.
+ * Display and manage a business's Chart of Accounts.
  *
- * It communicates with our existing Spring Boot backend
- * and displays real financial accounts from PostgreSQL.
+ * Account information and calculated balances are
+ * retrieved from our existing Spring Boot backend.
  *
  * Supported functionality:
  *
- * - Retrieve accounts from Spring Boot
+ * - Retrieve accounts from PostgreSQL
+ * - Display real posted account balances
  * - Display account statistics
  * - Search accounts by code, name, or type
  * - Filter active and inactive accounts
- * - Refresh account data
- * - Create new general ledger accounts
- * - Rename existing active accounts
+ * - Refresh account data and balances
+ * - Create new accounts
+ * - Rename active accounts
  * - Deactivate accounts with confirmation
  * - Display success notifications
  * - Handle loading, error, and empty states
  *
- * Future enhancements:
- *
- * - Account reporting groups
- * - Account hierarchy
- * - Financial statement mapping
+ * All existing account management components and
+ * CSS class names are preserved.
  */
 
 // ============================================================
@@ -46,13 +45,10 @@ import './AccountsPage.css'
 // ============================================================
 
 /**
- * AccountsPage receives the selected business ID
- * from its parent component, App.tsx.
+ * The selected business ID comes from App.tsx.
  *
- * During local development, businessId is currently 1.
- *
- * When authentication is implemented, this value
- * will come from the user's selected business.
+ * During local development, we use business 1.
+ * Business selection will become dynamic later.
  */
 interface AccountsPageProps {
   businessId: number
@@ -63,10 +59,7 @@ interface AccountsPageProps {
 // ============================================================
 
 /**
- * Define the supported account status filters.
- *
- * TypeScript prevents unsupported filter values
- * from being assigned accidentally.
+ * Supported status filters for the Chart of Accounts.
  */
 type StatusFilter = 'all' | 'active' | 'inactive'
 
@@ -75,14 +68,12 @@ type StatusFilter = 'all' | 'active' | 'inactive'
 // ============================================================
 
 /**
- * Convert backend account classifications into
- * human-readable labels.
+ * Convert backend account types to readable labels.
  *
  * Examples:
  *
  * "ASSET" -> "Asset"
  * "LIABILITY" -> "Liability"
- * "REVENUE" -> "Revenue"
  */
 function formatAccountType(
   accountType: string,
@@ -95,19 +86,10 @@ function formatAccountType(
 }
 
 /**
- * Convert an ISO timestamp returned by Spring Boot
- * into a readable account creation date.
+ * Format the account creation date returned by Spring Boot.
  *
- * Example:
- *
- * "2026-10-12T20:05:02.433124Z"
- *
- * becomes:
- *
- * "Oct 12, 2026"
- *
- * UTC ensures the display does not shift to
- * another calendar date due to local time zones.
+ * UTC prevents date changes due to the browser's
+ * local time zone.
  */
 function formatDate(
   dateString: string,
@@ -122,24 +104,117 @@ function formatDate(
 }
 
 // ============================================================
-// CHART OF ACCOUNTS COMPONENT
+// PRECISION-SAFE ACCOUNT BALANCE FORMATTING
 // ============================================================
 
 /**
- * Display and manage general ledger accounts.
+ * Format a decimal string as a USD monetary amount.
  *
- * React hooks are used to manage:
+ * Examples:
  *
- * - Account data from Spring Boot
- * - Loading and error states
- * - Search and filtering
- * - Account creation form visibility
- * - Success notifications
- * - Account table refreshes
+ * "500.00"    -> "$500.00"
+ * "-500.00"   -> "−$500.00"
+ * "0"         -> "$0.00"
+ * "12345.60"  -> "$12,345.60"
  *
- * Individual rename and deactivate workflows
- * are handled by the AccountActions component.
+ * IMPORTANT:
+ *
+ * We do not use:
+ *
+ * - parseFloat()
+ * - Number()
+ * - JavaScript floating-point calculations
+ *
+ * The backend calculates the balance using
+ * PostgreSQL NUMERIC and Java BigDecimal.
+ *
+ * The frontend only formats the resulting string.
+ *
+ * Our current development business uses USD.
+ * Multi-currency display will be added when
+ * business currency configuration reaches the UI.
+ *
+ * If the balance is missing or malformed,
+ * display an em dash instead of inventing $0.00.
  */
+function formatAccountBalance(
+  balance: string | undefined,
+): string {
+
+  // ==========================================================
+  // CHECK THAT A BALANCE WAS RETURNED
+  // ==========================================================
+
+  if (balance === undefined) {
+    return '—'
+  }
+
+  // ==========================================================
+  // VALIDATE THE DECIMAL STRING
+  // ==========================================================
+
+  /**
+   * Accept:
+   *
+   * - Optional negative sign
+   * - One or more whole-number digits
+   * - Optional decimal point and one or two digits
+   *
+   * Our PostgreSQL money columns use two
+   * decimal places, so additional precision
+   * would indicate an unexpected API response.
+   */
+  const match = /^(-?)(\d+)(?:\.(\d{1,2}))?$/.exec(balance)
+
+  if (!match) {
+    return '—'
+  }
+
+  // ==========================================================
+  // EXTRACT DECIMAL COMPONENTS
+  // ==========================================================
+
+  const negativeSign = match[1]
+  const wholePart = match[2]
+  const decimalPart = match[3] ?? ''
+
+  // ==========================================================
+  // ADD THOUSANDS SEPARATORS
+  // ==========================================================
+
+  /**
+   * Add commas using string manipulation only.
+   *
+   * No floating-point conversion occurs.
+   */
+  const formattedWholePart = wholePart.replace(
+    /\B(?=(\d{3})+(?!\d))/g,
+    ',',
+  )
+
+  // ==========================================================
+  // ENSURE TWO DECIMAL PLACES
+  // ==========================================================
+
+  /**
+   * PostgreSQL may return "0" or "0.0".
+   * The interface should consistently show "$0.00".
+   */
+  const formattedDecimalPart = decimalPart.padEnd(2, '0')
+
+  // ==========================================================
+  // RETURN FORMATTED USD VALUE
+  // ==========================================================
+
+  const sign = negativeSign ? '−' : ''
+
+  return `${sign}$${formattedWholePart}.${formattedDecimalPart}`
+}
+
+// ============================================================
+// CHART OF ACCOUNTS COMPONENT
+// ============================================================
+
 function AccountsPage({
   businessId,
 }: AccountsPageProps) {
@@ -149,49 +224,43 @@ function AccountsPage({
   // ============================================================
 
   /**
-   * Store accounts retrieved from Spring Boot.
+   * Store general ledger accounts returned by:
    *
-   * useState<Account[]> ensures that every
-   * account matches the Account interface
-   * defined in src/api/accounts.ts.
+   * GET /api/v1/businesses/{businessId}/accounts
+   *
+   * These records contain createdAt and are also
+   * passed to our existing AccountActions component.
    */
   const [accounts, setAccounts] = useState<Account[]>([])
+
+  // ============================================================
+  // ACCOUNT BALANCE DATA STATE
+  // ============================================================
+
+  /**
+   * Store calculated balances returned by:
+   *
+   * GET /api/v1/businesses/{businessId}/accounts/balances
+   *
+   * Monetary properties are decimal strings.
+   */
+  const [accountBalances, setAccountBalances] =
+    useState<AccountBalance[]>([])
 
   // ============================================================
   // API REQUEST STATE
   // ============================================================
 
-  /**
-   * Indicate when account data is loading.
-   *
-   * Start with true because accounts are
-   * fetched when the page first appears.
-   */
   const [isLoading, setIsLoading] = useState(true)
 
-  /**
-   * Store errors from account listing requests.
-   *
-   * An empty string indicates no current error.
-   */
   const [errorMessage, setErrorMessage] = useState('')
 
   // ============================================================
   // ACCOUNT SEARCH AND FILTER STATE
   // ============================================================
 
-  /**
-   * Store the user's account search text.
-   *
-   * This is a controlled React input.
-   */
   const [searchQuery, setSearchQuery] = useState('')
 
-  /**
-   * Store the selected account status filter.
-   *
-   * By default, display all accounts.
-   */
   const [statusFilter, setStatusFilter] =
     useState<StatusFilter>('all')
 
@@ -200,13 +269,8 @@ function AccountsPage({
   // ============================================================
 
   /**
-   * Track when the account list should refresh.
-   *
-   * Increasing refreshVersion triggers useEffect
-   * to fetch updated accounts from Spring Boot.
-   *
-   * This avoids duplicating our account loading
-   * logic across different event handlers.
+   * Increasing refreshVersion reloads both
+   * account information and account balances.
    */
   const [refreshVersion, setRefreshVersion] = useState(0)
 
@@ -214,12 +278,6 @@ function AccountsPage({
   // CREATE ACCOUNT FORM STATE
   // ============================================================
 
-  /**
-   * Control whether NewAccountForm is visible.
-   *
-   * false: Hide the form.
-   * true: Display the form above the account table.
-   */
   const [isCreateFormOpen, setIsCreateFormOpen] =
     useState(false)
 
@@ -227,108 +285,99 @@ function AccountsPage({
   // SUCCESS NOTIFICATION STATE
   // ============================================================
 
-  /**
-   * Display confirmation messages after
-   * successful account operations.
-   *
-   * These include:
-   *
-   * - Account creation
-   * - Account renaming
-   * - Account deactivation
-   */
   const [successMessage, setSuccessMessage] = useState('')
 
   // ============================================================
-  // LOAD ACCOUNTS FROM SPRING BOOT
+  // LOAD ACCOUNTS AND BALANCES FROM SPRING BOOT
   // ============================================================
 
   /**
-   * React's useEffect runs after rendering.
+   * Fetch account details and calculated balances when:
    *
-   * This effect retrieves account data when:
-   *
-   * 1. The component first mounts.
+   * 1. The page mounts.
    * 2. The selected business changes.
-   * 3. refreshVersion increases.
+   * 3. An account is created, renamed, or deactivated.
+   * 4. The user clicks Refresh.
    *
-   * The cleanup function prevents outdated requests
-   * from updating state after the component unmounts
-   * or its dependencies change.
+   * We use Promise.all() so both requests are sent
+   * without unnecessarily waiting for one another.
+   *
+   * If either request fails, the page displays
+   * an error instead of showing misleading balances.
    */
   useEffect(() => {
 
     let cancelled = false
 
     // ==========================================================
-    // ASYNCHRONOUS ACCOUNT LOADER
+    // ASYNCHRONOUS ACCOUNT DATA LOADER
     // ==========================================================
 
     async function loadAccounts(): Promise<void> {
 
-      // Indicate that the request has started.
       setIsLoading(true)
-
-      // Clear the previous loading error.
       setErrorMessage('')
 
       try {
 
-        /**
-         * Send:
-         *
-         * GET /api/v1/businesses/{businessId}/accounts
-         *
-         * Vite forwards this request to Spring Boot.
-         *
-         * Spring Boot retrieves account records
-         * from PostgreSQL using MyBatis.
-         */
-        const accountData = await getAccounts(businessId)
+        // ======================================================
+        // REQUEST ACCOUNT INFORMATION AND POSTED BALANCES
+        // ======================================================
 
         /**
-         * Only update React state if the request
-         * still belongs to the current effect.
+         * The first endpoint returns Account[].
+         *
+         * The second endpoint returns AccountBalance[].
+         *
+         * Both are scoped to the same business.
+         */
+        const [accountData, balanceData] = await Promise.all([
+          getAccounts(businessId),
+          getAccountBalances(businessId),
+        ])
+
+        // ======================================================
+        // UPDATE REACT STATE
+        // ======================================================
+
+        /**
+         * Ignore stale responses when the business
+         * changes or the component unmounts.
          */
         if (!cancelled) {
           setAccounts(accountData)
+          setAccountBalances(balanceData)
         }
 
       } catch (error: unknown) {
 
-        /**
-         * Display an error if the backend request
-         * fails or the connection is unavailable.
-         */
+        // ======================================================
+        // HANDLE API ERRORS
+        // ======================================================
+
         if (!cancelled) {
 
           setErrorMessage(
             error instanceof Error
               ? error.message
-              : 'Unable to load accounts.',
+              : 'Unable to load account data.',
           )
         }
 
       } finally {
 
-        // Stop displaying the loading indicator.
         if (!cancelled) {
           setIsLoading(false)
         }
       }
     }
 
-    // Execute the asynchronous account request.
     void loadAccounts()
 
-    /**
-     * Cleanup:
-     *
-     * Ignore outdated responses.
-     *
-     * React Strict Mode may run effects multiple
-     * times during development.
-     */
+    // ==========================================================
+    // CLEAN UP OUTDATED REQUESTS
+    // ==========================================================
+
     return () => {
       cancelled = true
     }
@@ -336,31 +385,66 @@ function AccountsPage({
   }, [businessId, refreshVersion])
 
   // ============================================================
+  // MATCH ACCOUNT BALANCES BY ACCOUNT ID
+  // ============================================================
+
+  /**
+   * Accounts and balances come from separate endpoints.
+   *
+   * We match them using the unique account ID,
+   * not the account code or name.
+   *
+   * Example:
+   *
+   * Account:
+   *   id: 8
+   *   name: "Business Savings"
+   *
+   * AccountBalance:
+   *   id: 8
+   *   balance: "500.00"
+   *
+   * Map result:
+   *   8 -> "500.00"
+   *
+   * This avoids confusion if multiple businesses
+   * use the same account code.
+   *
+   * useMemo recalculates the map only when
+   * accountBalances changes.
+   */
+  const balancesByAccountId = useMemo(() => {
+
+    return new Map(
+      accountBalances.map(
+        (accountBalance) => [
+          accountBalance.id,
+          accountBalance.balance,
+        ],
+      ),
+    )
+
+  }, [accountBalances])
+
+  // ============================================================
   // ACCOUNT STATISTICS
   // ============================================================
 
   /**
-   * Calculate summary metrics from actual account data.
-   *
-   * These values are never hardcoded.
+   * These summary metrics come from real account data.
+   * They are not hardcoded.
    */
   const totalAccounts = accounts.length
 
-  /**
-   * Count active accounts.
-   */
   const activeAccounts = accounts.filter(
     (account) => account.active,
   ).length
 
-  /**
-   * Count inactive accounts.
-   */
   const inactiveAccounts = totalAccounts - activeAccounts
 
   /**
-   * Avoid displaying misleading account totals
-   * while loading or when an API error occurs.
+   * Hide statistics while loading or when an
+   * API request has failed.
    */
   const showStatistics = !isLoading && !errorMessage
 
@@ -369,21 +453,14 @@ function AccountsPage({
   // ============================================================
 
   /**
-   * useMemo calculates the visible account list.
+   * Preserve our existing search and filtering behavior.
    *
-   * React recalculates it when:
-   *
-   * - Accounts change
-   * - Search text changes
-   * - Status filter changes
+   * Searching and filtering operate on account details.
+   * The matching balance is displayed alongside
+   * each visible account.
    */
   const filteredAccounts = useMemo(() => {
 
-    /**
-     * Normalize the search query.
-     *
-     * This allows case-insensitive searching.
-     */
     const query = searchQuery.trim().toLowerCase()
 
     return accounts
@@ -394,22 +471,11 @@ function AccountsPage({
 
       .filter((account) => {
 
-        /**
-         * Match account code, name, or type.
-         *
-         * Example:
-         *
-         * Searching "cash" matches
-         * "Main Cash Account".
-         */
         const matchesSearch =
           account.code.toLowerCase().includes(query) ||
           account.name.toLowerCase().includes(query) ||
           account.accountType.toLowerCase().includes(query)
 
-        /**
-         * Match the selected active status.
-         */
         const matchesStatus =
           statusFilter === 'all' ||
           (
@@ -428,12 +494,6 @@ function AccountsPage({
       // SORT ACCOUNTS
       // ========================================================
 
-      /**
-       * Sort by account code.
-       *
-       * Numeric sorting makes codes such as
-       * 1000, 1010, and 1020 appear in order.
-       */
       .sort((first, second) =>
         first.code.localeCompare(
           second.code,
@@ -448,14 +508,7 @@ function AccountsPage({
   // CREATE ACCOUNT — OPEN FORM
   // ============================================================
 
-  /**
-   * Open the New Account form.
-   *
-   * Clear an earlier success message before
-   * beginning another creation workflow.
-   */
   function handleOpenCreateForm(): void {
-
     setSuccessMessage('')
     setIsCreateFormOpen(true)
   }
@@ -464,13 +517,7 @@ function AccountsPage({
   // CREATE ACCOUNT — CANCEL FORM
   // ============================================================
 
-  /**
-   * Close the New Account form without submitting.
-   *
-   * No backend request is sent.
-   */
   function handleCancelCreateForm(): void {
-
     setIsCreateFormOpen(false)
   }
 
@@ -479,42 +526,24 @@ function AccountsPage({
   // ============================================================
 
   /**
-   * Run after NewAccountForm successfully creates
-   * a general ledger account.
+   * Preserve the existing account creation workflow.
    *
-   * NewAccountForm calls the onCreated callback
-   * and provides the account returned by Spring Boot.
+   * After creation:
+   *
+   * - Close the form
+   * - Show the success message
+   * - Refresh accounts and balances
    */
   function handleAccountCreated(
     account: Account,
   ): void {
 
-    // ==========================================================
-    // CLOSE CREATE ACCOUNT FORM
-    // ==========================================================
-
     setIsCreateFormOpen(false)
 
-    // ==========================================================
-    // DISPLAY SUCCESS NOTIFICATION
-    // ==========================================================
-
-    /**
-     * Include the actual code and account name
-     * returned by the backend.
-     */
     setSuccessMessage(
       `Account ${account.code} — ${account.name} created successfully.`,
     )
 
-    // ==========================================================
-    // REFRESH ACCOUNT LIST
-    // ==========================================================
-
-    /**
-     * Trigger useEffect to fetch the updated
-     * account records from PostgreSQL.
-     */
     setRefreshVersion(
       (previousVersion) => previousVersion + 1,
     )
@@ -525,37 +554,18 @@ function AccountsPage({
   // ============================================================
 
   /**
-   * Run after AccountActions successfully renames
-   * or deactivates an account.
+   * AccountActions remains responsible for
+   * renaming and deactivating accounts.
    *
-   * AccountActions handles the PATCH request.
-   *
-   * AccountsPage is responsible for:
-   *
-   * 1. Displaying confirmation.
-   * 2. Refreshing the account list.
-   *
-   * This keeps account management logic
-   * separated from table rendering.
+   * Refresh the account table after a successful
+   * management operation.
    */
   function handleAccountUpdated(
     message: string,
   ): void {
 
-    // ==========================================================
-    // DISPLAY SUCCESS NOTIFICATION
-    // ==========================================================
-
     setSuccessMessage(message)
 
-    // ==========================================================
-    // REFRESH ACCOUNT LIST
-    // ==========================================================
-
-    /**
-     * Retrieve updated account names and statuses
-     * from Spring Boot after the PATCH succeeds.
-     */
     setRefreshVersion(
       (previousVersion) => previousVersion + 1,
     )
@@ -566,8 +576,7 @@ function AccountsPage({
   // ============================================================
 
   /**
-   * Request fresh accounts without reloading
-   * the entire browser page.
+   * Reload both account details and balances.
    */
   function handleRefresh(): void {
 
@@ -678,7 +687,6 @@ function AccountsPage({
 
         <div className="coa-table-heading">
 
-          {/* Table title and description */}
           <div>
 
             <h2>All Accounts</h2>
@@ -808,7 +816,7 @@ function AccountsPage({
           >
 
             <h3>
-              Unable to load accounts
+              Unable to load account data
             </h3>
 
             <p>
@@ -861,9 +869,7 @@ function AccountsPage({
 
             <div className="coa-message">
 
-              <h3>
-                No accounts yet
-              </h3>
+              <h3>No accounts yet</h3>
 
               <p>
                 Create your first general ledger
@@ -886,9 +892,7 @@ function AccountsPage({
 
             <div className="coa-message">
 
-              <h3>
-                No matching accounts
-              </h3>
+              <h3>No matching accounts</h3>
 
               <p>
                 Try adjusting your search or
@@ -930,6 +934,17 @@ function AccountsPage({
 
                     <th scope="col">
                       Account Type
+                    </th>
+
+                    {/* ======================================== */}
+                    {/* NEW — CALCULATED ACCOUNT BALANCE */}
+                    {/* ======================================== */}
+
+                    <th
+                      scope="col"
+                      className="coa-balance-column"
+                    >
+                      Balance
                     </th>
 
                     <th scope="col">
@@ -990,6 +1005,18 @@ function AccountsPage({
                       </td>
 
                       {/* ======================================== */}
+                      {/* NEW — ACCOUNT BALANCE */}
+                      {/* ======================================== */}
+
+                      <td className="coa-balance-column">
+
+                        {formatAccountBalance(
+                          balancesByAccountId.get(account.id),
+                        )}
+
+                      </td>
+
+                      {/* ======================================== */}
                       {/* ACCOUNT STATUS */}
                       {/* ======================================== */}
 
@@ -1029,24 +1056,14 @@ function AccountsPage({
                       <td className="coa-actions-column">
 
                         {/*
-                          AccountActions is responsible
-                          for managing an individual account.
+                          Preserve our existing AccountActions
+                          component without modifications.
 
-                          It receives:
-
-                          businessId:
-                            The account's business.
-
-                          account:
-                            The selected account record.
-
-                          onUpdated:
-                            Callback after a successful
-                            rename or deactivation.
-
-                          The parent refreshes the account
-                          list when a modification succeeds.
+                          It handles account renaming and
+                          deactivation, then requests a refresh
+                          through handleAccountUpdated().
                         */}
+
                         <AccountActions
                           businessId={businessId}
                           account={account}
