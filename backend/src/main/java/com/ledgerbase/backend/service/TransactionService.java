@@ -20,6 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -123,6 +124,15 @@ public class TransactionService {
         if (request.transactionDate() == null) {
             throw new IllegalArgumentException(
                 "Transaction date is required"
+            );
+        }
+
+        LocalDate today = LocalDate.now();
+
+        if (request.transactionDate().isAfter(today)) {
+
+            throw new IllegalArgumentException(
+                "Transaction date cannot be in the future"
             );
         }
 
@@ -483,6 +493,33 @@ public class TransactionService {
         if (!"DRAFT".equals(transaction.getStatus())) {
             throw new TransactionConflictException(
                 "Transaction is not in DRAFT status: "
+                + transactionId
+            );
+        }
+
+        /**
+         * An invalid existing draft is treated as a conflict
+         * with the current posting rules.
+         *
+         * The transaction remains in DRAFT status.
+         *
+         * No posting audit event is created.
+         */
+
+        LocalDate transactionDate = transaction.getTransactionDate();
+
+        if (transactionDate == null) {
+
+            throw new TransactionConflictException(
+                "Cannot post a transaction without a date: "
+                + transactionId
+            );
+        }
+
+        if (transactionDate.isAfter(LocalDate.now())) {
+
+            throw new TransactionConflictException(
+                "Cannot post a future-dated transaction: "
                 + transactionId
             );
         }

@@ -470,6 +470,7 @@ function NewJournalEntryForm({
     !isSubmitting &&
     description.trim().length > 0 &&
     transactionDate.length > 0 &&
+    transactionDate <= getTodayDate() &&
     lines.length >= 2 &&
     hasValidAccounts &&
     isBalanced
@@ -483,6 +484,21 @@ function NewJournalEntryForm({
   ): Promise<void> {
 
     event.preventDefault()
+
+    /**
+     * Recheck the date immediately before submission.
+     *
+     * The calendar restriction improves user experience,
+     * but we should not rely on the input control alone.
+     */
+    if (transactionDate > getTodayDate()) {
+
+      setSubmitError(
+        'Transaction date cannot be in the future.',
+      )
+
+      return
+    }
 
     if (!canSubmit) {
       setSubmitError(
@@ -616,6 +632,7 @@ function NewJournalEntryForm({
             <input
               type="date"
               value={transactionDate}
+              max={getTodayDate()}
               required
               disabled={isSubmitting}
               onChange={(event) =>
