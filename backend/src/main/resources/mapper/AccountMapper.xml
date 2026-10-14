@@ -3,21 +3,49 @@
     PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
 
-<!--
-    LedgerBase - Account SQL Mapper
+<!-- ============================================================ -->
+<!-- LEDGERBASE — ACCOUNT SQL MAPPER -->
+<!-- ============================================================ -->
 
+<!--
     Maps AccountMapper.java methods to PostgreSQL queries.
 
+    Responsibilities:
+
+    - Retrieve accounts
+    - Retrieve calculated posted account balances
+    - Retrieve individual accounts
+    - Create accounts
+    - Rename accounts
+    - Deactivate accounts
+
     IMPORTANT:
-    The database column is named "is_active".
-    The Java Account model uses the property "active".
-    The resultMap connects these different names.
+
+    Account balances are NOT stored in the accounts table.
+
+    They are calculated from ledger_entries belonging
+    to POSTED transactions.
+
+    All account queries must respect business isolation.
 -->
+
 <mapper namespace="com.ledgerbase.backend.mapper.AccountMapper">
 
-    <!-- Convert a PostgreSQL row into a Java Account object. -->
-    <resultMap id="accountResultMap"
-               type="com.ledgerbase.backend.model.Account">
+    <!-- ======================================================== -->
+    <!-- ACCOUNT RESULT MAPPING -->
+    <!-- ======================================================== -->
+
+    <!--
+        Convert a PostgreSQL accounts row
+        into a Java Account object.
+
+        PostgreSQL column: is_active
+        Java property:     active
+    -->
+
+    <resultMap
+        id="accountResultMap"
+        type="com.ledgerbase.backend.model.Account">
 
         <id property="id" column="id"/>
 
@@ -25,58 +53,295 @@
         <result property="code" column="code"/>
         <result property="name" column="name"/>
         <result property="accountType" column="account_type"/>
-
-        <!-- PostgreSQL is_active maps to Java active. -->
         <result property="active" column="is_active"/>
-
         <result property="createdAt" column="created_at"/>
+
     </resultMap>
 
-    <!-- Retrieve all accounts belonging to a business. -->
-    <select id="findByBusinessId" resultMap="accountResultMap">
-        SELECT
-            id,
-            business_id,
-            code,
-            name,
-            account_type,
-            is_active,
-            created_at
-        FROM accounts
-        WHERE business_id = #{businessId}
-        ORDER BY code, id
-    </select>
-
-    <!-- Retrieve one account belonging to a business. -->
-    <select id="findById" resultMap="accountResultMap">
-        SELECT
-            id,
-            business_id,
-            code,
-            name,
-            account_type,
-            is_active,
-            created_at
-        FROM accounts
-        WHERE business_id = #{businessId}
-          AND id = #{accountId}
-    </select>
+    <!-- ======================================================== -->
+    <!-- ACCOUNT BALANCE RESULT MAPPING -->
+    <!-- ======================================================== -->
 
     <!--
-        Insert a new account.
+        Convert the calculated balance query result
+        into a Java AccountBalance object.
+
+        Monetary columns are PostgreSQL NUMERIC values.
+        MyBatis maps these to Java BigDecimal.
+
+        This result includes:
+
+        - Account identification
+        - Account classification
+        - Account active status
+        - Total posted debits
+        - Total posted credits
+        - Calculated signed balance
+    -->
+
+    <resultMap
+        id="accountBalanceResultMap"
+        type="com.ledgerbase.backend.model.AccountBalance">
+
+        <id property="id" column="id"/>
+
+        <result property="businessId" column="business_id"/>
+        <result property="code" column="code"/>
+        <result property="name" column="name"/>
+        <result property="accountType" column="account_type"/>
+        <result property="active" column="is_active"/>
+
+        <result
+            property="postedDebits"
+            column="posted_debits"
+            javaType="java.math.BigDecimal"/>
+
+        <result
+            property="postedCredits"
+            column="posted_credits"
+            javaType="java.math.BigDecimal"/>
+
+        <result
+            property="balance"
+            column="balance"
+            javaType="java.math.BigDecimal"/>
+
+    </resultMap>
+
+    <!-- ======================================================== -->
+    <!-- GET ALL ACCOUNTS FOR A BUSINESS -->
+    <!-- ======================================================== -->
+
+    <!--
+        Existing Chart of Accounts query.
+
+        Retrieve every account belonging to
+        the requested business.
+
+        Includes both active and inactive accounts.
+    -->
+
+    <select
+        id="findByBusinessId"
+        resultMap="accountResultMap">
+
+        SELECT
+            id,
+            business_id,
+            code,
+            name,
+            account_type,
+            is_active,
+            created_at
+
+        FROM accounts
+
+        WHERE business_id = #{businessId}
+
+        ORDER BY code, id
+
+    </select>
+
+    <!-- ======================================================== -->
+    <!-- GET CALCULATED POSTED ACCOUNT BALANCES -->
+    <!-- ======================================================== -->
+
+    <!--
+        NEW: Find account balances for one business.
+
+        This query follows double-entry accounting.
+
+        Step 1:
+            Aggregate debits and credits for each account.
+
+        Step 2:
+            Include only POSTED transactions.
+
+        Step 3:
+            LEFT JOIN the calculated totals with accounts.
+
+        Step 4:
+            Return zero for accounts without posted entries.
+
+        Step 5:
+            Calculate the signed balance according to
+            each account's normal accounting direction.
+
+        Normal debit balances:
+            ASSET
+            EXPENSE
+
+        Normal credit balances:
+            LIABILITY
+            EQUITY
+            REVENUE
+
+        IMPORTANT:
+
+        - DRAFT transactions are excluded.
+        - Only records belonging to the requested business
+          are included.
+        - Inactive accounts remain visible because they
+          can still contain historical balances.
+        - PostgreSQL performs all monetary calculations
+          using NUMERIC rather than floating-point types.
+    -->
+
+    <select
+        id="findBalancesByBusinessId"
+        resultMap="accountBalanceResultMap">
+
+        WITH posted_totals AS (
+
+            <!-- ================================================ -->
+            <!-- STEP 1: AGGREGATE POSTED LEDGER ENTRIES -->
+            <!-- ================================================ -->
+
+            SELECT
+                le.business_id,
+                le.account_id,
+
+                SUM(le.debit) AS total_debits,
+                SUM(le.credit) AS total_credits
+
+            FROM ledger_entries le
+
+            INNER JOIN transactions t
+                ON t.business_id = le.business_id
+               AND t.id = le.transaction_id
+
+            WHERE le.business_id = #{businessId}
+              AND t.status = 'POSTED'
+
+            GROUP BY
+                le.business_id,
+                le.account_id
+        )
+
+        <!-- ==================================================== -->
+        <!-- STEP 2: RETURN ACCOUNT INFORMATION AND BALANCES -->
+        <!-- ==================================================== -->
+
+        SELECT
+            a.id,
+            a.business_id,
+            a.code,
+            a.name,
+            a.account_type,
+            a.is_active,
+
+            <!-- ================================================ -->
+            <!-- TOTAL POSTED DEBITS -->
+            <!-- ================================================ -->
+
+            COALESCE(
+                pt.total_debits,
+                0::NUMERIC
+            ) AS posted_debits,
+
+            <!-- ================================================ -->
+            <!-- TOTAL POSTED CREDITS -->
+            <!-- ================================================ -->
+
+            COALESCE(
+                pt.total_credits,
+                0::NUMERIC
+            ) AS posted_credits,
+
+            <!-- ================================================ -->
+            <!-- CALCULATE SIGNED ACCOUNT BALANCE -->
+            <!-- ================================================ -->
+
+            CASE
+
+                <!-- Debit-normal account types. -->
+                WHEN a.account_type IN ('ASSET', 'EXPENSE')
+                THEN
+                    COALESCE(pt.total_debits, 0::NUMERIC)
+                    -
+                    COALESCE(pt.total_credits, 0::NUMERIC)
+
+                <!-- Credit-normal account types. -->
+                ELSE
+                    COALESCE(pt.total_credits, 0::NUMERIC)
+                    -
+                    COALESCE(pt.total_debits, 0::NUMERIC)
+
+            END AS balance
+
+        FROM accounts a
+
+        <!-- ==================================================== -->
+        <!-- KEEP ACCOUNTS WITHOUT POSTED ACTIVITY -->
+        <!-- ==================================================== -->
+
+        LEFT JOIN posted_totals pt
+            ON pt.business_id = a.business_id
+           AND pt.account_id = a.id
+
+        <!-- ==================================================== -->
+        <!-- BUSINESS ISOLATION -->
+        <!-- ==================================================== -->
+
+        WHERE a.business_id = #{businessId}
+
+        ORDER BY a.code, a.id
+
+    </select>
+
+    <!-- ======================================================== -->
+    <!-- GET ONE ACCOUNT -->
+    <!-- ======================================================== -->
+
+    <!--
+        Existing account lookup.
+
+        An account is returned only when it belongs
+        to the specified business.
+    -->
+
+    <select
+        id="findById"
+        resultMap="accountResultMap">
+
+        SELECT
+            id,
+            business_id,
+            code,
+            name,
+            account_type,
+            is_active,
+            created_at
+
+        FROM accounts
+
+        WHERE business_id = #{businessId}
+          AND id = #{accountId}
+
+    </select>
+
+    <!-- ======================================================== -->
+    <!-- INSERT NEW ACCOUNT -->
+    <!-- ======================================================== -->
+
+    <!--
+        Existing account creation query.
 
         PostgreSQL automatically generates:
+
         - id
         - is_active (defaults to TRUE)
         - created_at
 
-        MyBatis retrieves the generated id.
+        MyBatis retrieves the generated account ID.
     -->
-    <insert id="insert"
-            parameterType="com.ledgerbase.backend.model.Account"
-            useGeneratedKeys="true"
-            keyProperty="id"
-            keyColumn="id">
+
+    <insert
+        id="insert"
+        parameterType="com.ledgerbase.backend.model.Account"
+        useGeneratedKeys="true"
+        keyProperty="id"
+        keyColumn="id">
 
         INSERT INTO accounts (
             business_id,
@@ -84,35 +349,62 @@
             name,
             account_type
         )
+
         VALUES (
             #{businessId},
             #{code},
             #{name},
             #{accountType}
         )
+
     </insert>
 
-    <!-- Rename an account only if it is active. -->
-    <update id="updateName">
-        UPDATE accounts
-        SET name = #{name}
-        WHERE business_id = #{businessId}
-          AND id = #{accountId}
-          AND is_active = TRUE
-    </update>
+    <!-- ======================================================== -->
+    <!-- UPDATE ACCOUNT NAME -->
+    <!-- ======================================================== -->
 
     <!--
-        Deactivate an account without deleting it.
+        Existing account rename query.
 
-        Historical ledger entries may still reference
-        this account, so we preserve the record.
+        Only active accounts may be renamed.
+        Account codes and types remain unchanged.
     -->
-    <update id="deactivate">
+
+    <update id="updateName">
+
         UPDATE accounts
-        SET is_active = FALSE
+
+        SET name = #{name}
+
         WHERE business_id = #{businessId}
           AND id = #{accountId}
           AND is_active = TRUE
+
+    </update>
+
+    <!-- ======================================================== -->
+    <!-- DEACTIVATE ACCOUNT -->
+    <!-- ======================================================== -->
+
+    <!--
+        Existing account deactivation query.
+
+        Accounts are preserved rather than deleted.
+
+        This is important because posted journal entries
+        may still reference an inactive account.
+    -->
+
+    <update id="deactivate">
+
+        UPDATE accounts
+
+        SET is_active = FALSE
+
+        WHERE business_id = #{businessId}
+          AND id = #{accountId}
+          AND is_active = TRUE
+
     </update>
 
 </mapper>

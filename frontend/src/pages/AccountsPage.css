@@ -296,14 +296,15 @@
 /* ============================================================ */
 
 /**
- * The table now contains six columns:
+ * The table now contains seven columns:
  *
  * 1. Account Code
  * 2. Account Name
  * 3. Account Type
- * 4. Status
- * 5. Created
- * 6. Actions
+ * 4. Balance
+ * 5. Status
+ * 6. Created
+ * 7. Actions
  *
  * Increase minimum width to accommodate
  * Rename and Deactivate controls.
@@ -372,6 +373,53 @@
 
 .coa-account-name {
   color: #25364d !important;
+  font-weight: 650;
+}
+
+/* ============================================================ */
+/* ACCOUNT BALANCE COLUMN */
+/* ============================================================ */
+
+/**
+ * Display calculated account balances using
+ * professional accounting-table formatting.
+ *
+ * Accounting conventions:
+ *
+ * - Monetary values align to the right.
+ * - Digits use consistent character widths.
+ * - Positive and negative amounts remain readable.
+ * - Values stay on one line.
+ *
+ * Both the table heading and monetary cells
+ * use the same alignment.
+ *
+ * The actual amounts come from PostgreSQL
+ * and are formatted in AccountsPage.tsx.
+ */
+.coa-table th.coa-balance-column,
+.coa-table td.coa-balance-column {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============================================================ */
+/* ACCOUNT BALANCE VALUES */
+/* ============================================================ */
+
+/**
+ * Use a slightly stronger text weight to make
+ * financial values easy to scan.
+ *
+ * Keep the color neutral:
+ *
+ * A negative balance is not necessarily an error.
+ * For example, an asset account can have a
+ * temporary credit balance.
+ */
+.coa-table td.coa-balance-column {
+  color: #34475f;
   font-weight: 650;
 }
 
