@@ -4,10 +4,12 @@ import com.ledgerbase.backend.dto.CreateLedgerEntryRequest;
 import com.ledgerbase.backend.dto.CreateTransactionRequest;
 import com.ledgerbase.backend.exception.BusinessNotFoundException;
 import com.ledgerbase.backend.mapper.AccountMapper;
+import com.ledgerbase.backend.mapper.AccountingPeriodMapper;
 import com.ledgerbase.backend.mapper.BusinessMapper;
 import com.ledgerbase.backend.mapper.LedgerEntryMapper;
 import com.ledgerbase.backend.mapper.LedgerTransactionMapper;
 import com.ledgerbase.backend.model.Account;
+import com.ledgerbase.backend.model.AccountingPeriod;
 import com.ledgerbase.backend.model.LedgerEntry;
 import com.ledgerbase.backend.model.LedgerTransaction;
 import com.ledgerbase.backend.dto.TransactionDetailResponse;
@@ -54,6 +56,9 @@ public class TransactionService {
     // Used to record audit events in the audit_events table.
     private final AuditEventMapper auditEventMapper;
 
+    // Used to retrieve and lock accounting periods during posting.
+    private final AccountingPeriodMapper accountingPeriodMapper;
+
     /**
      * Spring injects the MyBatis mappers.
      *
@@ -65,13 +70,15 @@ public class TransactionService {
             LedgerEntryMapper entryMapper,
             AccountMapper accountMapper,
             BusinessMapper businessMapper,
-            AuditEventMapper auditEventMapper) {
+            AuditEventMapper auditEventMapper,
+            AccountingPeriodMapper accountingPeriodMapper) {
 
         this.transactionMapper = transactionMapper;
         this.entryMapper = entryMapper;
         this.accountMapper = accountMapper;
         this.businessMapper = businessMapper;
         this.auditEventMapper = auditEventMapper;
+        this.accountingPeriodMapper = accountingPeriodMapper;
     }
 
     /**
@@ -521,6 +528,76 @@ public class TransactionService {
             throw new TransactionConflictException(
                 "Cannot post a future-dated transaction: "
                 + transactionId
+            );
+        }
+
+        /**
+         * Every POSTED transaction must belong to an OPEN
+         * accounting period.
+         *
+         * We use the transaction's accounting date, not the
+         * current date, to determine its accounting period.
+         *
+         * Example:
+         *
+         * Transaction date: September 15, 2026
+         * Current date:     October 14, 2026
+         *
+         * If September is CLOSED, posting must be rejected
+         * even though October is currently OPEN.
+         *
+         * findByDateForUpdate() executes SELECT ... FOR UPDATE.
+         *
+         * This obtains a PostgreSQL row lock on the matching
+         * accounting period.
+         *
+         * The lock remains held until the surrounding
+         * @Transactional posting operation completes.
+         *
+         * This prevents another request from closing the period
+         * between our validation and the POSTED status update.
+         */
+        AccountingPeriod accountingPeriod =
+            accountingPeriodMapper.findByDateForUpdate(
+                businessId,
+                transactionDate
+            );
+
+        /**
+         * A transaction must not be posted if its date
+         * is outside every configured accounting period.
+         *
+         * We deliberately do not create a missing fiscal year
+         * or accounting period automatically during posting.
+         *
+         * Accounting calendars must be established explicitly.
+         */
+        if (accountingPeriod == null) {
+
+            throw new TransactionConflictException(
+                "No accounting period exists for transaction date: "
+                + transactionDate
+            );
+        }
+
+        /**
+         * Only OPEN periods allow new journal postings.
+         *
+         * CLOSED periods preserve finalized accounting results.
+         *
+         * If posting is rejected:
+         *
+         * - The transaction remains DRAFT.
+         * - Its existing ledger entries remain unchanged.
+         * - No TRANSACTION_POSTED audit event is created.
+         *
+         * The surrounding transaction rolls back normally.
+         */
+        if (accountingPeriod.getStatus() != AccountingPeriod.Status.OPEN) {
+
+            throw new TransactionConflictException(
+                "Cannot post into a closed accounting period: "
+                + transactionDate
             );
         }
 

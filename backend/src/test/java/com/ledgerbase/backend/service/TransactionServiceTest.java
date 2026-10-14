@@ -3,10 +3,11 @@ package com.ledgerbase.backend.service;
 import com.ledgerbase.backend.model.LedgerEntry;
 
 import com.ledgerbase.backend.mapper.AccountMapper;
+import com.ledgerbase.backend.mapper.AccountingPeriodMapper;
+import com.ledgerbase.backend.mapper.AuditEventMapper;
 import com.ledgerbase.backend.mapper.BusinessMapper;
 import com.ledgerbase.backend.mapper.LedgerEntryMapper;
 import com.ledgerbase.backend.mapper.LedgerTransactionMapper;
-import com.ledgerbase.backend.mapper.AuditEventMapper;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -47,7 +48,8 @@ class TransactionServiceTest {
             mock(LedgerEntryMapper.class),
             mock(AccountMapper.class),
             mock(BusinessMapper.class),
-            mock(AuditEventMapper.class)
+            mock(AuditEventMapper.class),
+            mock(AccountingPeriodMapper.class)
         );
     }
 

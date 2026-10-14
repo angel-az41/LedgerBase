@@ -5,6 +5,7 @@ import com.ledgerbase.backend.dto.CreateTransactionRequest;
 import com.ledgerbase.backend.exception.TransactionConflictException;
 import com.ledgerbase.backend.model.LedgerTransaction;
 import com.ledgerbase.backend.service.TransactionService;
+import com.ledgerbase.backend.service.FiscalYearService;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -50,6 +51,9 @@ class TransactionConcurrencyIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private FiscalYearService fiscalYearService;
 
     // IDs of committed test records.
     private Long testUserId;
@@ -104,6 +108,11 @@ class TransactionConcurrencyIntegrationTest {
             testUserId,
             "Concurrency Test Business",
             "USD"
+        );
+
+        fiscalYearService.createFiscalYear(
+            testBusinessId,
+            2026
         );
 
         // Cash account for the debit.

@@ -6,6 +6,7 @@ import com.ledgerbase.backend.mapper.LedgerEntryMapper;
 import com.ledgerbase.backend.model.LedgerEntry;
 import com.ledgerbase.backend.model.LedgerTransaction;
 import com.ledgerbase.backend.service.TransactionService;
+import com.ledgerbase.backend.service.FiscalYearService;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -64,6 +65,16 @@ class TransactionIntegrationTest {
      */
     @Autowired
     private TransactionService transactionService;
+
+    /**
+     * Creates fiscal years and accounting periods
+     * for our temporary integration-test businesses.
+     *
+     * This ensures journal posting tests have a
+     * properly configured accounting calendar.
+     */
+    @Autowired
+    private FiscalYearService fiscalYearService;
 
     /**
      * MyBatis mapper used to retrieve ledger entries.
@@ -141,6 +152,11 @@ class TransactionIntegrationTest {
             testUserId,
             "Transaction Test Business",
             "USD"
+        );
+
+        fiscalYearService.createFiscalYear(
+            testBusinessId,
+            2026
         );
 
         // Create the Cash asset account.
@@ -1877,5 +1893,308 @@ class TransactionIntegrationTest {
         );
 
         assertEquals(1, creationAuditCount);
+    }
+
+    // ============================================================
+    // TEST 18 — REJECT POSTING INTO A CLOSED ACCOUNTING PERIOD
+    // ============================================================
+
+    /**
+     * Verify that a DRAFT transaction cannot be posted
+     * after its accounting period has been CLOSED.
+     *
+     * Scenario:
+     *
+     * 1. Create a balanced draft dated October 11, 2026.
+     * 2. Mark the October 2026 accounting period CLOSED.
+     * 3. Attempt to post the transaction through HTTP.
+     * 4. Expect HTTP 409 Conflict.
+     * 5. Verify the draft and audit history are unchanged.
+     *
+     * We update the period directly through JDBC because
+     * the Close Period service has not been implemented yet.
+     *
+     * This SQL affects only the temporary test business
+     * in ledgerbase_test.
+     */
+    @Test
+    void rejectsPostingIntoClosedAccountingPeriod()
+            throws Exception {
+
+        // ========================================================
+        // ARRANGE — CREATE A BALANCED DRAFT
+        // ========================================================
+
+        LedgerTransaction draft =
+            transactionService.createDraftTransaction(
+                testBusinessId,
+                createRequest("500.00", "500.00")
+            );
+
+        assertEquals("DRAFT", draft.getStatus());
+
+        LocalDate transactionDate =
+            draft.getTransactionDate();
+
+
+        // ========================================================
+        // ARRANGE — CLOSE THE MATCHING ACCOUNTING PERIOD
+        // ========================================================
+
+        /**
+         * FY2026 was initialized in setUpTestData().
+         *
+         * October 2026 exists and is initially OPEN.
+         *
+         * Mark it CLOSED to simulate a completed
+         * accounting-period close operation.
+         */
+        int updatedPeriods = jdbcTemplate.update(
+            """
+            UPDATE accounting_periods
+            SET status = 'CLOSED',
+                closed_at = NOW()
+            WHERE business_id = ?
+              AND ? BETWEEN start_date AND end_date
+              AND status = 'OPEN'
+            """,
+            testBusinessId,
+            java.sql.Date.valueOf(transactionDate)
+        );
+
+        assertEquals(1, updatedPeriods);
+
+
+        // ========================================================
+        // ACT — ATTEMPT TO POST
+        // ========================================================
+
+        String postingUrl =
+            transactionsUrl()
+            + "/" + draft.getId()
+            + "/post";
+
+        postAsActor(mvc(), postingUrl, testUserId)
+
+            .andExpect(status().isConflict())
+
+            .andExpect(
+                jsonPath("$.error").value(
+                    "Cannot post into a closed accounting period: "
+                    + transactionDate
+                )
+            );
+
+
+        // ========================================================
+        // ASSERT — FINANCIAL RECORDS REMAIN UNCHANGED
+        // ========================================================
+
+        assertRejectedPostingPreservesDraft(draft.getId());
+    }
+
+
+    // ============================================================
+    // TEST 19 — REJECT POSTING WITHOUT AN ACCOUNTING PERIOD
+    // ============================================================
+
+    /**
+     * A transaction cannot be posted if its accounting
+     * date does not belong to any configured fiscal year.
+     *
+     * Our test business has FY2026 only.
+     *
+     * We create a historical draft dated October 11, 2025,
+     * which is outside FY2026.
+     *
+     * Creating the draft is permitted because it has
+     * not yet affected the finalized general ledger.
+     *
+     * Posting the draft must be rejected.
+     */
+    @Test
+    void rejectsPostingWithoutAccountingPeriod()
+            throws Exception {
+
+        // ========================================================
+        // ARRANGE — CREATE A DRAFT FOR AN UNCONFIGURED YEAR
+        // ========================================================
+
+        LocalDate unconfiguredDate =
+            LocalDate.of(2025, 10, 11);
+
+        /**
+         * Reuse the existing helper's valid debit and
+         * credit entries, but change the transaction date.
+         */
+        CreateTransactionRequest validRequest =
+            createRequest("500.00", "500.00");
+
+        CreateTransactionRequest historicalRequest =
+            new CreateTransactionRequest(
+                validRequest.createdBy(),
+                "Historical transaction without a fiscal year",
+                unconfiguredDate,
+                validRequest.entries()
+            );
+
+        LedgerTransaction draft =
+            transactionService.createDraftTransaction(
+                testBusinessId,
+                historicalRequest
+            );
+
+        assertEquals("DRAFT", draft.getStatus());
+
+
+        // ========================================================
+        // VERIFY THE ACCOUNTING PERIOD IS MISSING
+        // ========================================================
+
+        Integer matchingPeriods =
+            jdbcTemplate.queryForObject(
+                """
+                SELECT COUNT(*)
+                FROM accounting_periods
+                WHERE business_id = ?
+                  AND ? BETWEEN start_date AND end_date
+                """,
+                Integer.class,
+                testBusinessId,
+                java.sql.Date.valueOf(unconfiguredDate)
+            );
+
+        assertEquals(0, matchingPeriods);
+
+
+        // ========================================================
+        // ACT — ATTEMPT TO POST
+        // ========================================================
+
+        String postingUrl =
+            transactionsUrl()
+            + "/" + draft.getId()
+            + "/post";
+
+        postAsActor(mvc(), postingUrl, testUserId)
+
+            .andExpect(status().isConflict())
+
+            .andExpect(
+                jsonPath("$.error").value(
+                    "No accounting period exists for transaction date: "
+                    + unconfiguredDate
+                )
+            );
+
+
+        // ========================================================
+        // ASSERT — FINANCIAL RECORDS REMAIN UNCHANGED
+        // ========================================================
+
+        assertRejectedPostingPreservesDraft(draft.getId());
+    }
+
+
+    // ============================================================
+    // HELPER — VERIFY REJECTED POSTING PRESERVES FINANCIAL DATA
+    // ============================================================
+
+    /**
+     * Verify that a rejected posting does not partially
+     * change financial records.
+     *
+     * The original transaction must:
+     *
+     * - Remain DRAFT.
+     * - Preserve its two ledger entries.
+     * - Preserve its TRANSACTION_CREATED audit event.
+     * - Have zero TRANSACTION_POSTED audit events.
+     *
+     * Both rejection tests use this helper.
+     */
+    private void assertRejectedPostingPreservesDraft(
+            Long transactionId) {
+
+        // ========================================================
+        // VERIFY THE TRANSACTION IS STILL DRAFT
+        // ========================================================
+
+        String savedStatus = jdbcTemplate.queryForObject(
+            """
+            SELECT status
+            FROM transactions
+            WHERE id = ?
+              AND business_id = ?
+            """,
+            String.class,
+            transactionId,
+            testBusinessId
+        );
+
+        assertEquals("DRAFT", savedStatus);
+
+
+        // ========================================================
+        // VERIFY BOTH ORIGINAL LEDGER ENTRIES REMAIN
+        // ========================================================
+
+        Integer entryCount = jdbcTemplate.queryForObject(
+            """
+            SELECT COUNT(*)
+            FROM ledger_entries
+            WHERE transaction_id = ?
+              AND business_id = ?
+            """,
+            Integer.class,
+            transactionId,
+            testBusinessId
+        );
+
+        assertEquals(2, entryCount);
+
+
+        // ========================================================
+        // VERIFY THE CREATION AUDIT EVENT REMAINS
+        // ========================================================
+
+        Integer creationAuditCount =
+            jdbcTemplate.queryForObject(
+                """
+                SELECT COUNT(*)
+                FROM audit_events
+                WHERE business_id = ?
+                  AND entity_type = 'TRANSACTION'
+                  AND entity_id = ?
+                  AND action = 'TRANSACTION_CREATED'
+                """,
+                Integer.class,
+                testBusinessId,
+                transactionId
+            );
+
+        assertEquals(1, creationAuditCount);
+
+
+        // ========================================================
+        // VERIFY NO POSTING AUDIT EVENT WAS CREATED
+        // ========================================================
+
+        Integer postingAuditCount =
+            jdbcTemplate.queryForObject(
+                """
+                SELECT COUNT(*)
+                FROM audit_events
+                WHERE business_id = ?
+                  AND entity_type = 'TRANSACTION'
+                  AND entity_id = ?
+                  AND action = 'TRANSACTION_POSTED'
+                """,
+                Integer.class,
+                testBusinessId,
+                transactionId
+            );
+
+        assertEquals(0, postingAuditCount);
     }
 }
