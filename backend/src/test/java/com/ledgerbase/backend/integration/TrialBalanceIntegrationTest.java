@@ -809,6 +809,69 @@ class TrialBalanceIntegrationTest {
         assertTrue(report.isBalanced());
     }
 
+    // ============================================================
+    // TEST 9 — REJECT FUTURE REPORTING DATES
+    // ============================================================
+
+    /**
+     * Verify that a Trial Balance cannot be generated
+     * for a future accounting date.
+     *
+     * LedgerBase reporting policy:
+     *
+     * - Historical dates are allowed.
+     * - Today's date is allowed.
+     * - Future dates are rejected.
+     *
+     * This validation must happen in the service layer
+     * because users can call the REST API directly,
+     * bypassing the React date selector.
+     *
+     * Use a date relative to today so the test
+     * remains valid as time passes.
+     */
+    @Test
+    void rejectsFutureReportingDates() {
+
+        // ========================================================
+        // ARRANGE — SELECT A FUTURE REPORTING DATE
+        // ========================================================
+
+        /**
+         * Select a date one year in the future.
+         *
+         * This avoids hardcoding a date that could
+         * eventually become a valid historical date.
+         */
+        LocalDate futureDate =
+            LocalDate.now().plusYears(1);
+
+        // ========================================================
+        // ACT — REQUEST A FUTURE-DATED TRIAL BALANCE
+        // ========================================================
+
+        /**
+         * Our service must throw IllegalArgumentException
+         * instead of generating a report.
+         */
+        IllegalArgumentException exception = assertThrows(
+            IllegalArgumentException.class,
+            () -> trialBalanceService.generateTrialBalance(
+                testBusinessId,
+                futureDate
+            )
+        );
+
+        // ========================================================
+        // ASSERT — VERIFY THE VALIDATION MESSAGE
+        // ========================================================
+
+        assertEquals(
+            "Trial Balance reporting date cannot be in the future",
+            exception.getMessage()
+        );
+    }
+
     // ========================================================
     // HELPER — CREATE BUSINESS
     // ========================================================

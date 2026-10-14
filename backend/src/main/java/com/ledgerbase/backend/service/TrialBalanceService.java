@@ -159,18 +159,47 @@ public class TrialBalanceService {
         // ====================================================
 
         /**
-         * A Trial Balance must have a reporting date.
+         * A Trial Balance must have a valid reporting date.
          *
-         * The controller will later receive this
-         * through an HTTP query parameter.
+         * Our current reporting policy:
          *
-         * LocalDate represents a calendar date
-         * without time-zone conversions.
+         * - Past dates are accepted.
+         * - Today's date is accepted.
+         * - Future dates are rejected.
+         *
+         * Validation order matters:
+         *
+         * We must check for null BEFORE calling
+         * methods on the LocalDate object.
          */
+
+        // ============================================================
+        // FIRST — REJECT MISSING REPORTING DATES
+        // ============================================================
+
         if (asOfDate == null) {
 
             throw new IllegalArgumentException(
                 "Trial Balance reporting date is required"
+            );
+        }
+
+        // ============================================================
+        // SECOND — REJECT FUTURE REPORTING DATES
+        // ============================================================
+
+        /**
+         * Obtain the current date from the backend server.
+         *
+         * We can safely call asOfDate.isAfter() now
+         * because we already checked that it is not null.
+         */
+        LocalDate today = LocalDate.now();
+
+        if (asOfDate.isAfter(today)) {
+
+            throw new IllegalArgumentException(
+                "Trial Balance reporting date cannot be in the future"
             );
         }
 

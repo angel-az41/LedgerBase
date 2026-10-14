@@ -1588,4 +1588,294 @@ class TransactionIntegrationTest {
 
         assertEquals(2, auditCount);
     }
+
+    // ============================================================
+    // TEST 16 — REJECT FUTURE-DATED DRAFT CREATION
+    // ============================================================
+
+    /**
+     * Verify that the backend rejects future-dated transactions.
+     *
+     * The React date picker prevents users from normally
+     * selecting these dates, but the backend must independently
+     * validate incoming requests.
+     *
+     * We also verify that the rejected operation does not save:
+     *
+     * - A transaction header
+     * - Any ledger entries
+     * - Any audit events
+     */
+    @Test
+    void rejectsFutureDatedDraftWithoutSaving() {
+
+        // ========================================================
+        // ARRANGE — CREATE A FUTURE-DATED REQUEST
+        // ========================================================
+
+        /**
+         * Choose a date one year after today.
+         *
+         * Using a relative date means this test will still
+         * make sense when we run the suite in future years.
+         */
+        LocalDate futureDate = LocalDate.now().plusYears(1);
+
+        /**
+         * Reuse our existing helper to create two balanced
+         * journal lines referencing real test accounts.
+         */
+        CreateTransactionRequest validRequest =
+            createRequest("500.00", "500.00");
+
+        /**
+         * Keep the valid request's accounts and amounts,
+         * but replace its accounting date with a future date.
+         */
+        CreateTransactionRequest futureRequest =
+            new CreateTransactionRequest(
+                validRequest.createdBy(),
+                validRequest.description(),
+                futureDate,
+                validRequest.entries()
+            );
+
+        // ========================================================
+        // ACT — ATTEMPT TO SAVE THE INVALID DRAFT
+        // ========================================================
+
+        IllegalArgumentException exception = assertThrows(
+            IllegalArgumentException.class,
+            () -> transactionService.createDraftTransaction(
+                testBusinessId,
+                futureRequest
+            )
+        );
+
+        // ========================================================
+        // ASSERT — CHECK THE VALIDATION MESSAGE
+        // ========================================================
+
+        assertEquals(
+            "Transaction date cannot be in the future",
+            exception.getMessage()
+        );
+
+        // ========================================================
+        // ASSERT — NO TRANSACTION HEADER WAS SAVED
+        // ========================================================
+
+        Integer transactionCount = jdbcTemplate.queryForObject(
+            """
+            SELECT COUNT(*)
+            FROM transactions
+            WHERE business_id = ?
+            """,
+            Integer.class,
+            testBusinessId
+        );
+
+        assertEquals(0, transactionCount);
+
+        // ========================================================
+        // ASSERT — NO LEDGER ENTRIES WERE SAVED
+        // ========================================================
+
+        Integer entryCount = jdbcTemplate.queryForObject(
+            """
+            SELECT COUNT(*)
+            FROM ledger_entries
+            WHERE business_id = ?
+            """,
+            Integer.class,
+            testBusinessId
+        );
+
+        assertEquals(0, entryCount);
+
+        // ========================================================
+        // ASSERT — NO AUDIT EVENTS WERE SAVED
+        // ========================================================
+
+        Integer auditCount = jdbcTemplate.queryForObject(
+            """
+            SELECT COUNT(*)
+            FROM audit_events
+            WHERE business_id = ?
+            """,
+            Integer.class,
+            testBusinessId
+        );
+
+        assertEquals(0, auditCount);
+    }
+
+
+    // ============================================================
+    // TEST 17 — REJECT POSTING A FUTURE-DATED DRAFT
+    // ============================================================
+
+    /**
+     * Verify that a future-dated DRAFT cannot be posted.
+     *
+     * Why simulate an older draft?
+     *
+     * Our new creation validation already rejects future dates,
+     * so the normal service cannot create this invalid state.
+     *
+     * However, older data or an external database modification
+     * might still contain such a draft.
+     *
+     * This test simulates that scenario using the isolated
+     * test database, then verifies that the posting service
+     * independently applies the date restriction.
+     */
+    @Test
+    void rejectsPostingFutureDatedDraft() throws Exception {
+
+        // ========================================================
+        // ARRANGE — CREATE A VALID DRAFT TRANSACTION
+        // ========================================================
+
+        LedgerTransaction draft =
+            transactionService.createDraftTransaction(
+                testBusinessId,
+                createRequest("500.00", "500.00")
+            );
+
+        assertEquals("DRAFT", draft.getStatus());
+
+        // ========================================================
+        // ARRANGE — SIMULATE A LEGACY FUTURE-DATED DRAFT
+        // ========================================================
+
+        /**
+         * Move the existing DRAFT's accounting date forward.
+         *
+         * This SQL runs only against ledgerbase_test.
+         *
+         * We are intentionally bypassing the creation service
+         * to test the independent posting validation.
+         *
+         * PostgreSQL allows updates to DRAFT transaction headers;
+         * the existing immutability trigger protects POSTED ones.
+         */
+        LocalDate futureDate = LocalDate.now().plusYears(1);
+
+        int updatedRows = jdbcTemplate.update(
+            """
+            UPDATE transactions
+            SET transaction_date = ?
+            WHERE id = ?
+              AND business_id = ?
+              AND status = 'DRAFT'
+            """,
+            java.sql.Date.valueOf(futureDate),
+            draft.getId(),
+            testBusinessId
+        );
+
+        assertEquals(1, updatedRows);
+
+        // ========================================================
+        // ACT — ATTEMPT TO POST THROUGH THE REST API
+        // ========================================================
+
+        /**
+         * Reuse our existing MockMvc posting helper.
+         *
+         * We expect HTTP 409 Conflict because this existing
+         * draft violates the current posting rules.
+         */
+        String postingUrl = transactionsUrl()
+            + "/" + draft.getId()
+            + "/post";
+
+        postAsActor(mvc(), postingUrl, testUserId)
+
+            .andExpect(status().isConflict())
+
+            .andExpect(
+                jsonPath("$.error").value(
+                    "Cannot post a future-dated transaction: "
+                    + draft.getId()
+                )
+            );
+
+        // ========================================================
+        // ASSERT — TRANSACTION MUST REMAIN DRAFT
+        // ========================================================
+
+        String savedStatus = jdbcTemplate.queryForObject(
+            """
+            SELECT status
+            FROM transactions
+            WHERE id = ?
+              AND business_id = ?
+            """,
+            String.class,
+            draft.getId(),
+            testBusinessId
+        );
+
+        assertEquals("DRAFT", savedStatus);
+
+        // ========================================================
+        // ASSERT — ORIGINAL LEDGER ENTRIES REMAIN UNCHANGED
+        // ========================================================
+
+        Integer entryCount = jdbcTemplate.queryForObject(
+            """
+            SELECT COUNT(*)
+            FROM ledger_entries
+            WHERE business_id = ?
+              AND transaction_id = ?
+            """,
+            Integer.class,
+            testBusinessId,
+            draft.getId()
+        );
+
+        assertEquals(2, entryCount);
+
+        // ========================================================
+        // ASSERT — NO POSTING AUDIT EVENT WAS CREATED
+        // ========================================================
+
+        Integer postingAuditCount = jdbcTemplate.queryForObject(
+            """
+            SELECT COUNT(*)
+            FROM audit_events
+            WHERE business_id = ?
+              AND entity_type = 'TRANSACTION'
+              AND entity_id = ?
+              AND action = 'TRANSACTION_POSTED'
+            """,
+            Integer.class,
+            testBusinessId,
+            draft.getId()
+        );
+
+        assertEquals(0, postingAuditCount);
+
+        // ========================================================
+        // ASSERT — ORIGINAL CREATION AUDIT EVENT IS PRESERVED
+        // ========================================================
+
+        Integer creationAuditCount = jdbcTemplate.queryForObject(
+            """
+            SELECT COUNT(*)
+            FROM audit_events
+            WHERE business_id = ?
+              AND entity_type = 'TRANSACTION'
+              AND entity_id = ?
+              AND action = 'TRANSACTION_CREATED'
+            """,
+            Integer.class,
+            testBusinessId,
+            draft.getId()
+        );
+
+        assertEquals(1, creationAuditCount);
+    }
 }
