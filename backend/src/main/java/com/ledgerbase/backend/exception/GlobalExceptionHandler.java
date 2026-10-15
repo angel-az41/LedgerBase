@@ -117,4 +117,32 @@ public class GlobalExceptionHandler {
             .status(HttpStatus.CONFLICT)
             .body(Map.of("error", exception.getMessage()));
     }
+
+    // ========================================================
+    // ACCOUNTING PERIOD STATE CONFLICTS
+    // ========================================================
+
+    /**
+     * Handles invalid accounting-period status transitions.
+     *
+     * Examples:
+     *
+     * - Trying to close an already CLOSED period.
+     * - Trying to reopen an already OPEN period.
+     * - A concurrent request changing the period's status
+     *   before the requested operation completes.
+     *
+     * Returns HTTP 409 Conflict.
+     *
+     * This is not a server failure. It means the requested
+     * action conflicts with the period's current state.
+     */
+    @ExceptionHandler(AccountingPeriodConflictException.class)
+    public ResponseEntity<Map<String, String>> handleAccountingPeriodConflict(
+            AccountingPeriodConflictException exception) {
+
+        return ResponseEntity
+            .status(HttpStatus.CONFLICT)
+            .body(Map.of("error", exception.getMessage()));
+    }
 }

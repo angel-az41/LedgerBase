@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
@@ -22,6 +23,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 // ============================================================
@@ -594,5 +596,605 @@ class AccountingPeriodControllerIntegrationTest {
             ))
 
             .andExpect(status().isNotFound());
+    }
+
+
+    // ========================================================
+    // TEST 9 — CLOSE AND REOPEN ACCOUNTING PERIOD THROUGH API
+    // ========================================================
+
+    /**
+     * Verify the complete accounting-period lifecycle
+     * through the real Spring MVC REST endpoints.
+     *
+     * This test covers:
+     *
+     * 1. Creating a fiscal year with OPEN periods.
+     * 2. Closing an OPEN period through POST /close.
+     * 3. Receiving HTTP 200 and CLOSED status.
+     * 4. Recording the closing timestamp.
+     * 5. Reopening the period through POST /reopen.
+     * 6. Receiving HTTP 200 and OPEN status.
+     * 7. Clearing the closing timestamp.
+     * 8. Recording both actions in audit_events.
+     *
+     * The enclosing @Transactional test annotation
+     * rolls back all database changes afterward.
+     */
+    @Test
+    void closesAndReopensAccountingPeriodThroughApi()
+            throws Exception {
+
+        // ====================================================
+        // CREATE A FISCAL YEAR
+        // ====================================================
+
+        FiscalYear fiscalYear =
+            fiscalYearService.createFiscalYear(
+                testBusinessId,
+                2027
+            );
+
+        // ====================================================
+        // SELECT AN OPEN ACCOUNTING PERIOD
+        // ====================================================
+
+        AccountingPeriod period =
+            accountingPeriodMapper.findByFiscalYearId(
+                testBusinessId,
+                fiscalYear.getId()
+            ).get(0);
+
+        assertEquals(
+            AccountingPeriod.Status.OPEN,
+            period.getStatus()
+        );
+
+        // ====================================================
+        // PREPARE REQUEST BODY
+        // ====================================================
+
+        /**
+         * The actor is the test user created in setUp().
+         *
+         * Using a real test user ID ensures that
+         * PostgreSQL audit-event foreign keys are valid.
+         */
+        String requestBody =
+            "{\"actorId\":" + testUserId + "}";
+
+        // ====================================================
+        // CLOSE THE ACCOUNTING PERIOD
+        // ====================================================
+
+        mvc.perform(
+                post(periodUrl(period.getId()) + "/close")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(requestBody)
+            )
+
+            .andExpect(status().isOk())
+
+            .andExpect(
+                jsonPath("$.id").value(period.getId())
+            )
+
+            .andExpect(
+                jsonPath("$.status").value("CLOSED")
+            )
+
+            .andExpect(
+                jsonPath("$.closedAt").isNotEmpty()
+            );
+
+        // ====================================================
+        // VERIFY CLOSED STATUS THROUGH GET API
+        // ====================================================
+
+        mvc.perform(get(periodUrl(period.getId())))
+
+            .andExpect(status().isOk())
+
+            .andExpect(
+                jsonPath("$.status").value("CLOSED")
+            );
+
+        // ====================================================
+        // REOPEN THE ACCOUNTING PERIOD
+        // ====================================================
+
+        mvc.perform(
+                post(periodUrl(period.getId()) + "/reopen")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(requestBody)
+            )
+
+            .andExpect(status().isOk())
+
+            .andExpect(
+                jsonPath("$.id").value(period.getId())
+            )
+
+            .andExpect(
+                jsonPath("$.status").value("OPEN")
+            )
+
+            .andExpect(
+                jsonPath("$.closedAt").doesNotExist()
+            );
+
+        // ====================================================
+        // VERIFY OPEN STATUS THROUGH GET API
+        // ====================================================
+
+        mvc.perform(get(periodUrl(period.getId())))
+
+            .andExpect(status().isOk())
+
+            .andExpect(
+                jsonPath("$.status").value("OPEN")
+            );
+
+        // ====================================================
+        // VERIFY ACCOUNTING PERIOD AUDIT EVENTS
+        // ====================================================
+
+        /**
+         * Both state changes must be recorded.
+         *
+         * We verify the audit events belong to:
+         *
+         * - The correct business
+         * - The correct accounting period
+         * - The correct actor
+         *
+         * Exactly two events are expected:
+         *
+         * ACCOUNTING_PERIOD_CLOSED
+         * ACCOUNTING_PERIOD_REOPENED
+         */
+        Long auditEventCount =
+            jdbcTemplate.queryForObject(
+                """
+                SELECT COUNT(*)
+                FROM audit_events
+                WHERE business_id = ?
+                  AND entity_type = 'ACCOUNTING_PERIOD'
+                  AND entity_id = ?
+                  AND actor_id = ?
+                  AND action IN (
+                      'ACCOUNTING_PERIOD_CLOSED',
+                      'ACCOUNTING_PERIOD_REOPENED'
+                  )
+                """,
+                Long.class,
+                testBusinessId,
+                period.getId(),
+                testUserId
+            );
+
+        assertEquals(2L, auditEventCount);
+    }
+
+
+    // ========================================================
+    // TEST 10 — CANNOT CLOSE AN ALREADY CLOSED PERIOD
+    // ========================================================
+
+    /**
+     * An accounting period can only be closed
+     * when its current status is OPEN.
+     *
+     * Verify:
+     *
+     * 1. The first closing request succeeds.
+     * 2. A second closing request returns HTTP 409.
+     * 3. The API provides a meaningful error message.
+     */
+    @Test
+    void returnsConflictWhenClosingAlreadyClosedPeriod()
+            throws Exception {
+
+        // ====================================================
+        // CREATE FISCAL YEAR AND SELECT A PERIOD
+        // ====================================================
+
+        FiscalYear fiscalYear =
+            fiscalYearService.createFiscalYear(
+                testBusinessId,
+                2027
+            );
+
+        AccountingPeriod period =
+            accountingPeriodMapper.findByFiscalYearId(
+                testBusinessId,
+                fiscalYear.getId()
+            ).get(0);
+
+        String requestBody =
+            "{\"actorId\":" + testUserId + "}";
+
+        String closeUrl =
+            periodUrl(period.getId()) + "/close";
+
+        // ====================================================
+        // FIRST CLOSE — SUCCESS
+        // ====================================================
+
+        mvc.perform(
+                post(closeUrl)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(requestBody)
+            )
+
+            .andExpect(status().isOk())
+
+            .andExpect(
+                jsonPath("$.status").value("CLOSED")
+            );
+
+        // ====================================================
+        // SECOND CLOSE — CONFLICT
+        // ====================================================
+
+        /**
+         * The period is already CLOSED.
+         *
+         * AccountingPeriodConflictException should
+         * be converted to HTTP 409 by our
+         * GlobalExceptionHandler.
+         */
+        mvc.perform(
+                post(closeUrl)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(requestBody)
+            )
+
+            .andExpect(status().isConflict())
+
+            .andExpect(
+                jsonPath("$.error").isNotEmpty()
+            );
+    }
+
+
+    // ========================================================
+    // TEST 11 — CANNOT REOPEN AN ALREADY OPEN PERIOD
+    // ========================================================
+
+    /**
+     * Reopening an accounting period is only valid
+     * when its current status is CLOSED.
+     *
+     * All newly created accounting periods begin OPEN.
+     *
+     * Attempting to reopen one immediately must
+     * return HTTP 409 Conflict.
+     */
+    @Test
+    void returnsConflictWhenReopeningOpenPeriod()
+            throws Exception {
+
+        // ====================================================
+        // CREATE FISCAL YEAR AND SELECT AN OPEN PERIOD
+        // ====================================================
+
+        FiscalYear fiscalYear =
+            fiscalYearService.createFiscalYear(
+                testBusinessId,
+                2027
+            );
+
+        AccountingPeriod period =
+            accountingPeriodMapper.findByFiscalYearId(
+                testBusinessId,
+                fiscalYear.getId()
+            ).get(0);
+
+        assertEquals(
+            AccountingPeriod.Status.OPEN,
+            period.getStatus()
+        );
+
+        String requestBody =
+            "{\"actorId\":" + testUserId + "}";
+
+        // ====================================================
+        // REOPEN AN OPEN PERIOD — CONFLICT
+        // ====================================================
+
+        mvc.perform(
+                post(periodUrl(period.getId()) + "/reopen")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(requestBody)
+            )
+
+            .andExpect(status().isConflict())
+
+            .andExpect(
+                jsonPath("$.error").isNotEmpty()
+            );
+    }
+
+
+    // ========================================================
+    // TEST 12 — INVALID ACTOR ID RETURNS HTTP 400
+    // ========================================================
+
+    /**
+     * Closing or reopening an accounting period requires
+     * a valid actor ID for audit attribution.
+     *
+     * Jakarta Bean Validation must reject:
+     *
+     * - Missing actor ID
+     * - Null actor ID
+     * - Zero or negative actor ID
+     *
+     * The existing GlobalExceptionHandler converts
+     * validation failures into HTTP 400 responses.
+     */
+    @Test
+    void rejectsInvalidActorIdForPeriodActions()
+            throws Exception {
+
+        // ====================================================
+        // CREATE AN OPEN ACCOUNTING PERIOD
+        // ====================================================
+
+        FiscalYear fiscalYear =
+            fiscalYearService.createFiscalYear(
+                testBusinessId,
+                2027
+            );
+
+        AccountingPeriod period =
+            accountingPeriodMapper.findByFiscalYearId(
+                testBusinessId,
+                fiscalYear.getId()
+            ).get(0);
+
+        String closeUrl =
+            periodUrl(period.getId()) + "/close";
+
+        String reopenUrl =
+            periodUrl(period.getId()) + "/reopen";
+
+        // ====================================================
+        // MISSING ACTOR ID
+        // ====================================================
+
+        mvc.perform(
+                post(closeUrl)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{}")
+            )
+
+            .andExpect(status().isBadRequest())
+
+            .andExpect(
+                jsonPath("$.error").value("Actor ID is required")
+            );
+
+        // ====================================================
+        // NULL ACTOR ID
+        // ====================================================
+
+        mvc.perform(
+                post(closeUrl)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"actorId\":null}")
+            )
+
+            .andExpect(status().isBadRequest());
+
+        // ====================================================
+        // ZERO ACTOR ID
+        // ====================================================
+
+        mvc.perform(
+                post(closeUrl)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"actorId\":0}")
+            )
+
+            .andExpect(status().isBadRequest())
+
+            .andExpect(
+                jsonPath("$.error")
+                    .value("Actor ID must be positive")
+            );
+
+        // ====================================================
+        // NEGATIVE ACTOR ID FOR REOPEN
+        // ====================================================
+
+        mvc.perform(
+                post(reopenUrl)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"actorId\":-1}")
+            )
+
+            .andExpect(status().isBadRequest());
+
+        // ====================================================
+        // VERIFY NO STATUS CHANGE OCCURRED
+        // ====================================================
+
+        AccountingPeriod unchangedPeriod =
+            accountingPeriodMapper.findById(
+                testBusinessId,
+                period.getId()
+            );
+
+        assertEquals(
+            AccountingPeriod.Status.OPEN,
+            unchangedPeriod.getStatus()
+        );
+    }
+
+
+    // ========================================================
+    // TEST 13 — MISSING PERIOD RETURNS HTTP 404
+    // ========================================================
+
+    /**
+     * Both period-action endpoints must return HTTP 404
+     * if the requested period does not exist.
+     *
+     * A missing period is different from a status conflict.
+     *
+     * Missing period = 404
+     * Invalid status transition = 409
+     */
+    @Test
+    void returnsNotFoundWhenClosingOrReopeningMissingPeriod()
+            throws Exception {
+
+        String requestBody =
+            "{\"actorId\":" + testUserId + "}";
+
+        String missingPeriodUrl =
+            periodUrl(Long.MAX_VALUE);
+
+        // ====================================================
+        // CLOSE NONEXISTENT PERIOD
+        // ====================================================
+
+        mvc.perform(
+                post(missingPeriodUrl + "/close")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(requestBody)
+            )
+
+            .andExpect(status().isNotFound());
+
+        // ====================================================
+        // REOPEN NONEXISTENT PERIOD
+        // ====================================================
+
+        mvc.perform(
+                post(missingPeriodUrl + "/reopen")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(requestBody)
+            )
+
+            .andExpect(status().isNotFound());
+    }
+
+
+    // ========================================================
+    // TEST 14 — CROSS-BUSINESS PERIOD ACCESS RETURNS 404
+    // ========================================================
+
+    /**
+     * Business B must not be able to close or reopen
+     * an accounting period belonging to Business A.
+     *
+     * This verifies business-scoped data isolation.
+     *
+     * NOTE:
+     *
+     * This is not yet authenticated authorization.
+     * User permissions will be enforced separately
+     * when Spring Security is introduced.
+     */
+    @Test
+    void preventsCrossBusinessPeriodStatusChanges()
+            throws Exception {
+
+        // ====================================================
+        // CREATE A PERIOD FOR BUSINESS A
+        // ====================================================
+
+        FiscalYear fiscalYear =
+            fiscalYearService.createFiscalYear(
+                testBusinessId,
+                2027
+            );
+
+        AccountingPeriod period =
+            accountingPeriodMapper.findByFiscalYearId(
+                testBusinessId,
+                fiscalYear.getId()
+            ).get(0);
+
+        // ====================================================
+        // CREATE BUSINESS B
+        // ====================================================
+
+        /**
+         * The second business has the same test owner.
+         *
+         * A valid user does not change which business
+         * owns the accounting period.
+         */
+        Long otherBusinessId = jdbcTemplate.queryForObject(
+            """
+            INSERT INTO businesses (
+                owner_id,
+                name,
+                currency
+            )
+            VALUES (?, ?, ?)
+            RETURNING id
+            """,
+            Long.class,
+            testUserId,
+            "Period Isolation Test Business",
+            "USD"
+        );
+
+        // ====================================================
+        // BUILD INCORRECT BUSINESS URL
+        // ====================================================
+
+        String otherBusinessPeriodUrl =
+            "/api/v1/businesses/"
+            + otherBusinessId
+            + "/accounting-periods/"
+            + period.getId();
+
+        String requestBody =
+            "{\"actorId\":" + testUserId + "}";
+
+        // ====================================================
+        // BUSINESS B CANNOT CLOSE BUSINESS A'S PERIOD
+        // ====================================================
+
+        mvc.perform(
+                post(otherBusinessPeriodUrl + "/close")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(requestBody)
+            )
+
+            .andExpect(status().isNotFound());
+
+        // ====================================================
+        // BUSINESS B CANNOT REOPEN BUSINESS A'S PERIOD
+        // ====================================================
+
+        mvc.perform(
+                post(otherBusinessPeriodUrl + "/reopen")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(requestBody)
+            )
+
+            .andExpect(status().isNotFound());
+
+        // ====================================================
+        // VERIFY BUSINESS A'S PERIOD REMAINS UNCHANGED
+        // ====================================================
+
+        AccountingPeriod unchangedPeriod =
+            accountingPeriodMapper.findById(
+                testBusinessId,
+                period.getId()
+            );
+
+        assertEquals(
+            AccountingPeriod.Status.OPEN,
+            unchangedPeriod.getStatus()
+        );
     }
 }

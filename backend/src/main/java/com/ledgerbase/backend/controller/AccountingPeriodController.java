@@ -1,7 +1,10 @@
 package com.ledgerbase.backend.controller;
 
+import com.ledgerbase.backend.dto.AccountingPeriodActionRequest;
 import com.ledgerbase.backend.model.AccountingPeriod;
 import com.ledgerbase.backend.service.AccountingPeriodService;
+
+import jakarta.validation.Valid;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -23,6 +26,8 @@ import java.util.List;
  *
  * 1. Retrieve the accounting periods of a fiscal year.
  * 2. Retrieve one accounting period.
+ * 3. Close an OPEN accounting period.
+ * 4. Reopen a CLOSED accounting period.
  *
  * Each fiscal year normally has 12 monthly periods.
  *
@@ -204,5 +209,143 @@ public class AccountingPeriodController {
         // ====================================================
 
         return ResponseEntity.ok(period);
+    }
+
+
+    // ========================================================
+    // CLOSE ACCOUNTING PERIOD
+    // ========================================================
+
+    /**
+     * POST /api/v1/businesses/1/accounting-periods/10/close
+     *
+     * Change an accounting period from OPEN to CLOSED.
+     *
+     * Example request body:
+     *
+     * {
+     *   "actorId": 1
+     * }
+     *
+     * AccountingPeriodService is responsible for:
+     *
+     * 1. Checking that the period belongs to the business.
+     * 2. Verifying that its current status is OPEN.
+     * 3. Updating the status to CLOSED.
+     * 4. Recording the closing timestamp.
+     * 5. Writing an accounting-period audit event.
+     *
+     * A CLOSED period cannot accept new journal postings.
+     *
+     * Returns:
+     *
+     * HTTP 200 — Period successfully closed.
+     * HTTP 400 — Invalid actor ID.
+     * HTTP 404 — Period not found for this business.
+     * HTTP 409 — Period is already CLOSED or state
+     *            changes conflict with the request.
+     */
+    @PostMapping("/accounting-periods/{periodId}/close")
+    public ResponseEntity<AccountingPeriod> closeAccountingPeriod(
+            @PathVariable Long businessId,
+            @PathVariable Long periodId,
+            @Valid @RequestBody AccountingPeriodActionRequest request) {
+
+        // ====================================================
+        // DELEGATE TO ACCOUNTING PERIOD SERVICE
+        // ====================================================
+
+        AccountingPeriod closedPeriod =
+            accountingPeriodService.closeAccountingPeriod(
+                businessId,
+                periodId,
+                request.actorId()
+            );
+
+        // ====================================================
+        // HANDLE MISSING OR CROSS-BUSINESS PERIOD
+        // ====================================================
+
+        /**
+         * The service returns null when the period cannot
+         * be found within the requested business.
+         */
+        if (closedPeriod == null) {
+
+            return ResponseEntity.notFound().build();
+        }
+
+        // ====================================================
+        // RETURN UPDATED ACCOUNTING PERIOD
+        // ====================================================
+
+        return ResponseEntity.ok(closedPeriod);
+    }
+
+    // ========================================================
+    // REOPEN ACCOUNTING PERIOD
+    // ========================================================
+
+    /**
+     * POST /api/v1/businesses/1/accounting-periods/10/reopen
+     *
+     * Change an accounting period from CLOSED to OPEN.
+     *
+     * Example request body:
+     *
+     * {
+     *   "actorId": 1
+     * }
+     *
+     * AccountingPeriodService is responsible for:
+     *
+     * 1. Checking that the period belongs to the business.
+     * 2. Verifying that its current status is CLOSED.
+     * 3. Updating the status to OPEN.
+     * 4. Clearing the closing timestamp.
+     * 5. Writing an accounting-period audit event.
+     *
+     * Reopening allows new journal postings dated
+     * within the accounting period.
+     *
+     * Returns:
+     *
+     * HTTP 200 — Period successfully reopened.
+     * HTTP 400 — Invalid actor ID.
+     * HTTP 404 — Period not found for this business.
+     * HTTP 409 — Period is already OPEN or state
+     *            changes conflict with the request.
+     */
+    @PostMapping("/accounting-periods/{periodId}/reopen")
+    public ResponseEntity<AccountingPeriod> reopenAccountingPeriod(
+            @PathVariable Long businessId,
+            @PathVariable Long periodId,
+            @Valid @RequestBody AccountingPeriodActionRequest request) {
+
+        // ====================================================
+        // DELEGATE TO ACCOUNTING PERIOD SERVICE
+        // ====================================================
+
+        AccountingPeriod reopenedPeriod =
+            accountingPeriodService.reopenAccountingPeriod(
+                businessId,
+                periodId,
+                request.actorId()
+            );
+
+        // ====================================================
+        // HANDLE MISSING OR CROSS-BUSINESS PERIOD
+        // ====================================================
+
+        if (reopenedPeriod == null) {
+
+            return ResponseEntity.notFound().build();
+        }
+
+        // ====================================================
+        // RETURN UPDATED ACCOUNTING PERIOD
+        // ====================================================
+
+        return ResponseEntity.ok(reopenedPeriod);
     }
 }
