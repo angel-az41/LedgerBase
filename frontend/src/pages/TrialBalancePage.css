@@ -342,7 +342,42 @@
   width: 100%;
   min-width: 740px;
   border-collapse: collapse;
+  table-layout: fixed;
   text-align: left;
+}
+
+/* ============================================================ */
+/* FIXED TRIAL BALANCE COLUMN WIDTHS */
+/* ============================================================ */
+
+/**
+ * Assign consistent widths to all five columns.
+ *
+ * These proportions remain unchanged whether
+ * the report contains $0.00, $500.00, or other values.
+ *
+ * The table retains its existing responsive
+ * horizontal scrolling behavior.
+ */
+
+.tb-table thead th:nth-child(1) {
+  width: 15%; /* Account Code */
+}
+
+.tb-table thead th:nth-child(2) {
+  width: 37%; /* Account Name */
+}
+
+.tb-table thead th:nth-child(3) {
+  width: 18%; /* Account Type */
+}
+
+.tb-table thead th:nth-child(4) {
+  width: 15%; /* Debit */
+}
+
+.tb-table thead th:nth-child(5) {
+  width: 15%; /* Credit */
 }
 
 /* ============================================================ */

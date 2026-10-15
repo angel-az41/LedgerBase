@@ -3,6 +3,7 @@ package com.ledgerbase.backend.integration;
 import com.ledgerbase.backend.exception.BusinessNotFoundException;
 import com.ledgerbase.backend.model.AccountBalance;
 import com.ledgerbase.backend.service.AccountService;
+import com.ledgerbase.backend.service.FiscalYearService;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -71,6 +72,9 @@ class AccountBalanceIntegrationTest {
      */
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private FiscalYearService fiscalYearService;
 
     // ========================================================
     // TEST FIXTURE IDENTIFIERS
@@ -209,6 +213,29 @@ class AccountBalanceIntegrationTest {
             "Other Business Savings",
             "ASSET",
             true
+        );
+
+        // ============================================================
+        // INITIALIZE ACCOUNTING CALENDARS FOR BOTH BUSINESSES
+        // ============================================================
+
+        /**
+         * The account-balance test fixtures use October 13, 2026.
+         *
+         * Creating FY2026 provides an OPEN October accounting
+         * period for both independent test businesses.
+         *
+         * This allows the existing DRAFT -> POSTED SQL updates
+         * to satisfy the upcoming V6 database trigger.
+         */
+        fiscalYearService.createFiscalYear(
+            testBusinessId,
+            2026
+        );
+
+        fiscalYearService.createFiscalYear(
+            otherBusinessId,
+            2026
         );
     }
 

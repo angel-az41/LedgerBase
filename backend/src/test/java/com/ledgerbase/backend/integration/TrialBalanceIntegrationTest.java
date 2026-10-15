@@ -3,6 +3,7 @@ package com.ledgerbase.backend.integration;
 import com.ledgerbase.backend.exception.BusinessNotFoundException;
 import com.ledgerbase.backend.model.TrialBalanceReport;
 import com.ledgerbase.backend.model.TrialBalanceRow;
+import com.ledgerbase.backend.service.FiscalYearService;
 import com.ledgerbase.backend.service.TrialBalanceService;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -17,7 +18,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.sql.Date;
 import java.time.LocalDate;
-import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -65,6 +65,9 @@ class TrialBalanceIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private FiscalYearService fiscalYearService;
 
     // ========================================================
     // REPORTING DATE
@@ -211,6 +214,35 @@ class TrialBalanceIntegrationTest {
             "Other Savings",
             "ASSET",
             true
+        );
+
+        // ============================================================
+        // INITIALIZE ACCOUNTING CALENDARS FOR BOTH BUSINESSES
+        // ============================================================
+
+        /**
+         * Our reporting fixtures contain journal transactions
+         * dated October 2026.
+         *
+         * V6 will require an OPEN accounting period before
+         * any transaction can transition to POSTED.
+         *
+         * Create FY2026 independently for both businesses.
+         *
+         * Each fiscal year automatically generates 12 OPEN
+         * monthly periods, including October 2026.
+         *
+         * Because this test class uses @Transactional,
+         * these records are rolled back after each test.
+         */
+        fiscalYearService.createFiscalYear(
+            testBusinessId,
+            2026
+        );
+
+        fiscalYearService.createFiscalYear(
+            otherBusinessId,
+            2026
         );
     }
 
