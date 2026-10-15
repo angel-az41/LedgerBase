@@ -5,11 +5,13 @@ import {
   BookOpen,
   ArrowLeftRight,
   Scale,
+  CalendarRange,
 } from 'lucide-react'
 
 import './App.css'
 
 import AccountsPage from './pages/AccountsPage'
+import FiscalYearsPage from './pages/FiscalYearsPage'
 import TransactionsPage from './pages/TransactionsPage'
 import TrialBalancePage from './pages/TrialBalancePage'
 
@@ -30,6 +32,7 @@ type Page =
   | 'accounts'
   | 'transactions'
   | 'trial-balance'
+  | 'fiscal-years'
 
 /**
  * Define the structure of a sidebar navigation item.
@@ -120,6 +123,20 @@ const navigationItems: NavigationItem[] = [
     ),
   },
 
+  // ==========================================================
+  // FISCAL YEARS & ACCOUNTING PERIODS
+  // ==========================================================
+
+  {
+    id: 'fiscal-years',
+    label: 'Fiscal Years & Periods',
+    icon: (
+      <CalendarRange
+        size={18}
+        strokeWidth={1.8}
+      />
+    ),
+  },
 ]
 
 // ============================================================
@@ -186,14 +203,15 @@ function App() {
       description: 'Record and manage your accounting transactions.',
     },
 
-    // ==========================================================
-    // NEW — TRIAL BALANCE PAGE INFORMATION
-    // ==========================================================
-
     'trial-balance': {
       title: 'Trial Balance',
       description: 'Review account balances and verify your general ledger.',
     },
+
+      'fiscal-years': {
+        title: 'Fiscal Years & Accounting Periods',
+        description: 'Manage your accounting calendar and monthly posting periods.',
+      },
   }
 
   const currentPage = pageInformation[activePage]
@@ -328,7 +346,8 @@ function App() {
           reporting pages during a future UI refinement.
         */}
 
-        {activePage !== 'trial-balance' && (
+        {activePage !== 'trial-balance' &&
+          activePage !== 'fiscal-years' && (
 
           <header className="page-header">
 
@@ -547,7 +566,7 @@ function App() {
         )}
 
         {/* ==================================================== */}
-        {/* NEW — TRIAL BALANCE REPORT PAGE */}
+        {/* TRIAL BALANCE REPORT PAGE */}
         {/* ==================================================== */}
 
         {activePage === 'trial-balance' && (
@@ -571,6 +590,29 @@ function App() {
            */
 
           <TrialBalancePage businessId={1} />
+
+        )}
+
+        {/* ==================================================== */}
+        {/* FISCAL YEARS & ACCOUNTING PERIODS PAGE */}
+        {/* ==================================================== */}
+
+        {activePage === 'fiscal-years' && (
+
+          /*
+          * Display the fiscal-year management page
+          * for our existing local development business.
+          *
+          * The business ID is temporarily set to 1.
+          *
+          * Later, authentication and business selection
+          * will determine the current business.
+          */
+
+          <FiscalYearsPage
+            businessId={1}
+            actorId={1}
+          />
 
         )}
 

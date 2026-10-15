@@ -1,0 +1,963 @@
+/* ============================================================ */
+/* LEDGERBASE — FISCAL YEARS & ACCOUNTING PERIODS PAGE */
+/* ============================================================ */
+
+/**
+ * Styles for managing fiscal years and monthly
+ * accounting periods.
+ *
+ * Design principles:
+ *
+ * - Consistent with the existing LedgerBase UI
+ * - Professional enterprise accounting appearance
+ * - Navy typography and restrained teal accents
+ * - White cards with subtle borders
+ * - Stable accounting table column widths
+ * - Clear OPEN and CLOSED status indicators
+ * - Responsive layout with horizontal table scrolling
+ *
+ * All styles use the "fy-" prefix to avoid
+ * conflicts with other application pages.
+ */
+
+
+/* ============================================================ */
+/* PAGE CONTAINER */
+/* ============================================================ */
+
+.fy-page {
+  width: 100%;
+  min-width: 0;
+}
+
+
+/* ============================================================ */
+/* PAGE HEADING */
+/* ============================================================ */
+
+/**
+ * Display the page title and a short description.
+ *
+ * Match the heading treatment of the existing
+ * Trial Balance reporting page.
+ */
+
+.fy-page-header {
+  margin-bottom: 25px;
+}
+
+.fy-page-header h1 {
+  margin: 0 0 8px;
+  color: #1e3047;
+  font-size: 25px;
+  font-weight: 750;
+  letter-spacing: -0.5px;
+}
+
+.fy-page-header p {
+  max-width: 650px;
+  margin: 0;
+  color: #8493a7;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+
+/* ============================================================ */
+/* SHARED CARD STYLES */
+/* ============================================================ */
+
+/**
+ * Both the fiscal-year selection area and the
+ * accounting-period table use white cards.
+ *
+ * Keep the styling consistent with our
+ * existing LedgerBase reporting interfaces.
+ */
+
+.fy-controls-card,
+.fy-periods-card {
+  border: 1px solid #e6ebf1;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.fy-controls-card {
+  margin-bottom: 24px;
+  padding: 25px;
+}
+
+.fy-periods-card {
+  overflow: hidden;
+}
+
+
+/* ============================================================ */
+/* FISCAL YEAR SECTION HEADING */
+/* ============================================================ */
+
+.fy-section-heading {
+  margin-bottom: 22px;
+}
+
+.fy-section-heading h2 {
+  margin: 0 0 8px;
+  color: #22334b;
+  font-size: 17px;
+  font-weight: 750;
+}
+
+.fy-section-heading p {
+  margin: 0;
+  color: #8493a7;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+
+/* ============================================================ */
+/* FISCAL YEAR SELECTION CONTROLS */
+/* ============================================================ */
+
+/**
+ * Place the fiscal-year selector and accounting
+ * date range next to each other when space allows.
+ */
+
+.fy-controls-content {
+  display: flex;
+  align-items: flex-end;
+  gap: 30px;
+  flex-wrap: wrap;
+}
+
+
+/* ============================================================ */
+/* FISCAL YEAR SELECT FIELD */
+/* ============================================================ */
+
+.fy-year-field {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  width: 245px;
+  max-width: 100%;
+}
+
+.fy-year-field label {
+  color: #506278;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.fy-year-field select {
+  width: 100%;
+  min-height: 42px;
+  box-sizing: border-box;
+  padding: 10px 13px;
+  border: 1px solid #dce5ec;
+  border-radius: 8px;
+  outline: none;
+  background: #ffffff;
+  color: #25364d;
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.fy-year-field select:hover {
+  border-color: #b9cbd8;
+}
+
+.fy-year-field select:focus-visible {
+  border-color: #35aa94;
+  outline: 2px solid #35aa94;
+  outline-offset: 2px;
+}
+
+
+/* ============================================================ */
+/* FISCAL YEAR DATE RANGE */
+/* ============================================================ */
+
+/**
+ * Display the real start and end dates provided
+ * by the Spring Boot Fiscal Year API.
+ *
+ * Do not assume January-to-December fiscal years.
+ */
+
+.fy-date-range {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding-bottom: 4px;
+}
+
+.fy-date-range span {
+  color: #8493a7;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.fy-date-range strong {
+  color: #25364d;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+
+/* ============================================================ */
+/* ACCOUNTING PERIODS SECTION HEADING */
+/* ============================================================ */
+
+.fy-periods-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+  padding: 25px;
+}
+
+.fy-periods-heading h2 {
+  margin: 0 0 8px;
+  color: #22334b;
+  font-size: 17px;
+  font-weight: 750;
+}
+
+.fy-periods-heading p {
+  margin: 0;
+  color: #8493a7;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+
+/* ============================================================ */
+/* PERIOD STATUS SUMMARY */
+/* ============================================================ */
+
+/**
+ * Show the number of OPEN and CLOSED periods.
+ *
+ * Counts come from the accounting periods
+ * returned by the backend.
+ */
+
+.fy-period-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.fy-period-summary span {
+  padding: 7px 11px;
+  border: 1px solid #e6ebf1;
+  border-radius: 7px;
+  background: #f8fafc;
+  color: #607188;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+
+/* ============================================================ */
+/* ACCOUNTING TABLE SCROLL CONTAINER */
+/* ============================================================ */
+
+/**
+ * Preserve readable columns on smaller screens.
+ *
+ * The table will scroll horizontally instead
+ * of compressing or wrapping financial data.
+ */
+
+.fy-table-scroll {
+  width: 100%;
+  overflow-x: auto;
+}
+
+
+/* ============================================================ */
+/* ACCOUNTING PERIODS TABLE */
+/* ============================================================ */
+
+/**
+ * The accounting periods table contains:
+ *
+ * 1. Period
+ * 2. Month
+ * 3. Start Date
+ * 4. End Date
+ * 5. Status
+ *
+ * table-layout: fixed prevents columns from shifting
+ * when their contents change.
+ */
+
+.fy-table {
+  width: 100%;
+  min-width: 820px;
+  border-collapse: collapse;
+  table-layout: fixed;
+  text-align: left;
+}
+
+
+/* ============================================================ */
+/* FIXED ACCOUNTING TABLE COLUMN WIDTHS */
+/* ============================================================ */
+
+.fy-table thead th:nth-child(1) {
+  width: 16%;
+}
+
+.fy-table thead th:nth-child(2) {
+  width: 26%;
+}
+
+.fy-table thead th:nth-child(3) {
+  width: 20%;
+}
+
+.fy-table thead th:nth-child(4) {
+  width: 20%;
+}
+
+.fy-table thead th:nth-child(5) {
+  width: 18%;
+}
+
+
+/* ============================================================ */
+/* ACCOUNTING TABLE HEADER */
+/* ============================================================ */
+
+.fy-table thead {
+  background: #f8fafc;
+}
+
+.fy-table thead th {
+  padding: 16px 20px;
+  border-top: 1px solid #edf1f5;
+  border-bottom: 1px solid #edf1f5;
+  color: #8491a3;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+
+/* ============================================================ */
+/* ACCOUNTING TABLE BODY */
+/* ============================================================ */
+
+.fy-table tbody td {
+  padding: 18px 20px;
+  border-bottom: 1px solid #f0f3f6;
+  color: #53647b;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.fy-table tbody tr:hover {
+  background: #fbfcfd;
+}
+
+.fy-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+
+/* ============================================================ */
+/* ACCOUNTING PERIOD NUMBER */
+/* ============================================================ */
+
+.fy-table td.fy-period-number {
+  color: #287e75;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+
+/* ============================================================ */
+/* ACCOUNTING PERIOD MONTH */
+/* ============================================================ */
+
+.fy-table td.fy-period-month {
+  color: #25364d;
+  font-weight: 650;
+}
+
+
+/* ============================================================ */
+/* ACCOUNTING PERIOD STATUS BADGES */
+/* ============================================================ */
+
+/**
+ * Status indicators use text as well as color.
+ *
+ * OPEN:
+ *   New journal postings are allowed.
+ *
+ * CLOSED:
+ *   Journal posting is restricted.
+ */
+
+.fy-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 65px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+
+/* ============================================================ */
+/* OPEN STATUS */
+/* ============================================================ */
+
+.fy-status-open {
+  border: 1px solid #cbe9dd;
+  background: #e8f8f1;
+  color: #218666;
+}
+
+
+/* ============================================================ */
+/* CLOSED STATUS */
+/* ============================================================ */
+
+.fy-status-closed {
+  border: 1px solid #e2e7ed;
+  background: #f1f4f7;
+  color: #67778a;
+}
+
+
+/* ============================================================ */
+/* LOADING AND EMPTY STATES */
+/* ============================================================ */
+
+.fy-message {
+  margin: 0;
+  padding: 22px 0;
+  color: #8493a7;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.fy-periods-card > .fy-message {
+  padding: 10px 25px 30px;
+}
+
+
+/* ============================================================ */
+/* ERROR STATES */
+/* ============================================================ */
+
+/**
+ * Display readable API errors without revealing
+ * technical stack traces to the user.
+ */
+
+.fy-error {
+  margin: 0;
+  padding: 14px 16px;
+  border: 1px solid #f0d0d2;
+  border-radius: 8px;
+  background: #fff1f1;
+  color: #b53f46;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.fy-periods-card > .fy-error {
+  margin: 0 25px 25px;
+}
+
+
+/* ============================================================ */
+/* RESPONSIVE LAYOUT */
+/* ============================================================ */
+
+@media (max-width: 760px) {
+
+  .fy-controls-content {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .fy-year-field {
+    width: 100%;
+  }
+
+  .fy-periods-heading {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .fy-table-scroll {
+    overflow-x: auto;
+  }
+}
+
+
+/* ============================================================ */
+/* SMALL MOBILE LAYOUT */
+/* ============================================================ */
+
+@media (max-width: 480px) {
+
+  .fy-page-header h1 {
+    font-size: 22px;
+  }
+
+  .fy-controls-card {
+    padding: 18px;
+  }
+
+  .fy-periods-heading {
+    padding: 20px 18px;
+  }
+
+  .fy-period-summary {
+    gap: 8px;
+  }
+
+  .fy-periods-card > .fy-error {
+    margin: 0 18px 18px;
+  }
+}
+
+
+/* ============================================================ */
+/* FISCAL YEAR CREATION HEADER */
+/* ============================================================ */
+
+/**
+ * Keep the page heading and creation button
+ * aligned horizontally on larger screens.
+ *
+ * The fiscal-year dropdown remains below.
+ */
+
+.fy-year-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin-bottom: 22px;
+}
+
+.fy-year-header-row .fy-section-heading {
+  margin-bottom: 0;
+}
+
+
+/* ============================================================ */
+/* CREATE FISCAL YEAR TOGGLE */
+/* ============================================================ */
+
+.fy-create-toggle {
+  min-height: 38px;
+  padding: 9px 15px;
+  border: 1px solid #d3e8e3;
+  border-radius: 8px;
+  background: #eff9f6;
+  color: #217e71;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.fy-create-toggle:hover:not(:disabled) {
+  background: #e1f3ed;
+}
+
+.fy-create-toggle:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+
+/* ============================================================ */
+/* CREATE FISCAL YEAR FORM */
+/* ============================================================ */
+
+.fy-create-form {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 24px;
+  padding: 20px;
+  border: 1px solid #e3eaf0;
+  border-radius: 10px;
+  background: #f9fbfc;
+}
+
+
+/* ============================================================ */
+/* CREATE FISCAL YEAR INPUT */
+/* ============================================================ */
+
+.fy-create-field {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  width: 100%;
+}
+
+.fy-create-field label {
+  color: #506278;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.fy-create-field input {
+  width: 190px;
+  max-width: 100%;
+  min-height: 42px;
+  box-sizing: border-box;
+  padding: 10px 13px;
+  border: 1px solid #dce5ec;
+  border-radius: 8px;
+  outline: none;
+  background: #ffffff;
+  color: #25364d;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.fy-create-field input:focus-visible {
+  border-color: #35aa94;
+  outline: 2px solid #35aa94;
+  outline-offset: 2px;
+}
+
+.fy-create-help {
+  max-width: 520px;
+  margin: 0;
+  color: #8493a7;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+
+/* ============================================================ */
+/* FORM ACTIONS */
+/* ============================================================ */
+
+.fy-create-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.fy-create-submit,
+.fy-create-cancel {
+  min-height: 39px;
+  padding: 9px 15px;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.fy-create-submit {
+  border: 1px solid #228a7b;
+  background: #228a7b;
+  color: #ffffff;
+}
+
+.fy-create-submit:hover:not(:disabled) {
+  background: #1a7569;
+}
+
+.fy-create-cancel {
+  border: 1px solid #dce5ec;
+  background: #ffffff;
+  color: #607188;
+}
+
+.fy-create-cancel:hover:not(:disabled) {
+  background: #f1f4f7;
+}
+
+.fy-create-submit:disabled,
+.fy-create-cancel:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+
+/* ============================================================ */
+/* CREATION SUCCESS MESSAGE */
+/* ============================================================ */
+
+.fy-create-success {
+  margin: 0 0 20px;
+  padding: 13px 15px;
+  border: 1px solid #cbe9dd;
+  border-radius: 8px;
+  background: #eff9f3;
+  color: #218666;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+
+/* ============================================================ */
+/* KEYBOARD ACCESSIBILITY */
+/* ============================================================ */
+
+.fy-create-toggle:focus-visible,
+.fy-create-submit:focus-visible,
+.fy-create-cancel:focus-visible {
+  outline: 2px solid #35aa94;
+  outline-offset: 3px;
+}
+
+
+/* ============================================================ */
+/* RESPONSIVE CREATION FORM */
+/* ============================================================ */
+
+@media (max-width: 600px) {
+
+  .fy-year-header-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .fy-create-form {
+    padding: 16px;
+  }
+
+  .fy-create-field input {
+    width: 100%;
+  }
+}
+
+
+/* ============================================================ */
+/* ACCOUNTING PERIOD ACTIONS — SIX COLUMN TABLE */
+/* ============================================================ */
+
+/**
+ * The table now contains a sixth column for
+ * Close/Reopen actions.
+ *
+ * Preserve fixed column widths to prevent
+ * layout shifts when statuses change.
+ */
+
+.fy-table {
+  min-width: 940px;
+}
+
+.fy-table thead th:nth-child(1) {
+  width: 13%;
+}
+
+.fy-table thead th:nth-child(2) {
+  width: 23%;
+}
+
+.fy-table thead th:nth-child(3) {
+  width: 18%;
+}
+
+.fy-table thead th:nth-child(4) {
+  width: 18%;
+}
+
+.fy-table thead th:nth-child(5) {
+  width: 13%;
+}
+
+.fy-table thead th:nth-child(6) {
+  width: 15%;
+}
+
+.fy-table thead th:last-child,
+.fy-table tbody td:last-child {
+  text-align: right;
+}
+
+/* ============================================================ */
+/* CLOSE / REOPEN TABLE BUTTONS */
+/* ============================================================ */
+
+.fy-period-action-button {
+  min-width: 78px;
+  padding: 8px 12px;
+  border: 1px solid #d8e4e9;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #287e75;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.fy-period-action-button:hover:not(:disabled) {
+  border-color: #9fcfc4;
+  background: #f0f9f6;
+}
+
+.fy-period-action-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ============================================================ */
+/* PERIOD STATUS CHANGE CONFIRMATION */
+/* ============================================================ */
+
+.fy-period-confirmation {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 20px;
+  margin: 0 25px 22px;
+  padding: 18px 20px;
+  border: 1px solid #dae7e5;
+  border-radius: 9px;
+  background: #f7fbfa;
+}
+
+.fy-period-confirmation strong {
+  display: block;
+  margin-bottom: 8px;
+  color: #25364d;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.fy-period-confirmation p {
+  max-width: 610px;
+  margin: 0;
+  color: #65778a;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.fy-period-confirm-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* ============================================================ */
+/* CONFIRMATION BUTTONS */
+/* ============================================================ */
+
+.fy-period-confirm-submit,
+.fy-period-confirm-cancel {
+  min-height: 37px;
+  padding: 9px 14px;
+  border-radius: 7px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.fy-period-confirm-submit {
+  border: 1px solid #287e75;
+  background: #287e75;
+  color: #ffffff;
+}
+
+.fy-period-confirm-submit:hover:not(:disabled) {
+  background: #226e66;
+}
+
+.fy-period-confirm-cancel {
+  border: 1px solid #dce5ec;
+  background: #ffffff;
+  color: #607188;
+}
+
+.fy-period-confirm-cancel:hover:not(:disabled) {
+  background: #f1f4f7;
+}
+
+.fy-period-confirm-submit:disabled,
+.fy-period-confirm-cancel:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ============================================================ */
+/* ACTION SUCCESS / ERROR MESSAGES */
+/* ============================================================ */
+
+.fy-period-action-success,
+.fy-period-action-error {
+  margin: 0 25px 20px;
+  padding: 13px 15px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.fy-period-action-success {
+  border: 1px solid #cbe9dd;
+  background: #eff9f3;
+  color: #218666;
+}
+
+.fy-period-action-error {
+  border: 1px solid #f0d0d2;
+  background: #fff1f1;
+  color: #b53f46;
+}
+
+/* ============================================================ */
+/* KEYBOARD ACCESSIBILITY */
+/* ============================================================ */
+
+.fy-period-action-button:focus-visible,
+.fy-period-confirm-submit:focus-visible,
+.fy-period-confirm-cancel:focus-visible {
+  outline: 2px solid #35aa94;
+  outline-offset: 3px;
+}
+
+/* ============================================================ */
+/* RESPONSIVE CONFIRMATION PANEL */
+/* ============================================================ */
+
+@media (max-width: 600px) {
+
+  .fy-period-confirmation {
+    flex-direction: column;
+    align-items: flex-start;
+    margin: 0 18px 18px;
+    padding: 16px;
+  }
+
+  .fy-period-action-success,
+  .fy-period-action-error {
+    margin: 0 18px 18px;
+  }
+}
