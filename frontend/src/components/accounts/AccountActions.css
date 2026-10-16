@@ -487,3 +487,78 @@
     gap: 9px;
   }
 }
+
+/* ============================================================ */
+/* REPORTING GROUP CLASSIFICATION EDITOR */
+/* ============================================================ */
+
+/**
+ * Reuse the existing modal form styling for
+ * the new reporting-group selection control.
+ *
+ * These rules do not modify the existing
+ * Rename or Deactivate functionality.
+ */
+
+/* ============================================================ */
+/* CLASSIFICATION SELECT FIELD */
+/* ============================================================ */
+
+.coa-action-field select {
+  width: 100%;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px solid #dce5ec;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #243249;
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* ============================================================ */
+/* SELECT FOCUS */
+/* ============================================================ */
+
+.coa-action-field select:focus {
+  border-color: #35aa94;
+  outline: 2px solid #35aa9430;
+  outline-offset: 1px;
+}
+
+/* ============================================================ */
+/* DISABLED SELECT */
+/* ============================================================ */
+
+.coa-action-field select:disabled {
+  background: #f7f9fb;
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+/* ============================================================ */
+/* CLASSIFICATION HELPER TEXT */
+/* ============================================================ */
+
+.coa-action-field small {
+  color: #8392a5;
+  font-size: 11px;
+  font-weight: 450;
+  line-height: 1.6;
+  white-space: normal;
+}
+
+/* ============================================================ */
+/* ROW ACTION SPACING */
+/* ============================================================ */
+
+/**
+ * Allow the three action links to wrap if needed
+ * instead of overflowing narrow viewports.
+ */
+
+.coa-row-actions {
+  flex-wrap: wrap;
+  gap: 9px 13px;
+}

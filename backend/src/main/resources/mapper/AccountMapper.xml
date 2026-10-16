@@ -19,12 +19,21 @@
     - Rename accounts
     - Deactivate accounts
 
+    V7 ENHANCEMENTS:
+
+    - Financial reporting classifications
+    - Optional parent-child account hierarchy
+    - Account posting eligibility
+
     IMPORTANT:
 
     Account balances are NOT stored in the accounts table.
 
     They are calculated from ledger_entries belonging
     to POSTED transactions.
+
+    Non-postable grouping accounts cannot receive ledger
+    entries because PostgreSQL enforces that restriction.
 
     All account queries must respect business isolation.
 -->
@@ -39,24 +48,84 @@
         Convert a PostgreSQL accounts row
         into a Java Account object.
 
-        PostgreSQL column: is_active
-        Java property:     active
+        Existing mappings remain unchanged.
+
+        V7 adds:
+
+        reporting_group   -> reportingGroup
+        parent_account_id -> parentAccountId
+        is_postable       -> postable
+
+        Note:
+
+        is_active and is_postable have different meanings.
+
+        is_active:
+            Whether the account is active for normal use.
+
+        is_postable:
+            Whether the account may receive ledger entries.
     -->
 
     <resultMap
         id="accountResultMap"
         type="com.ledgerbase.backend.model.Account">
 
+        <!-- ==================================================== -->
+        <!-- ACCOUNT IDENTITY -->
+        <!-- ==================================================== -->
+
         <id property="id" column="id"/>
 
         <result property="businessId" column="business_id"/>
+
+
+        <!-- ==================================================== -->
+        <!-- BASIC ACCOUNT INFORMATION -->
+        <!-- ==================================================== -->
+
         <result property="code" column="code"/>
+
         <result property="name" column="name"/>
+
         <result property="accountType" column="account_type"/>
+
+
+        <!-- ==================================================== -->
+        <!-- V7 — REPORTING CLASSIFICATION -->
+        <!-- ==================================================== -->
+
+        <result
+            property="reportingGroup"
+            column="reporting_group"/>
+
+
+        <!-- ==================================================== -->
+        <!-- V7 — ACCOUNT HIERARCHY -->
+        <!-- ==================================================== -->
+
+        <result
+            property="parentAccountId"
+            column="parent_account_id"/>
+
+
+        <!-- ==================================================== -->
+        <!-- ACCOUNT STATUS -->
+        <!-- ==================================================== -->
+
         <result property="active" column="is_active"/>
+
+        <result property="postable" column="is_postable"/>
+
+
+        <!-- ==================================================== -->
+        <!-- AUDIT INFORMATION -->
+        <!-- ==================================================== -->
+
         <result property="createdAt" column="created_at"/>
 
     </resultMap>
+
 
     <!-- ======================================================== -->
     <!-- ACCOUNT BALANCE RESULT MAPPING -->
@@ -72,11 +141,27 @@
         This result includes:
 
         - Account identification
-        - Account classification
+        - Fundamental account type
         - Account active status
         - Total posted debits
         - Total posted credits
         - Calculated signed balance
+
+        IMPORTANT:
+
+        AccountBalance remains unchanged in this step.
+
+        We do not aggregate parent and child balances here.
+        Each account's balance is calculated from its own
+        ledger entries only.
+
+        This avoids double-counting financial activity.
+
+        Non-postable grouping accounts have no ledger entries,
+        so their direct posted balances are zero.
+
+        Hierarchical subtotals, if needed for presentation,
+        will be calculated separately.
     -->
 
     <resultMap
@@ -86,9 +171,13 @@
         <id property="id" column="id"/>
 
         <result property="businessId" column="business_id"/>
+
         <result property="code" column="code"/>
+
         <result property="name" column="name"/>
+
         <result property="accountType" column="account_type"/>
+
         <result property="active" column="is_active"/>
 
         <result
@@ -108,17 +197,23 @@
 
     </resultMap>
 
+
     <!-- ======================================================== -->
     <!-- GET ALL ACCOUNTS FOR A BUSINESS -->
     <!-- ======================================================== -->
 
     <!--
-        Existing Chart of Accounts query.
+        Retrieve every account belonging to the business.
 
-        Retrieve every account belonging to
-        the requested business.
+        Includes:
 
-        Includes both active and inactive accounts.
+        - Active accounts
+        - Inactive accounts
+        - Postable accounts
+        - Non-postable grouping accounts
+
+        V7 classification, hierarchy and posting fields
+        are included in the result.
     -->
 
     <select
@@ -131,7 +226,13 @@
             code,
             name,
             account_type,
+
+            reporting_group,
+            parent_account_id,
+
             is_active,
+            is_postable,
+
             created_at
 
         FROM accounts
@@ -142,36 +243,39 @@
 
     </select>
 
+
     <!-- ======================================================== -->
     <!-- GET CALCULATED POSTED ACCOUNT BALANCES -->
     <!-- ======================================================== -->
 
     <!--
-        NEW: Find account balances for one business.
+        Calculate financial balances for one business.
 
         This query follows double-entry accounting.
 
-        Step 1:
+        STEP 1:
             Aggregate debits and credits for each account.
 
-        Step 2:
+        STEP 2:
             Include only POSTED transactions.
 
-        Step 3:
-            LEFT JOIN the calculated totals with accounts.
+        STEP 3:
+            LEFT JOIN calculated totals with accounts.
 
-        Step 4:
+        STEP 4:
             Return zero for accounts without posted entries.
 
-        Step 5:
-            Calculate the signed balance according to
-            each account's normal accounting direction.
+        STEP 5:
+            Calculate each account's signed balance
+            according to its normal accounting direction.
 
-        Normal debit balances:
+        NORMAL DEBIT BALANCES:
+
             ASSET
             EXPENSE
 
-        Normal credit balances:
+        NORMAL CREDIT BALANCES:
+
             LIABILITY
             EQUITY
             REVENUE
@@ -179,12 +283,14 @@
         IMPORTANT:
 
         - DRAFT transactions are excluded.
-        - Only records belonging to the requested business
-          are included.
-        - Inactive accounts remain visible because they
-          can still contain historical balances.
-        - PostgreSQL performs all monetary calculations
-          using NUMERIC rather than floating-point types.
+        - Business isolation is maintained.
+        - Inactive accounts remain visible.
+        - PostgreSQL NUMERIC is used for money.
+        - Grouping accounts do not accumulate child balances
+          in this query.
+
+        V7 intentionally does not change the existing
+        balance calculation logic.
     -->
 
     <select
@@ -194,7 +300,7 @@
         WITH posted_totals AS (
 
             <!-- ================================================ -->
-            <!-- STEP 1: AGGREGATE POSTED LEDGER ENTRIES -->
+            <!-- STEP 1 — AGGREGATE POSTED LEDGER ENTRIES -->
             <!-- ================================================ -->
 
             SELECT
@@ -202,6 +308,7 @@
                 le.account_id,
 
                 SUM(le.debit) AS total_debits,
+
                 SUM(le.credit) AS total_credits
 
             FROM ledger_entries le
@@ -218,8 +325,9 @@
                 le.account_id
         )
 
+
         <!-- ==================================================== -->
-        <!-- STEP 2: RETURN ACCOUNT INFORMATION AND BALANCES -->
+        <!-- STEP 2 — RETURN ACCOUNT INFORMATION AND BALANCES -->
         <!-- ==================================================== -->
 
         SELECT
@@ -230,6 +338,7 @@
             a.account_type,
             a.is_active,
 
+
             <!-- ================================================ -->
             <!-- TOTAL POSTED DEBITS -->
             <!-- ================================================ -->
@@ -238,6 +347,7 @@
                 pt.total_debits,
                 0::NUMERIC
             ) AS posted_debits,
+
 
             <!-- ================================================ -->
             <!-- TOTAL POSTED CREDITS -->
@@ -248,6 +358,7 @@
                 0::NUMERIC
             ) AS posted_credits,
 
+
             <!-- ================================================ -->
             <!-- CALCULATE SIGNED ACCOUNT BALANCE -->
             <!-- ================================================ -->
@@ -257,19 +368,23 @@
                 <!-- Debit-normal account types. -->
                 WHEN a.account_type IN ('ASSET', 'EXPENSE')
                 THEN
+
                     COALESCE(pt.total_debits, 0::NUMERIC)
                     -
                     COALESCE(pt.total_credits, 0::NUMERIC)
 
                 <!-- Credit-normal account types. -->
                 ELSE
+
                     COALESCE(pt.total_credits, 0::NUMERIC)
                     -
                     COALESCE(pt.total_debits, 0::NUMERIC)
 
             END AS balance
 
+
         FROM accounts a
+
 
         <!-- ==================================================== -->
         <!-- KEEP ACCOUNTS WITHOUT POSTED ACTIVITY -->
@@ -278,6 +393,7 @@
         LEFT JOIN posted_totals pt
             ON pt.business_id = a.business_id
            AND pt.account_id = a.id
+
 
         <!-- ==================================================== -->
         <!-- BUSINESS ISOLATION -->
@@ -289,15 +405,17 @@
 
     </select>
 
+
     <!-- ======================================================== -->
     <!-- GET ONE ACCOUNT -->
     <!-- ======================================================== -->
 
     <!--
-        Existing account lookup.
+        Retrieve one account belonging to the
+        specified business.
 
-        An account is returned only when it belongs
-        to the specified business.
+        V7 adds reportingGroup, parentAccountId
+        and postable to the returned Account object.
     -->
 
     <select
@@ -310,7 +428,13 @@
             code,
             name,
             account_type,
+
+            reporting_group,
+            parent_account_id,
+
             is_active,
+            is_postable,
+
             created_at
 
         FROM accounts
@@ -320,20 +444,53 @@
 
     </select>
 
+
     <!-- ======================================================== -->
     <!-- INSERT NEW ACCOUNT -->
     <!-- ======================================================== -->
 
     <!--
-        Existing account creation query.
+        Create a new account in PostgreSQL.
 
-        PostgreSQL automatically generates:
+        Existing values:
+
+        - business_id
+        - code
+        - name
+        - account_type
+
+        V7 values:
+
+        - reporting_group
+        - parent_account_id
+        - is_postable
+
+        PostgreSQL generates:
 
         - id
         - is_active (defaults to TRUE)
         - created_at
 
-        MyBatis retrieves the generated account ID.
+        COMPATIBILITY:
+
+        Existing AccountService calls may not yet assign
+        reportingGroup, parentAccountId or postable.
+
+        NULL reportingGroup:
+            Account remains unclassified.
+
+        NULL parentAccountId:
+            Account is a top-level account.
+
+        NULL postable:
+            COALESCE treats the account as postable.
+
+        This maintains the original account creation
+        behavior until the Java service and API are
+        updated for V7.
+
+        PostgreSQL constraints and triggers validate
+        the new fields regardless of the caller.
     -->
 
     <insert
@@ -347,17 +504,70 @@
             business_id,
             code,
             name,
-            account_type
+            account_type,
+
+            reporting_group,
+            parent_account_id,
+            is_postable
         )
 
         VALUES (
             #{businessId},
             #{code},
             #{name},
-            #{accountType}
+            #{accountType},
+
+            #{reportingGroup,jdbcType=VARCHAR},
+            #{parentAccountId,jdbcType=BIGINT},
+
+            COALESCE(
+                #{postable,jdbcType=BOOLEAN},
+                TRUE
+            )
         )
 
     </insert>
+
+    <!-- ======================================================== -->
+    <!-- UPDATE ACCOUNT REPORTING GROUP -->
+    <!-- ======================================================== -->
+
+    <!--
+        Update the financial reporting classification
+        of an existing account.
+
+        Examples:
+
+        ASSET -> CURRENT_ASSET
+
+        LIABILITY -> NON_CURRENT_LIABILITY
+
+        EXPENSE -> OPERATING_EXPENSE
+
+        IMPORTANT:
+
+        - Only reporting_group is modified.
+        - Business isolation is enforced in the WHERE clause.
+        - Inactive accounts may still be classified.
+        - Account identity and ledger history are preserved.
+        - PostgreSQL validates group/type compatibility.
+
+        MyBatis returns the number of updated rows:
+
+        1 = Matching account found and updated.
+        0 = No matching account in this business.
+    -->
+
+    <update id="updateReportingGroup">
+
+        UPDATE accounts
+
+        SET reporting_group = #{reportingGroup}
+
+        WHERE business_id = #{businessId}
+          AND id = #{accountId}
+
+    </update>
 
     <!-- ======================================================== -->
     <!-- UPDATE ACCOUNT NAME -->
@@ -367,7 +577,15 @@
         Existing account rename query.
 
         Only active accounts may be renamed.
-        Account codes and types remain unchanged.
+
+        Account codes and fundamental account types
+        remain unchanged.
+
+        V7 reporting classifications and hierarchy
+        are not modified by this operation.
+
+        Those changes will have separate, validated
+        service methods and mapper statements.
     -->
 
     <update id="updateName">
@@ -382,6 +600,7 @@
 
     </update>
 
+
     <!-- ======================================================== -->
     <!-- DEACTIVATE ACCOUNT -->
     <!-- ======================================================== -->
@@ -391,8 +610,16 @@
 
         Accounts are preserved rather than deleted.
 
-        This is important because posted journal entries
-        may still reference an inactive account.
+        Posted journal entries may still reference
+        an inactive account.
+
+        IMPORTANT:
+
+        Deactivation changes is_active.
+
+        It does NOT change is_postable.
+
+        These are separate accounting concepts.
     -->
 
     <update id="deactivate">

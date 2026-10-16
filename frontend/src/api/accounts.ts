@@ -9,19 +9,28 @@ import {
 // ============================================================
 
 /**
- * This module defines the account data structures
- * and API functions used by the React frontend.
+ * TypeScript models and API functions for the
+ * LedgerBase Chart of Accounts.
  *
- * All account operations communicate with our
- * existing Java Spring Boot REST API.
+ * The frontend communicates with our existing
+ * Spring Boot REST API.
  *
- * The backend remains responsible for:
- * - Account validation
- * - Business logic
- * - Database operations
- * - Preventing duplicate account codes
- * - Preserving accounting history
- * - Calculating posted account balances
+ * Responsibilities:
+ *
+ * - Retrieve financial accounts
+ * - Retrieve calculated account balances
+ * - Create posting and grouping accounts
+ * - Rename accounts
+ * - Deactivate accounts
+ *
+ * V7 introduces:
+ *
+ * - Financial statement reporting groups
+ * - Optional parent-child account relationships
+ * - Posting eligibility
+ *
+ * PostgreSQL and the Spring Boot service remain
+ * responsible for accounting integrity.
  */
 
 // ============================================================
@@ -29,14 +38,10 @@ import {
 // ============================================================
 
 /**
- * The five account classifications supported
- * by our current LedgerBase backend.
+ * The five fundamental accounting types.
  *
- * These values match the accountType values
- * returned by Spring Boot.
- *
- * Example:
- * "ASSET"
+ * These determine an account's normal balance
+ * direction and broad accounting classification.
  */
 export type AccountType =
   | 'ASSET'
@@ -45,190 +50,414 @@ export type AccountType =
   | 'REVENUE'
   | 'EXPENSE'
 
+
+// ============================================================
+// V7 — FINANCIAL REPORTING GROUPS
+// ============================================================
+
 /**
- * Represent a general ledger account.
+ * More detailed financial statement classifications.
  *
- * This interface matches the account JSON
- * returned by the backend.
+ * These values match the PostgreSQL V7 CHECK
+ * constraint and Spring Boot validation.
+ *
+ * They will support:
+ *
+ * - Balance Sheet
+ * - Income Statement
+ * - Account reporting sections
+ *
+ * Accounts may temporarily have null reporting groups
+ * until they have been classified.
+ */
+export type ReportingGroup =
+  | 'CURRENT_ASSET'
+  | 'NON_CURRENT_ASSET'
+  | 'CURRENT_LIABILITY'
+  | 'NON_CURRENT_LIABILITY'
+  | 'CONTRIBUTED_CAPITAL'
+  | 'RETAINED_EARNINGS'
+  | 'OTHER_EQUITY'
+  | 'OPERATING_REVENUE'
+  | 'OTHER_INCOME'
+  | 'COST_OF_GOODS_SOLD'
+  | 'OPERATING_EXPENSE'
+  | 'OTHER_EXPENSE'
+
+
+// ============================================================
+// V7 — REPORTING GROUP DROPDOWN OPTIONS
+// ============================================================
+
+/**
+ * Each account type has its own valid reporting groups.
  *
  * Example:
+ *
+ * ASSET:
+ *   Current Assets
+ *   Non-current Assets
+ *
+ * EXPENSE:
+ *   Cost of Goods Sold
+ *   Operating Expenses
+ *   Other Expenses
+ *
+ * We will reuse this constant in NewAccountForm.tsx
+ * so users cannot accidentally select an unrelated
+ * reporting group.
+ *
+ * The backend validates the selection independently.
+ */
+export const REPORTING_GROUP_OPTIONS: Record<
+  AccountType,
+  ReadonlyArray<{
+    value: ReportingGroup
+    label: string
+  }>
+> = {
+  ASSET: [
+    {
+      value: 'CURRENT_ASSET',
+      label: 'Current Assets',
+    },
+    {
+      value: 'NON_CURRENT_ASSET',
+      label: 'Non-current Assets',
+    },
+  ],
+
+  LIABILITY: [
+    {
+      value: 'CURRENT_LIABILITY',
+      label: 'Current Liabilities',
+    },
+    {
+      value: 'NON_CURRENT_LIABILITY',
+      label: 'Non-current Liabilities',
+    },
+  ],
+
+  EQUITY: [
+    {
+      value: 'CONTRIBUTED_CAPITAL',
+      label: 'Contributed Capital',
+    },
+    {
+      value: 'RETAINED_EARNINGS',
+      label: 'Retained Earnings',
+    },
+    {
+      value: 'OTHER_EQUITY',
+      label: 'Other Equity',
+    },
+  ],
+
+  REVENUE: [
+    {
+      value: 'OPERATING_REVENUE',
+      label: 'Operating Revenue',
+    },
+    {
+      value: 'OTHER_INCOME',
+      label: 'Other Income',
+    },
+  ],
+
+  EXPENSE: [
+    {
+      value: 'COST_OF_GOODS_SOLD',
+      label: 'Cost of Goods Sold',
+    },
+    {
+      value: 'OPERATING_EXPENSE',
+      label: 'Operating Expenses',
+    },
+    {
+      value: 'OTHER_EXPENSE',
+      label: 'Other Expenses',
+    },
+  ],
+}
+
+
+// ============================================================
+// ACCOUNT MODEL
+// ============================================================
+
+/**
+ * Represents a general ledger account returned
+ * by the Spring Boot backend.
+ *
+ * V7 example:
  *
  * {
  *   "id": 6,
  *   "businessId": 1,
  *   "code": "1010",
- *   "name": "Operating Checking Account",
+ *   "name": "Cash",
  *   "accountType": "ASSET",
+ *   "reportingGroup": "CURRENT_ASSET",
+ *   "parentAccountId": null,
  *   "active": true,
- *   "createdAt": "2026-10-12T20:05:02.433124Z"
+ *   "postable": true,
+ *   "createdAt": "2026-10-12T20:05:02Z"
  * }
  */
 export interface Account {
 
-  // Unique database identifier.
+  // ==========================================================
+  // ACCOUNT IDENTITY
+  // ==========================================================
+
   id: number
 
-  // Business that owns the account.
   businessId: number
 
-  // Customizable account code.
+
+  // ==========================================================
+  // BASIC ACCOUNT INFORMATION
+  // ==========================================================
+
   code: string
 
-  // Human-readable account name.
   name: string
 
-  // Financial account classification.
   accountType: AccountType
 
-  // Whether the account can be used in new entries.
+
+  // ==========================================================
+  // V7 — FINANCIAL REPORTING CLASSIFICATION
+  // ==========================================================
+
+  /**
+   * Determines where the account belongs in
+   * financial statements.
+   *
+   * Null means the account is not yet classified.
+   */
+  reportingGroup: ReportingGroup | null
+
+
+  // ==========================================================
+  // V7 — ACCOUNT HIERARCHY
+  // ==========================================================
+
+  /**
+   * ID of the account's optional parent.
+   *
+   * Example:
+   *
+   * Current Assets (id: 10)
+   *   Cash (parentAccountId: 10)
+   *
+   * Null represents a top-level account.
+   */
+  parentAccountId: number | null
+
+
+  // ==========================================================
+  // ACCOUNT STATUS
+  // ==========================================================
+
+  /**
+   * Whether the account is active.
+   *
+   * Inactive accounts remain available for
+   * historical financial reporting.
+   */
   active: boolean
 
-  // Timestamp when the account was created.
+  /**
+   * Whether new ledger entries may reference
+   * this account.
+   *
+   * true:
+   *   Normal posting account.
+   *
+   * false:
+   *   Non-postable organizational heading.
+   *
+   * This is different from active.
+   */
+  postable: boolean
+
+
+  // ==========================================================
+  // AUDIT INFORMATION
+  // ==========================================================
+
   createdAt: string
 }
 
+
 // ============================================================
-// ACCOUNT BALANCE DEFINITIONS
+// ACCOUNT BALANCE MODEL
 // ============================================================
 
 /**
- * Represents an account together with its calculated
- * posted debit totals, credit totals, and balance.
- *
- * These fields come from:
+ * Calculated balance information returned by:
  *
  * GET /api/v1/businesses/{businessId}/accounts/balances
  *
- * Unlike Account, AccountBalance does not include
- * createdAt because our balance query does not
- * currently return that column.
+ * IMPORTANT:
  *
- * Example:
+ * Balances come from POSTED journal entries only.
  *
- * {
- *   "id": 8,
- *   "businessId": 1,
- *   "code": "1020",
- *   "name": "Business Savings",
- *   "accountType": "ASSET",
- *   "active": true,
- *   "postedDebits": 500.0,
- *   "postedCredits": 0.0,
- *   "balance": 500.0
- * }
+ * - DRAFT transactions are excluded.
+ * - Inactive accounts remain included.
+ * - Accounts without posted activity have zero balances.
+ * - Negative balances are preserved.
  *
- * IMPORTANT ACCOUNTING RULES:
+ * All monetary calculations are performed by
+ * PostgreSQL and Java using exact decimals.
  *
- * - Only POSTED journal entries affect these values.
- * - DRAFT entries do not affect balances.
- * - Accounts with no posted entries return zero.
- * - Inactive accounts are included.
- * - A balance can be negative.
- *
- * The API currently sends decimal values as JSON
- * numbers, so these fields use TypeScript number.
- *
- * JavaScript numbers are not lossless for every
- * possible financial value. Before finalizing our
- * financial reporting UI, we will change the API
- * contract to transmit monetary decimals as strings
- * so that React can handle them precisely.
+ * Monetary fields are serialized as strings.
  */
 export interface AccountBalance {
 
-  // Unique account identifier.
+  // ==========================================================
+  // ACCOUNT INFORMATION
+  // ==========================================================
+
   id: number
 
-  // Business that owns this account.
   businessId: number
 
-  // Customizable account code.
   code: string
 
-  // Human-readable account name.
   name: string
 
-  // Fundamental accounting classification.
   accountType: AccountType
 
-  // Whether the account is active.
   active: boolean
 
-  // ============================================================
-  // EXACT MONETARY VALUES FROM SPRING BOOT
-  // ============================================================
+
+  // ==========================================================
+  // EXACT MONETARY VALUES
+  // ==========================================================
 
   /**
-   * Monetary values arrive as decimal strings.
+   * Decimal strings preserve the exact values
+   * calculated by PostgreSQL.
    *
    * Examples:
+   *
    * "500.00"
    * "-500.00"
    * "0"
    *
-   * Keeping them as strings prevents JavaScript
-   * from introducing floating-point precision errors.
-   *
-   * The backend remains responsible for all
-   * accounting calculations.
+   * Do not use JavaScript floating-point arithmetic
+   * to calculate accounting totals.
    */
 
-  // Total debits from POSTED journal entries.
   postedDebits: string
 
-  // Total credits from POSTED journal entries.
   postedCredits: string
 
-  // Signed balance based on the account's normal balance.
   balance: string
 }
+
 
 // ============================================================
 // CREATE ACCOUNT REQUEST
 // ============================================================
 
 /**
- * Data required when creating an account.
+ * Request body for creating an account.
  *
- * Spring Boot automatically generates the
- * account ID and creation timestamp.
+ * Required fields:
+ *
+ * - code
+ * - name
+ * - accountType
+ *
+ * V7 optional fields:
+ *
+ * - reportingGroup
+ * - parentAccountId
+ * - postable
+ *
+ * If the optional properties are omitted:
+ *
+ * reportingGroup -> null
+ * parentAccountId -> null
+ * postable -> true
+ *
+ * This keeps the original account creation form
+ * backward-compatible.
  */
 export interface CreateAccountRequest {
+
   code: string
+
   name: string
+
   accountType: AccountType
+
+  reportingGroup?: ReportingGroup | null
+
+  parentAccountId?: number | null
+
+  postable?: boolean
 }
+
+// ============================================================
+// UPDATE ACCOUNT REPORTING GROUP REQUEST
+// ============================================================
+
+/**
+ * Request body for updating an existing account's
+ * financial reporting classification.
+ *
+ * Example:
+ *
+ * {
+ *   reportingGroup: 'CURRENT_ASSET'
+ * }
+ *
+ * This endpoint requires a valid reporting group.
+ * Clearing an existing classification is not
+ * supported by the current backend endpoint.
+ */
+export interface UpdateAccountReportingGroupRequest {
+  reportingGroup: ReportingGroup
+}
+
 
 // ============================================================
 // RENAME ACCOUNT REQUEST
 // ============================================================
 
 /**
- * Data required when renaming an account.
+ * Existing rename operation.
  *
  * Only the account name changes.
  *
- * The account code and account type remain unchanged.
+ * Reporting classifications and hierarchy will use
+ * separate validated update operations later.
  */
 export interface RenameAccountRequest {
+
   name: string
 }
+
 
 // ============================================================
 // ACCOUNTS API — READ
 // ============================================================
 
 /**
- * Retrieve all accounts for a business.
+ * Retrieve all accounts belonging to a business.
  *
- * Example:
+ * GET /api/v1/businesses/{businessId}/accounts
  *
- * getAccounts(1)
+ * Includes:
  *
- * Sends:
- * GET /api/v1/businesses/1/accounts
- *
- * Returns an array of Account objects.
+ * - Active and inactive accounts
+ * - Postable and non-postable accounts
+ * - V7 reporting groups
+ * - V7 parent account IDs
  */
 export async function getAccounts(
   businessId: number,
@@ -239,38 +468,19 @@ export async function getAccounts(
   )
 }
 
+
 // ============================================================
 // ACCOUNTS API — READ BALANCES
 // ============================================================
 
 /**
- * Retrieve calculated balances for every account
- * belonging to the specified business.
+ * Retrieve calculated account balances.
  *
- * Example:
+ * GET /api/v1/businesses/{businessId}/accounts/balances
  *
- * getAccountBalances(1)
+ * The backend returns actual accounting data.
  *
- * Sends:
- *
- * GET /api/v1/businesses/1/accounts/balances
- *
- * Returns:
- *
- * An array of AccountBalance objects containing
- * real, calculated financial values.
- *
- * The Spring Boot backend:
- *
- * 1. Verifies that the business exists.
- * 2. Retrieves POSTED ledger entry totals.
- * 3. Calculates balances using account type.
- * 4. Includes zero-balance and inactive accounts.
- *
- * IMPORTANT:
- *
- * We do not hardcode balances in React.
- * Every value comes from PostgreSQL.
+ * No balances are hardcoded in React.
  */
 export async function getAccountBalances(
   businessId: number,
@@ -281,25 +491,29 @@ export async function getAccountBalances(
   )
 }
 
+
 // ============================================================
 // ACCOUNTS API — CREATE
 // ============================================================
 
 /**
- * Create a new general ledger account.
+ * Create a normal posting account or a
+ * non-postable grouping account.
+ *
+ * POST /api/v1/businesses/{businessId}/accounts
  *
  * Example:
  *
  * createAccount(1, {
- *   code: '1020',
- *   name: 'Business Savings',
+ *   code: '1010',
+ *   name: 'Cash',
  *   accountType: 'ASSET',
+ *   reportingGroup: 'CURRENT_ASSET',
+ *   parentAccountId: null,
+ *   postable: true,
  * })
  *
- * Sends:
- * POST /api/v1/businesses/1/accounts
- *
- * Returns the newly created account.
+ * Existing callers may omit the optional V7 fields.
  */
 export async function createAccount(
   businessId: number,
@@ -313,23 +527,50 @@ export async function createAccount(
 }
 
 // ============================================================
+// UPDATE ACCOUNT REPORTING GROUP
+// ============================================================
+
+/**
+ * Update an existing account's reporting classification.
+ *
+ * PATCH
+ * /api/v1/businesses/{businessId}/accounts/{accountId}/reporting-group
+ *
+ * The Spring Boot backend validates:
+ *
+ * - Business ownership
+ * - Account existence
+ * - Reporting group compatibility
+ *
+ * This operation does not change journal entries,
+ * account balances, hierarchy, or posting eligibility.
+ *
+ * We do not need to use the returned account object
+ * because AccountsPage refreshes its data after success.
+ */
+export async function updateAccountReportingGroup(
+  businessId: number,
+  accountId: number,
+  request: UpdateAccountReportingGroupRequest,
+): Promise<void> {
+
+  await patchNoContent(
+    `/api/v1/businesses/${businessId}/accounts/${accountId}/reporting-group`,
+    request,
+  )
+}
+
+
+// ============================================================
 // ACCOUNTS API — RENAME
 // ============================================================
 
 /**
- * Rename an existing active account.
+ * Rename an active account.
  *
- * Example:
+ * PATCH /api/v1/businesses/{businessId}/accounts/{accountId}
  *
- * renameAccount(1, 6, {
- *   name: 'Operating Checking Account',
- * })
- *
- * Sends:
- * PATCH /api/v1/businesses/1/accounts/6
- *
- * Spring Boot returns HTTP 204 No Content
- * when the operation succeeds.
+ * Spring Boot returns HTTP 204 No Content.
  */
 export async function renameAccount(
   businessId: number,
@@ -343,31 +584,22 @@ export async function renameAccount(
   )
 }
 
+
 // ============================================================
 // ACCOUNTS API — DEACTIVATE
 // ============================================================
 
 /**
- * Deactivate an existing account.
+ * Deactivate an account without deleting it.
  *
- * Example:
+ * PATCH
+ * /api/v1/businesses/{businessId}/accounts/{accountId}/deactivate
  *
- * deactivateAccount(1, 6)
+ * Historical ledger entries remain intact.
  *
- * Sends:
- * PATCH /api/v1/businesses/1/accounts/6/deactivate
+ * This updates active, not postable.
  *
- * The account is marked inactive instead of
- * being deleted from PostgreSQL.
- *
- * Existing financial history is preserved.
- *
- * IMPORTANT:
- * Our backend does not currently provide a
- * reactivation endpoint. The React interface
- * will require confirmation before deactivation.
- *
- * Spring Boot returns HTTP 204 No Content.
+ * The backend does not yet support reactivation.
  */
 export async function deactivateAccount(
   businessId: number,

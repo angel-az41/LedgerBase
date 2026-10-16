@@ -671,3 +671,71 @@
     animation: none;
   }
 }
+
+/* ============================================================ */
+/* V7 — ACCOUNT HIERARCHY AND REPORTING GROUPS */
+/* ============================================================ */
+
+/**
+ * These classes extend the existing Chart of Accounts
+ * table without changing its columns or overall layout.
+ */
+
+/* ============================================================ */
+/* ACCOUNT NAME CONTENT */
+/* ============================================================ */
+
+.coa-account-name-content {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+}
+
+.coa-account-name-content.is-child {
+  padding-left: 15px;
+}
+
+.coa-account-name-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #25364d;
+  font-weight: 650;
+}
+
+.coa-hierarchy-indicator {
+  color: #8a9aad;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.coa-account-description {
+  color: #8c9aac;
+  font-size: 11px;
+  font-weight: 450;
+  line-height: 1.5;
+}
+
+/* ============================================================ */
+/* ACCOUNT TYPE AND FINANCIAL REPORTING GROUP */
+/* ============================================================ */
+
+.coa-account-type-content {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+}
+
+.coa-reporting-group {
+  color: #458477;
+  font-size: 11px;
+  font-weight: 550;
+  line-height: 1.5;
+}
+
+.coa-reporting-group.is-unclassified {
+  color: #9aa5b3;
+  font-style: italic;
+}
