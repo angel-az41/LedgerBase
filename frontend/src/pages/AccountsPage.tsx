@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   getAccounts,
   getAccountBalances,
+  REPORTING_GROUP_OPTIONS,
   type Account,
   type AccountBalance,
 } from '../api/accounts'
@@ -20,14 +21,14 @@ import './AccountsPage.css'
  * Display and manage a business's Chart of Accounts.
  *
  * Account information and calculated balances are
- * retrieved from our existing Spring Boot backend.
+ * retrieved from the Spring Boot backend.
  *
- * Supported functionality:
+ * Existing functionality:
  *
  * - Retrieve accounts from PostgreSQL
  * - Display real posted account balances
  * - Display account statistics
- * - Search accounts by code, name, or type
+ * - Search by code, name, or account type
  * - Filter active and inactive accounts
  * - Refresh account data and balances
  * - Create new accounts
@@ -36,8 +37,21 @@ import './AccountsPage.css'
  * - Display success notifications
  * - Handle loading, error, and empty states
  *
- * All existing account management components and
- * CSS class names are preserved.
+ * V7 enhancements:
+ *
+ * - Display financial reporting groups
+ * - Identify posting and grouping accounts
+ * - Display parent-child account relationships
+ * - Distinguish grouping accounts from ledger balances
+ *
+ * IMPORTANT:
+ *
+ * Existing CSS class names and table columns are
+ * preserved to maintain the current enterprise UI.
+ *
+ * Grouping accounts never receive direct journal
+ * entries. Hierarchical subtotals will be handled
+ * separately from underlying ledger balances.
  */
 
 // ============================================================
@@ -68,12 +82,13 @@ type StatusFilter = 'all' | 'active' | 'inactive'
 // ============================================================
 
 /**
- * Convert backend account types to readable labels.
+ * Convert account types into readable labels.
  *
  * Examples:
  *
- * "ASSET" -> "Asset"
- * "LIABILITY" -> "Liability"
+ * ASSET -> Asset
+ * LIABILITY -> Liability
+ * REVENUE -> Revenue
  */
 function formatAccountType(
   accountType: string,
@@ -81,15 +96,57 @@ function formatAccountType(
 
   const lowercaseType = accountType.toLowerCase()
 
-  return lowercaseType.charAt(0).toUpperCase()
-    + lowercaseType.slice(1).replaceAll('_', ' ')
+  return (
+    lowercaseType.charAt(0).toUpperCase() +
+    lowercaseType.slice(1).replaceAll('_', ' ')
+  )
 }
+
+// ============================================================
+// V7 — FINANCIAL REPORTING GROUP FORMATTING
+// ============================================================
+
+/**
+ * Convert a PostgreSQL reporting group into a readable
+ * financial statement classification.
+ *
+ * Examples:
+ *
+ * CURRENT_ASSET -> Current Assets
+ * NON_CURRENT_LIABILITY -> Non-current Liabilities
+ * OPERATING_REVENUE -> Operating Revenue
+ *
+ * Reuse the reporting-group options in accounts.ts
+ * so labels match the New Account form.
+ *
+ * Accounts with null reportingGroup display:
+ *
+ * Not classified
+ */
+function formatReportingGroup(
+  account: Account,
+): string {
+
+  const options =
+    REPORTING_GROUP_OPTIONS[account.accountType]
+
+  const matchingOption = options.find(
+    (option) =>
+      option.value === account.reportingGroup,
+  )
+
+  return matchingOption?.label ?? 'Not classified'
+}
+
+// ============================================================
+// ACCOUNT CREATION DATE FORMATTING
+// ============================================================
 
 /**
  * Format the account creation date returned by Spring Boot.
  *
- * UTC prevents date changes due to the browser's
- * local time zone.
+ * UTC prevents calendar-date differences caused
+ * by the browser's local time zone.
  */
 function formatDate(
   dateString: string,
@@ -112,30 +169,25 @@ function formatDate(
  *
  * Examples:
  *
- * "500.00"    -> "$500.00"
- * "-500.00"   -> "−$500.00"
- * "0"         -> "$0.00"
- * "12345.60"  -> "$12,345.60"
+ * "500.00" -> "$500.00"
+ * "-500.00" -> "−$500.00"
+ * "0" -> "$0.00"
+ * "12345.60" -> "$12,345.60"
  *
  * IMPORTANT:
  *
- * We do not use:
+ * We do not use parseFloat(), Number(), or JavaScript
+ * floating-point calculations to format balances.
  *
- * - parseFloat()
- * - Number()
- * - JavaScript floating-point calculations
- *
- * The backend calculates the balance using
- * PostgreSQL NUMERIC and Java BigDecimal.
+ * PostgreSQL NUMERIC and Java BigDecimal remain
+ * responsible for financial calculations.
  *
  * The frontend only formats the resulting string.
  *
  * Our current development business uses USD.
- * Multi-currency display will be added when
- * business currency configuration reaches the UI.
  *
- * If the balance is missing or malformed,
- * display an em dash instead of inventing $0.00.
+ * If a balance is missing or malformed, show an
+ * em dash instead of inventing a zero balance.
  */
 function formatAccountBalance(
   balance: string | undefined,
@@ -159,12 +211,10 @@ function formatAccountBalance(
    * - Optional negative sign
    * - One or more whole-number digits
    * - Optional decimal point and one or two digits
-   *
-   * Our PostgreSQL money columns use two
-   * decimal places, so additional precision
-   * would indicate an unexpected API response.
    */
-  const match = /^(-?)(\d+)(?:\.(\d{1,2}))?$/.exec(balance)
+  const match = /^(-?)(\d+)(?:\.(\d{1,2}))?$/.exec(
+    balance,
+  )
 
   if (!match) {
     return '—'
@@ -183,7 +233,7 @@ function formatAccountBalance(
   // ==========================================================
 
   /**
-   * Add commas using string manipulation only.
+   * Use string manipulation only.
    *
    * No floating-point conversion occurs.
    */
@@ -196,11 +246,8 @@ function formatAccountBalance(
   // ENSURE TWO DECIMAL PLACES
   // ==========================================================
 
-  /**
-   * PostgreSQL may return "0" or "0.0".
-   * The interface should consistently show "$0.00".
-   */
-  const formattedDecimalPart = decimalPart.padEnd(2, '0')
+  const formattedDecimalPart =
+    decimalPart.padEnd(2, '0')
 
   // ==========================================================
   // RETURN FORMATTED USD VALUE
@@ -219,99 +266,102 @@ function AccountsPage({
   businessId,
 }: AccountsPageProps) {
 
-  // ============================================================
+  // ==========================================================
   // ACCOUNT DATA STATE
-  // ============================================================
+  // ==========================================================
 
   /**
-   * Store general ledger accounts returned by:
+   * Store accounts returned by:
    *
    * GET /api/v1/businesses/{businessId}/accounts
    *
-   * These records contain createdAt and are also
-   * passed to our existing AccountActions component.
+   * These records now include V7 fields:
+   *
+   * reportingGroup
+   * parentAccountId
+   * postable
    */
-  const [accounts, setAccounts] = useState<Account[]>([])
+  const [accounts, setAccounts] =
+    useState<Account[]>([])
 
-  // ============================================================
+  // ==========================================================
   // ACCOUNT BALANCE DATA STATE
-  // ============================================================
+  // ==========================================================
 
   /**
-   * Store calculated balances returned by:
+   * Store balances returned by:
    *
    * GET /api/v1/businesses/{businessId}/accounts/balances
    *
-   * Monetary properties are decimal strings.
+   * All monetary properties are decimal strings.
    */
   const [accountBalances, setAccountBalances] =
     useState<AccountBalance[]>([])
 
-  // ============================================================
+  // ==========================================================
   // API REQUEST STATE
-  // ============================================================
+  // ==========================================================
 
   const [isLoading, setIsLoading] = useState(true)
 
   const [errorMessage, setErrorMessage] = useState('')
 
-  // ============================================================
+  // ==========================================================
   // ACCOUNT SEARCH AND FILTER STATE
-  // ============================================================
+  // ==========================================================
 
   const [searchQuery, setSearchQuery] = useState('')
 
   const [statusFilter, setStatusFilter] =
     useState<StatusFilter>('all')
 
-  // ============================================================
+  // ==========================================================
   // ACCOUNT REFRESH STATE
-  // ============================================================
+  // ==========================================================
 
   /**
-   * Increasing refreshVersion reloads both
-   * account information and account balances.
+   * Increasing refreshVersion reloads both account
+   * information and calculated balances.
    */
   const [refreshVersion, setRefreshVersion] = useState(0)
 
-  // ============================================================
+  // ==========================================================
   // CREATE ACCOUNT FORM STATE
-  // ============================================================
+  // ==========================================================
 
   const [isCreateFormOpen, setIsCreateFormOpen] =
     useState(false)
 
-  // ============================================================
+  // ==========================================================
   // SUCCESS NOTIFICATION STATE
-  // ============================================================
+  // ==========================================================
 
   const [successMessage, setSuccessMessage] = useState('')
 
-  // ============================================================
+  // ==========================================================
   // LOAD ACCOUNTS AND BALANCES FROM SPRING BOOT
-  // ============================================================
+  // ==========================================================
 
   /**
-   * Fetch account details and calculated balances when:
+   * Fetch accounts and balances when:
    *
    * 1. The page mounts.
    * 2. The selected business changes.
    * 3. An account is created, renamed, or deactivated.
    * 4. The user clicks Refresh.
    *
-   * We use Promise.all() so both requests are sent
-   * without unnecessarily waiting for one another.
+   * Promise.all() runs both requests concurrently.
    *
-   * If either request fails, the page displays
-   * an error instead of showing misleading balances.
+   * If either request fails, we display an error
+   * rather than showing potentially misleading data.
    */
   useEffect(() => {
 
     let cancelled = false
 
-    // ==========================================================
+    // ========================================================
     // ASYNCHRONOUS ACCOUNT DATA LOADER
-    // ==========================================================
+    // ========================================================
 
     async function loadAccounts(): Promise<void> {
 
@@ -320,40 +370,36 @@ function AccountsPage({
 
       try {
 
-        // ======================================================
-        // REQUEST ACCOUNT INFORMATION AND POSTED BALANCES
-        // ======================================================
+        // ====================================================
+        // FETCH ACCOUNT DETAILS AND POSTED BALANCES
+        // ====================================================
 
-        /**
-         * The first endpoint returns Account[].
-         *
-         * The second endpoint returns AccountBalance[].
-         *
-         * Both are scoped to the same business.
-         */
-        const [accountData, balanceData] = await Promise.all([
-          getAccounts(businessId),
-          getAccountBalances(businessId),
-        ])
+        const [accountData, balanceData] =
+          await Promise.all([
+            getAccounts(businessId),
+            getAccountBalances(businessId),
+          ])
 
-        // ======================================================
+        // ====================================================
         // UPDATE REACT STATE
-        // ======================================================
+        // ====================================================
 
         /**
-         * Ignore stale responses when the business
-         * changes or the component unmounts.
+         * Ignore outdated requests if the selected
+         * business changes or the component unmounts.
          */
         if (!cancelled) {
+
           setAccounts(accountData)
+
           setAccountBalances(balanceData)
         }
 
       } catch (error: unknown) {
 
-        // ======================================================
+        // ====================================================
         // HANDLE API ERRORS
-        // ======================================================
+        // ====================================================
 
         if (!cancelled) {
 
@@ -367,6 +413,7 @@ function AccountsPage({
       } finally {
 
         if (!cancelled) {
+
           setIsLoading(false)
         }
       }
@@ -374,9 +421,9 @@ function AccountsPage({
 
     void loadAccounts()
 
-    // ==========================================================
+    // ========================================================
     // CLEAN UP OUTDATED REQUESTS
-    // ==========================================================
+    // ========================================================
 
     return () => {
       cancelled = true
@@ -384,33 +431,25 @@ function AccountsPage({
 
   }, [businessId, refreshVersion])
 
-  // ============================================================
+  // ==========================================================
   // MATCH ACCOUNT BALANCES BY ACCOUNT ID
-  // ============================================================
+  // ==========================================================
 
   /**
    * Accounts and balances come from separate endpoints.
    *
-   * We match them using the unique account ID,
-   * not the account code or name.
+   * We match them using account IDs rather than codes.
    *
    * Example:
    *
-   * Account:
-   *   id: 8
-   *   name: "Business Savings"
+   * Account ID: 8
+   * Posted Balance: "500.00"
    *
-   * AccountBalance:
-   *   id: 8
-   *   balance: "500.00"
+   * Map:
    *
-   * Map result:
-   *   8 -> "500.00"
+   * 8 -> "500.00"
    *
-   * This avoids confusion if multiple businesses
-   * use the same account code.
-   *
-   * useMemo recalculates the map only when
+   * useMemo recalculates this lookup only when
    * accountBalances changes.
    */
   const balancesByAccountId = useMemo(() => {
@@ -426,13 +465,45 @@ function AccountsPage({
 
   }, [accountBalances])
 
-  // ============================================================
-  // ACCOUNT STATISTICS
-  // ============================================================
+  // ==========================================================
+  // V7 — ACCOUNT HIERARCHY LOOKUP
+  // ==========================================================
 
   /**
-   * These summary metrics come from real account data.
-   * They are not hardcoded.
+   * Create a lookup of accounts by their database IDs.
+   *
+   * This lets us display the parent account name
+   * beneath each child account.
+   *
+   * Account IDs are more reliable than account codes
+   * when representing database relationships.
+   *
+   * The backend scopes all returned accounts
+   * to the requested business.
+   */
+  const accountsById = useMemo(() => {
+
+    return new Map(
+      accounts.map((account) => [
+        account.id,
+        account,
+      ]),
+    )
+
+  }, [accounts])
+
+  // ==========================================================
+  // ACCOUNT STATISTICS
+  // ==========================================================
+
+  /**
+   * Summary metrics use real account records.
+   *
+   * Grouping accounts count as accounts because they
+   * are part of the Chart of Accounts structure.
+   *
+   * Active and inactive statuses are separate from
+   * posting eligibility.
    */
   const totalAccounts = accounts.length
 
@@ -440,24 +511,33 @@ function AccountsPage({
     (account) => account.active,
   ).length
 
-  const inactiveAccounts = totalAccounts - activeAccounts
+  const inactiveAccounts =
+    totalAccounts - activeAccounts
 
   /**
-   * Hide statistics while loading or when an
-   * API request has failed.
+   * Hide statistics while loading or when
+   * the account request has failed.
    */
-  const showStatistics = !isLoading && !errorMessage
+  const showStatistics =
+    !isLoading && !errorMessage
 
-  // ============================================================
+  // ==========================================================
   // SEARCH AND FILTER ACCOUNTS
-  // ============================================================
+  // ==========================================================
 
   /**
-   * Preserve our existing search and filtering behavior.
+   * Preserve the existing search and filter behavior.
    *
-   * Searching and filtering operate on account details.
-   * The matching balance is displayed alongside
-   * each visible account.
+   * Accounts can be searched by:
+   *
+   * - Account code
+   * - Account name
+   * - Fundamental account type
+   *
+   * We preserve numeric-aware account-code ordering.
+   *
+   * Parent-child relationships are displayed
+   * through indentation, not a new sorting algorithm.
    */
   const filteredAccounts = useMemo(() => {
 
@@ -465,9 +545,9 @@ function AccountsPage({
 
     return accounts
 
-      // ========================================================
+      // ======================================================
       // FILTER ACCOUNTS
-      // ========================================================
+      // ======================================================
 
       .filter((account) => {
 
@@ -490,9 +570,9 @@ function AccountsPage({
         return matchesSearch && matchesStatus
       })
 
-      // ========================================================
+      // ======================================================
       // SORT ACCOUNTS
-      // ========================================================
+      // ======================================================
 
       .sort((first, second) =>
         first.code.localeCompare(
@@ -504,34 +584,37 @@ function AccountsPage({
 
   }, [accounts, searchQuery, statusFilter])
 
-  // ============================================================
+  // ==========================================================
   // CREATE ACCOUNT — OPEN FORM
-  // ============================================================
+  // ==========================================================
 
   function handleOpenCreateForm(): void {
+
     setSuccessMessage('')
+
     setIsCreateFormOpen(true)
   }
 
-  // ============================================================
+  // ==========================================================
   // CREATE ACCOUNT — CANCEL FORM
-  // ============================================================
+  // ==========================================================
 
   function handleCancelCreateForm(): void {
+
     setIsCreateFormOpen(false)
   }
 
-  // ============================================================
+  // ==========================================================
   // CREATE ACCOUNT — SUCCESS HANDLER
-  // ============================================================
+  // ==========================================================
 
   /**
    * Preserve the existing account creation workflow.
    *
-   * After creation:
+   * After a successful creation:
    *
    * - Close the form
-   * - Show the success message
+   * - Show success feedback
    * - Refresh accounts and balances
    */
   function handleAccountCreated(
@@ -549,16 +632,17 @@ function AccountsPage({
     )
   }
 
-  // ============================================================
+  // ==========================================================
   // ACCOUNT MANAGEMENT — SUCCESS HANDLER
-  // ============================================================
+  // ==========================================================
 
   /**
-   * AccountActions remains responsible for
-   * renaming and deactivating accounts.
+   * AccountActions continues handling:
    *
-   * Refresh the account table after a successful
-   * management operation.
+   * - Rename
+   * - Deactivate
+   *
+   * Refresh data after a successful operation.
    */
   function handleAccountUpdated(
     message: string,
@@ -571,12 +655,12 @@ function AccountsPage({
     )
   }
 
-  // ============================================================
+  // ==========================================================
   // REFRESH ACCOUNT DATA
-  // ============================================================
+  // ==========================================================
 
   /**
-   * Reload both account details and balances.
+   * Reload account details and posted balances.
    */
   function handleRefresh(): void {
 
@@ -585,9 +669,9 @@ function AccountsPage({
     )
   }
 
-  // ============================================================
+  // ==========================================================
   // RENDER CHART OF ACCOUNTS
-  // ============================================================
+  // ==========================================================
 
   return (
 
@@ -596,15 +680,15 @@ function AccountsPage({
       aria-busy={isLoading}
     >
 
-      {/* ====================================================== */}
+      {/* ==================================================== */}
       {/* ACCOUNT SUMMARY CARDS */}
-      {/* ====================================================== */}
+      {/* ==================================================== */}
 
       <div className="coa-summary-grid">
 
-        {/* ==================================================== */}
+        {/* ================================================== */}
         {/* TOTAL ACCOUNTS */}
-        {/* ==================================================== */}
+        {/* ================================================== */}
 
         <article className="coa-summary-card">
 
@@ -616,9 +700,9 @@ function AccountsPage({
 
         </article>
 
-        {/* ==================================================== */}
+        {/* ================================================== */}
         {/* ACTIVE ACCOUNTS */}
-        {/* ==================================================== */}
+        {/* ================================================== */}
 
         <article className="coa-summary-card">
 
@@ -630,9 +714,9 @@ function AccountsPage({
 
         </article>
 
-        {/* ==================================================== */}
+        {/* ================================================== */}
         {/* INACTIVE ACCOUNTS */}
-        {/* ==================================================== */}
+        {/* ================================================== */}
 
         <article className="coa-summary-card">
 
@@ -646,9 +730,9 @@ function AccountsPage({
 
       </div>
 
-      {/* ====================================================== */}
+      {/* ==================================================== */}
       {/* ACCOUNT OPERATION SUCCESS MESSAGE */}
-      {/* ====================================================== */}
+      {/* ==================================================== */}
 
       {successMessage && (
 
@@ -661,9 +745,9 @@ function AccountsPage({
 
       )}
 
-      {/* ====================================================== */}
+      {/* ==================================================== */}
       {/* NEW ACCOUNT FORM */}
-      {/* ====================================================== */}
+      {/* ==================================================== */}
 
       {isCreateFormOpen && (
 
@@ -675,15 +759,15 @@ function AccountsPage({
 
       )}
 
-      {/* ====================================================== */}
+      {/* ==================================================== */}
       {/* ACCOUNTS TABLE CONTAINER */}
-      {/* ====================================================== */}
+      {/* ==================================================== */}
 
       <section className="coa-table-card">
 
-        {/* ==================================================== */}
+        {/* ================================================== */}
         {/* TABLE HEADING */}
-        {/* ==================================================== */}
+        {/* ================================================== */}
 
         <div className="coa-table-heading">
 
@@ -692,21 +776,21 @@ function AccountsPage({
             <h2>All Accounts</h2>
 
             <p>
-              View and organize your business's
+              View and organize your business&apos;s
               general ledger accounts.
             </p>
 
           </div>
 
-          {/* ================================================== */}
+          {/* ================================================ */}
           {/* TABLE ACTION BUTTONS */}
-          {/* ================================================== */}
+          {/* ================================================ */}
 
           <div className="coa-table-actions">
 
-            {/* ================================================ */}
+            {/* ============================================== */}
             {/* CREATE ACCOUNT BUTTON */}
-            {/* ================================================ */}
+            {/* ============================================== */}
 
             {!isCreateFormOpen && (
 
@@ -721,9 +805,9 @@ function AccountsPage({
 
             )}
 
-            {/* ================================================ */}
+            {/* ============================================== */}
             {/* REFRESH ACCOUNTS BUTTON */}
-            {/* ================================================ */}
+            {/* ============================================== */}
 
             <button
               type="button"
@@ -738,15 +822,15 @@ function AccountsPage({
 
         </div>
 
-        {/* ==================================================== */}
+        {/* ================================================== */}
         {/* ACCOUNT SEARCH AND FILTER CONTROLS */}
-        {/* ==================================================== */}
+        {/* ================================================== */}
 
         <div className="coa-toolbar">
 
-          {/* ================================================== */}
+          {/* ================================================ */}
           {/* SEARCH FIELD */}
-          {/* ================================================== */}
+          {/* ================================================ */}
 
           <label className="coa-search">
 
@@ -769,9 +853,9 @@ function AccountsPage({
 
           </label>
 
-          {/* ================================================== */}
+          {/* ================================================ */}
           {/* STATUS FILTER */}
-          {/* ================================================== */}
+          {/* ================================================ */}
 
           <label className="coa-status-filter">
 
@@ -804,9 +888,9 @@ function AccountsPage({
 
         </div>
 
-        {/* ==================================================== */}
+        {/* ================================================== */}
         {/* ERROR STATE */}
-        {/* ==================================================== */}
+        {/* ================================================== */}
 
         {errorMessage && (
 
@@ -835,9 +919,9 @@ function AccountsPage({
 
         )}
 
-        {/* ==================================================== */}
+        {/* ================================================== */}
         {/* LOADING STATE */}
-        {/* ==================================================== */}
+        {/* ================================================== */}
 
         {!errorMessage && isLoading && (
 
@@ -859,9 +943,9 @@ function AccountsPage({
 
         )}
 
-        {/* ==================================================== */}
+        {/* ================================================== */}
         {/* EMPTY DATABASE STATE */}
-        {/* ==================================================== */}
+        {/* ================================================== */}
 
         {!errorMessage &&
           !isLoading &&
@@ -881,9 +965,9 @@ function AccountsPage({
           )
         }
 
-        {/* ==================================================== */}
+        {/* ================================================== */}
         {/* NO MATCHING SEARCH RESULTS */}
-        {/* ==================================================== */}
+        {/* ================================================== */}
 
         {!errorMessage &&
           !isLoading &&
@@ -904,9 +988,9 @@ function AccountsPage({
           )
         }
 
-        {/* ==================================================== */}
+        {/* ================================================== */}
         {/* ACCOUNTS DATA TABLE */}
-        {/* ==================================================== */}
+        {/* ================================================== */}
 
         {!errorMessage &&
           !isLoading &&
@@ -916,9 +1000,9 @@ function AccountsPage({
 
               <table className="coa-table">
 
-                {/* ============================================== */}
+                {/* ========================================== */}
                 {/* TABLE COLUMN HEADINGS */}
-                {/* ============================================== */}
+                {/* ========================================== */}
 
                 <thead>
 
@@ -936,10 +1020,6 @@ function AccountsPage({
                       Account Type
                     </th>
 
-                    {/* ======================================== */}
-                    {/* NEW — CALCULATED ACCOUNT BALANCE */}
-                    {/* ======================================== */}
-
                     <th
                       scope="col"
                       className="coa-balance-column"
@@ -955,10 +1035,6 @@ function AccountsPage({
                       Created
                     </th>
 
-                    {/* ======================================== */}
-                    {/* ACCOUNT MANAGEMENT COLUMN */}
-                    {/* ======================================== */}
-
                     <th
                       scope="col"
                       className="coa-actions-column"
@@ -970,9 +1046,9 @@ function AccountsPage({
 
                 </thead>
 
-                {/* ============================================== */}
+                {/* ========================================== */}
                 {/* ACCOUNT TABLE ROWS */}
-                {/* ============================================== */}
+                {/* ========================================== */}
 
                 <tbody>
 
@@ -980,45 +1056,153 @@ function AccountsPage({
 
                     <tr key={account.id}>
 
-                      {/* ======================================== */}
+                      {/* ====================================== */}
                       {/* ACCOUNT CODE */}
-                      {/* ======================================== */}
+                      {/* ====================================== */}
 
                       <td className="coa-account-code">
                         {account.code}
                       </td>
 
-                      {/* ======================================== */}
-                      {/* ACCOUNT NAME */}
-                      {/* ======================================== */}
+                      {/* ====================================== */}
+                      {/* V7 — ACCOUNT NAME AND HIERARCHY */}
+                      {/* ====================================== */}
 
                       <td className="coa-account-name">
-                        {account.name}
+
+                        <div
+                          className={
+                            account.parentAccountId !== null
+                              ? 'coa-account-name-content is-child'
+                              : 'coa-account-name-content'
+                          }
+                        >
+
+                          {/* ================================ */}
+                          {/* ACCOUNT NAME WITH CHILD INDICATOR */}
+                          {/* ================================ */}
+
+                          <div className="coa-account-name-title">
+
+                            {account.parentAccountId !== null && (
+
+                              <span
+                                className="coa-hierarchy-indicator"
+                                aria-hidden="true"
+                              >
+                                ↳
+                              </span>
+
+                            )}
+
+                            <span>
+                              {account.name}
+                            </span>
+
+                          </div>
+
+                          {/* ================================ */}
+                          {/* ACCOUNT PURPOSE AND PARENT */}
+                          {/* ================================ */}
+
+                          <small className="coa-account-description">
+
+                            {account.postable
+                              ? 'Posting account'
+                              : 'Grouping account'}
+
+                            {account.parentAccountId !== null && (
+
+                              <>
+                                {' · Under '}
+
+                                {accountsById.get(
+                                  account.parentAccountId,
+                                )?.name ?? 'Unknown parent'}
+                              </>
+
+                            )}
+
+                          </small>
+
+                        </div>
+
                       </td>
 
-                      {/* ======================================== */}
-                      {/* ACCOUNT TYPE */}
-                      {/* ======================================== */}
+                      {/* ====================================== */}
+                      {/* V7 — ACCOUNT TYPE AND REPORTING GROUP */}
+                      {/* ====================================== */}
 
                       <td>
-                        {formatAccountType(account.accountType)}
+
+                        <div className="coa-account-type-content">
+
+                          <span>
+                            {formatAccountType(
+                              account.accountType,
+                            )}
+                          </span>
+
+                          <small
+                            className={
+                              account.reportingGroup === null
+                                ? 'coa-reporting-group is-unclassified'
+                                : 'coa-reporting-group'
+                            }
+                          >
+                            {formatReportingGroup(account)}
+                          </small>
+
+                        </div>
+
                       </td>
 
-                      {/* ======================================== */}
-                      {/* NEW — ACCOUNT BALANCE */}
-                      {/* ======================================== */}
+                      {/* ====================================== */}
+                      {/* V7 — ACCOUNT BALANCE */}
+                      {/* ====================================== */}
 
-                      <td className="coa-balance-column">
+                      {/*
+                        Posting accounts display their actual
+                        calculated POSTED ledger balance.
 
-                        {formatAccountBalance(
-                          balancesByAccountId.get(account.id),
-                        )}
+                        Grouping accounts display an em dash
+                        because they do not accept journal entries.
+
+                        We never add child subtotals into
+                        a grouping account's direct balance.
+
+                        This prevents financial double-counting.
+                      */}
+
+                      <td
+                        className="coa-balance-column"
+                        title={
+                          account.postable
+                            ? undefined
+                            : 'Grouping accounts have no direct ledger balance'
+                        }
+                      >
+
+                        {account.postable
+                          ? formatAccountBalance(
+                              balancesByAccountId.get(account.id),
+                            )
+                          : '—'}
 
                       </td>
 
-                      {/* ======================================== */}
+                      {/* ====================================== */}
                       {/* ACCOUNT STATUS */}
-                      {/* ======================================== */}
+                      {/* ====================================== */}
+
+                      {/*
+                        Active and postable are different.
+
+                        A non-postable grouping account can
+                        still be an active account.
+
+                        Preserve the original status badge.
+                      */}
 
                       <td>
 
@@ -1034,35 +1218,36 @@ function AccountsPage({
 
                           {account.active
                             ? 'Active'
-                            : 'Inactive'
-                          }
+                            : 'Inactive'}
 
                         </span>
 
                       </td>
 
-                      {/* ======================================== */}
+                      {/* ====================================== */}
                       {/* ACCOUNT CREATION DATE */}
-                      {/* ======================================== */}
+                      {/* ====================================== */}
 
                       <td className="coa-date">
                         {formatDate(account.createdAt)}
                       </td>
 
-                      {/* ======================================== */}
+                      {/* ====================================== */}
                       {/* ACCOUNT MANAGEMENT ACTIONS */}
-                      {/* ======================================== */}
+                      {/* ====================================== */}
+
+                      {/*
+                        Preserve the AccountActions component.
+
+                        It handles Rename and Deactivate.
+
+                        V7 account-configuration editing will
+                        be introduced separately to avoid
+                        accidentally modifying account types
+                        or posting eligibility.
+                      */}
 
                       <td className="coa-actions-column">
-
-                        {/*
-                          Preserve our existing AccountActions
-                          component without modifications.
-
-                          It handles account renaming and
-                          deactivation, then requests a refresh
-                          through handleAccountUpdated().
-                        */}
 
                         <AccountActions
                           businessId={businessId}
@@ -1085,9 +1270,9 @@ function AccountsPage({
           )
         }
 
-        {/* ==================================================== */}
+        {/* ================================================== */}
         {/* TABLE FOOTER */}
-        {/* ==================================================== */}
+        {/* ================================================== */}
 
         {!isLoading && !errorMessage && (
 

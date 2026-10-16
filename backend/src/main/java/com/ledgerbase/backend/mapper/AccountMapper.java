@@ -106,6 +106,41 @@ public interface AccountMapper {
     int insert(Account account);
 
     // ========================================================
+    // UPDATE ACCOUNT REPORTING GROUP
+    // ========================================================
+
+    /**
+     * Update an existing account's financial statement
+     * reporting classification.
+     *
+     * Examples:
+     *
+     * ASSET -> CURRENT_ASSET
+     * LIABILITY -> CURRENT_LIABILITY
+     * REVENUE -> OPERATING_REVENUE
+     *
+     * IMPORTANT:
+     *
+     * 1. Both businessId and accountId are required
+     *    to preserve business-level data isolation.
+     *
+     * 2. Only reporting_group is changed.
+     *
+     * 3. Inactive accounts can still be classified
+     *    because they may appear in historical reports.
+     *
+     * 4. PostgreSQL's V7 CHECK constraint prevents
+     *    incompatible reporting classifications.
+     *
+     * @return Number of updated accounts (0 or 1).
+     */
+    int updateReportingGroup(
+        @Param("businessId") Long businessId,
+        @Param("accountId") Long accountId,
+        @Param("reportingGroup") String reportingGroup
+    );
+
+    // ========================================================
     // UPDATE ACCOUNT NAME
     // ========================================================
 

@@ -2,6 +2,7 @@ package com.ledgerbase.backend.controller;
 
 import com.ledgerbase.backend.dto.CreateAccountRequest;
 import com.ledgerbase.backend.dto.RenameAccountRequest;
+import com.ledgerbase.backend.dto.UpdateAccountReportingGroupRequest;
 
 import com.ledgerbase.backend.model.Account;
 import com.ledgerbase.backend.model.AccountBalance;
@@ -32,19 +33,27 @@ import java.util.List;
  * - Retrieve Chart of Accounts
  * - Retrieve calculated posted account balances
  * - Retrieve individual accounts
- * - Create new accounts
+ * - Create normal posting accounts
+ * - Create non-postable grouping accounts
  * - Rename existing accounts
  * - Deactivate accounts
+ *
+ * V7 supports:
+ *
+ * - Financial reporting classifications
+ * - Optional account hierarchy
+ * - Posting eligibility
  *
  * The controller handles HTTP requests and responses.
  * AccountService handles business logic.
  *
  * IMPORTANT:
  *
- * These routes are currently for local development.
+ * These routes are currently intended for local
+ * development.
  *
- * Authentication and business ownership checks
- * must be implemented before public deployment.
+ * Authentication, JWT validation, and business-level
+ * RBAC must be implemented before public deployment.
  */
 @RestController
 @RequestMapping("/api/v1/businesses/{businessId}/accounts")
@@ -56,18 +65,19 @@ public class AccountController {
 
     private final AccountService accountService;
 
+
     // ========================================================
     // CONSTRUCTOR
     // ========================================================
 
     /**
-     * Spring injects the service automatically
-     * through constructor injection.
+     * Spring injects AccountService automatically.
      */
     public AccountController(AccountService accountService) {
 
         this.accountService = accountService;
     }
+
 
     // ========================================================
     // GET ALL ACCOUNTS
@@ -78,7 +88,12 @@ public class AccountController {
      *
      * Retrieve the Chart of Accounts for one business.
      *
-     * Includes active and inactive accounts.
+     * Includes:
+     *
+     * - Active and inactive accounts
+     * - Postable and non-postable accounts
+     * - Reporting classifications
+     * - Parent-account relationships
      */
     @GetMapping
     public List<Account> getAccounts(
@@ -87,6 +102,7 @@ public class AccountController {
         return accountService.getAccounts(businessId);
     }
 
+
     // ========================================================
     // GET CALCULATED ACCOUNT BALANCES
     // ========================================================
@@ -94,31 +110,26 @@ public class AccountController {
     /**
      * GET /api/v1/businesses/1/accounts/balances
      *
-     * NEW: Retrieve calculated account balances.
+     * Retrieve account balances calculated from
+     * POSTED journal entries only.
      *
      * IMPORTANT ACCOUNTING RULES:
      *
-     * 1. Only POSTED journal transactions contribute.
+     * 1. DRAFT transactions do not affect balances.
      *
-     * 2. DRAFT transactions do not affect balances.
+     * 2. Accounts without posted activity return zero.
      *
-     * 3. Accounts without posted activity return zero.
+     * 3. Inactive accounts remain included because
+     *    they may contain historical journal activity.
      *
-     * 4. Inactive accounts remain included to preserve
-     *    visibility into historical accounting activity.
+     * 4. PostgreSQL performs calculations using NUMERIC.
      *
-     * 5. Calculations are performed in PostgreSQL
-     *    using exact NUMERIC arithmetic.
+     * 5. Java handles monetary amounts using BigDecimal.
      *
-     * 6. Java receives monetary amounts as BigDecimal.
+     * 6. Grouping accounts have no direct journal activity.
+     *    Hierarchical subtotals are calculated separately.
      *
-     * If the business does not exist, AccountService
-     * throws BusinessNotFoundException.
-     *
-     * Our existing exception handling should return
-     * an appropriate HTTP 404 response.
-     *
-     * This is a read-only API endpoint.
+     * This is a read-only endpoint.
      */
     @GetMapping("/balances")
     public List<AccountBalance> getAccountBalances(
@@ -126,6 +137,7 @@ public class AccountController {
 
         return accountService.getAccountBalances(businessId);
     }
+
 
     // ========================================================
     // GET ONE ACCOUNT
@@ -156,14 +168,51 @@ public class AccountController {
         return ResponseEntity.ok(account);
     }
 
+
     // ========================================================
-    // CREATE ACCOUNT
+    // CREATE ACCOUNT — V7 ENHANCED
     // ========================================================
 
     /**
      * POST /api/v1/businesses/1/accounts
      *
-     * Create a new financial account.
+     * Create a financial account.
+     *
+     * BASIC REQUEST:
+     *
+     * {
+     *   "code": "1010",
+     *   "name": "Cash",
+     *   "accountType": "ASSET"
+     * }
+     *
+     * V7 ENHANCED REQUEST:
+     *
+     * {
+     *   "code": "1010",
+     *   "name": "Cash",
+     *   "accountType": "ASSET",
+     *   "reportingGroup": "CURRENT_ASSET",
+     *   "parentAccountId": 12,
+     *   "postable": true
+     * }
+     *
+     * Optional V7 properties:
+     *
+     * reportingGroup:
+     *   Defaults to null (unclassified).
+     *
+     * parentAccountId:
+     *   Defaults to null (top-level account).
+     *
+     * postable:
+     *   Defaults to true in AccountService.
+     *
+     * @Valid invokes Jakarta Bean Validation.
+     *
+     * AccountService validates business relationships.
+     *
+     * PostgreSQL enforces the final integrity rules.
      *
      * Returns HTTP 201 with the created account.
      */
@@ -172,17 +221,104 @@ public class AccountController {
             @PathVariable Long businessId,
             @Valid @RequestBody CreateAccountRequest request) {
 
+        // ====================================================
+        // DELEGATE CREATION TO ACCOUNT SERVICE
+        // ====================================================
+
+        /*
+         * Call the new V7 createAccount overload.
+         *
+         * Existing requests may omit the final
+         * three properties.
+         *
+         * AccountService provides backward-compatible
+         * defaults and validates the account structure.
+         */
         Account created = accountService.createAccount(
             businessId,
             request.code(),
             request.name(),
-            request.accountType()
+            request.accountType(),
+            request.reportingGroup(),
+            request.parentAccountId(),
+            request.postable()
         );
+
+
+        // ====================================================
+        // RETURN HTTP 201 CREATED
+        // ====================================================
 
         return ResponseEntity
             .status(HttpStatus.CREATED)
             .body(created);
     }
+
+
+    // ============================================================
+    // UPDATE ACCOUNT REPORTING GROUP
+    // ============================================================
+
+    /**
+     * Update an existing account's financial reporting
+     * classification.
+     *
+     * Endpoint:
+     *
+     * PATCH
+     * /api/v1/businesses/{businessId}/accounts/{accountId}/reporting-group
+     *
+     * Example:
+     *
+     * PATCH /api/v1/businesses/1/accounts/5/reporting-group
+     *
+     * Request body:
+     *
+     * {
+     *   "reportingGroup": "CURRENT_ASSET"
+     * }
+     *
+     * The service layer validates:
+     *
+     * 1. The account belongs to the requested business.
+     * 2. The reporting group is compatible with its type.
+     * 3. Only the reporting classification is updated.
+     *
+     * This operation does not modify existing ledger
+     * entries or recalculate financial balances.
+     *
+     * Inactive accounts may also be classified because
+     * they can contribute to historical reports.
+     *
+     * @return The updated account, including its new
+     *         reportingGroup value.
+     */
+    @PatchMapping("/{accountId}/reporting-group")
+    public Account updateAccountReportingGroup(
+
+        @PathVariable("businessId")
+        Long businessId,
+
+        @PathVariable("accountId")
+        Long accountId,
+
+        @Valid
+        @RequestBody
+        UpdateAccountReportingGroupRequest request
+
+    ) {
+
+        // ========================================================
+        // DELEGATE VALIDATION AND UPDATE TO ACCOUNT SERVICE
+        // ========================================================
+
+        return accountService.updateReportingGroup(
+            businessId,
+            accountId,
+            request.reportingGroup()
+        );
+    }
+
 
     // ========================================================
     // RENAME ACCOUNT
@@ -192,6 +328,11 @@ public class AccountController {
      * PATCH /api/v1/businesses/1/accounts/5
      *
      * Rename an existing active account.
+     *
+     * This endpoint only changes the account name.
+     *
+     * Account classifications, hierarchy, and posting
+     * eligibility are intentionally not modified here.
      *
      * Returns HTTP 204 when successful.
      */
@@ -212,9 +353,9 @@ public class AccountController {
             return ResponseEntity.notFound().build();
         }
 
-        // HTTP 204: successful, no response body.
         return ResponseEntity.noContent().build();
     }
+
 
     // ========================================================
     // DEACTIVATE ACCOUNT
@@ -223,8 +364,12 @@ public class AccountController {
     /**
      * PATCH /api/v1/businesses/1/accounts/5/deactivate
      *
-     * Deactivate an account without deleting
-     * its historical ledger entries.
+     * Deactivate an account without deleting it.
+     *
+     * Historical ledger entries remain preserved.
+     *
+     * Deactivation changes is_active only.
+     * It does not change is_postable.
      *
      * Returns HTTP 204 when successful.
      */
