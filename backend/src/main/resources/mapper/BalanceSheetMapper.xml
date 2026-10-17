@@ -1,0 +1,618 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+    PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<!-- ============================================================ -->
+<!-- LEDGERBASE — BALANCE SHEET SQL MAPPER -->
+<!-- ============================================================ -->
+
+<!--
+    PostgreSQL queries for Balance Sheet reporting.
+
+    Java interface:
+
+    com.ledgerbase.backend.mapper.BalanceSheetMapper
+
+    Responsibilities:
+
+    1. Calculate account balances as of a reporting date.
+
+    2. Include only POSTED journal transactions.
+
+    3. Restrict all financial data to one business.
+
+    4. Include inactive accounts with historical balances.
+
+    5. Exclude non-postable grouping accounts.
+
+    6. Preserve unclassified accounts for validation.
+
+    7. Include Revenue and Expense account balances
+       for unclosed earnings calculations.
+
+    8. Preserve exact monetary values using PostgreSQL NUMERIC.
+
+    IMPORTANT:
+
+    This mapper performs READ-ONLY financial reporting.
+
+    It does not:
+
+    - Create or update accounts
+    - Create or post transactions
+    - Modify ledger entries
+    - Close accounting periods
+    - Generate retained earnings transfers
+
+    Financial statement aggregation will be
+    completed by BalanceSheetService using BigDecimal.
+-->
+
+<mapper namespace="com.ledgerbase.backend.mapper.BalanceSheetMapper">
+
+    <!-- ======================================================== -->
+    <!-- BALANCE SHEET ROW RESULT MAPPING -->
+    <!-- ======================================================== -->
+
+    <!--
+        Convert PostgreSQL results into BalanceSheetRow
+        Java objects.
+
+        SQL columns use snake_case.
+
+        Java model properties use camelCase.
+
+        MyBatis uses this resultMap to connect
+        database results to Java setter methods.
+
+        Monetary NUMERIC values map to BigDecimal.
+
+        COUNT(*) values map to Long.
+    -->
+
+    <resultMap
+        id="balanceSheetRowResultMap"
+        type="com.ledgerbase.backend.model.BalanceSheetRow">
+
+        <!-- ==================================================== -->
+        <!-- ACCOUNT IDENTIFICATION -->
+        <!-- ==================================================== -->
+
+        <id
+            property="accountId"
+            column="account_id"/>
+
+        <result
+            property="code"
+            column="code"/>
+
+        <result
+            property="name"
+            column="name"/>
+
+
+        <!-- ==================================================== -->
+        <!-- ACCOUNT CLASSIFICATION -->
+        <!-- ==================================================== -->
+
+        <result
+            property="accountType"
+            column="account_type"/>
+
+        <result
+            property="reportingGroup"
+            column="reporting_group"/>
+
+
+        <!-- ==================================================== -->
+        <!-- ACCOUNT STATUS -->
+        <!-- ==================================================== -->
+
+        <result
+            property="active"
+            column="is_active"/>
+
+
+        <!-- ==================================================== -->
+        <!-- CALCULATED ACCOUNT BALANCE -->
+        <!-- ==================================================== -->
+
+        <result
+            property="balance"
+            column="balance"
+            javaType="java.math.BigDecimal"/>
+
+
+        <!-- ==================================================== -->
+        <!-- POSTED ENTRY COUNT -->
+        <!-- ==================================================== -->
+
+        <result
+            property="postedEntryCount"
+            column="posted_entry_count"
+            javaType="java.lang.Long"/>
+
+    </resultMap>
+
+
+    <!-- ======================================================== -->
+    <!-- BALANCE SHEET AS OF A REPORTING DATE -->
+    <!-- ======================================================== -->
+
+    <!--
+        Maps to the Java interface method:
+
+        findByBusinessIdAsOfDate(
+            Long businessId,
+            LocalDate asOfDate
+        )
+
+        MyBatis parameters:
+
+        #{businessId}
+            Business whose general ledger is reported.
+
+        #{asOfDate}
+            Inclusive reporting cutoff date.
+
+        Example:
+
+        asOfDate = 2026-10-17
+
+        Includes POSTED transactions dated October 17
+        or earlier.
+
+        Excludes transactions dated October 18 or later.
+
+        This is an as-of financial statement,
+        not a period-based Income Statement.
+    -->
+
+    <select
+        id="findByBusinessIdAsOfDate"
+        resultMap="balanceSheetRowResultMap">
+
+        -- ======================================================
+        -- STEP 1: CALCULATE POSTED ACCOUNT ACTIVITY
+        -- ======================================================
+
+        /*
+            Aggregate all POSTED ledger entries through
+            the selected reporting cutoff date.
+
+            We first use a universal debit-positive
+            accounting amount:
+
+                debits - credits
+
+            This amount is later converted to the
+            correct normal-balance direction based
+            on account_type.
+
+            COUNT(*) records how many posted ledger
+            entries contribute to each account.
+
+            This allows the Java service to detect
+            unclassified accounts with posted activity,
+            even when their final balance is zero.
+        */
+
+        WITH posted_totals AS (
+
+            SELECT
+
+                -- ==============================================
+                -- BUSINESS AND ACCOUNT IDENTIFICATION
+                -- ==============================================
+
+                le.business_id,
+
+                le.account_id,
+
+
+                -- ==============================================
+                -- DEBIT-POSITIVE NET ACCOUNT ACTIVITY
+                -- ==============================================
+
+                /*
+                    PostgreSQL NUMERIC arithmetic maintains
+                    exact decimal precision.
+
+                    Examples:
+
+                    Debit 500.00, Credit 0.00
+                    Result: 500.00
+
+                    Debit 0.00, Credit 500.00
+                    Result: -500.00
+
+                    We preserve the sign here.
+                */
+
+                SUM(
+                    le.debit - le.credit
+                ) AS net_debit_balance,
+
+
+                -- ==============================================
+                -- NUMBER OF POSTED LEDGER ENTRIES
+                -- ==============================================
+
+                COUNT(*) AS posted_entry_count
+
+
+            -- ==================================================
+            -- LEDGER ENTRIES
+            -- ==================================================
+
+            FROM ledger_entries le
+
+
+            -- ==================================================
+            -- MATCH ENTRIES TO THEIR TRANSACTION HEADERS
+            -- ==================================================
+
+            /*
+                Both business_id and transaction_id
+                participate in the join.
+
+                This prevents data from another
+                business entering the report.
+            */
+
+            INNER JOIN transactions t
+                ON t.business_id = le.business_id
+               AND t.id = le.transaction_id
+
+
+            -- ==================================================
+            -- FILTER ACCOUNTING ACTIVITY
+            -- ==================================================
+
+            WHERE le.business_id = #{businessId}
+
+
+              -- ================================================
+              -- INCLUDE ONLY FINALIZED TRANSACTIONS
+              -- ================================================
+
+              /*
+                  DRAFT transactions do not affect
+                  the Balance Sheet.
+
+                  Only POSTED journal entries count.
+              */
+
+              AND t.status = 'POSTED'
+
+
+              -- ================================================
+              -- APPLY INCLUSIVE REPORTING DATE
+              -- ================================================
+
+              /*
+                  The Balance Sheet reports cumulative
+                  balances as of one date.
+
+                  Unlike the Income Statement, there
+                  is no reporting start date.
+              */
+
+              AND t.transaction_date &lt;= #{asOfDate}
+
+
+            -- ==================================================
+            -- GROUP POSTED ACTIVITY BY ACCOUNT
+            -- ==================================================
+
+            GROUP BY
+                le.business_id,
+                le.account_id
+        )
+
+
+        -- ======================================================
+        -- STEP 2: SELECT GENERAL LEDGER ACCOUNTS
+        -- ======================================================
+
+        SELECT
+
+            -- ==============================================
+            -- ACCOUNT IDENTIFICATION
+            -- ==============================================
+
+            a.id AS account_id,
+
+            a.code,
+
+            a.name,
+
+
+            -- ==============================================
+            -- ACCOUNT CLASSIFICATION
+            -- ==============================================
+
+            a.account_type,
+
+            a.reporting_group,
+
+
+            -- ==============================================
+            -- ACCOUNT STATUS
+            -- ==============================================
+
+            a.is_active,
+
+
+            -- ==================================================
+            -- STEP 3: CALCULATE NORMAL ACCOUNT BALANCES
+            -- ==================================================
+
+            /*
+                Different account types have different
+                normal balance directions.
+
+                ASSET:
+                    Debits - Credits
+
+                EXPENSE:
+                    Debits - Credits
+
+                LIABILITY:
+                    Credits - Debits
+
+                EQUITY:
+                    Credits - Debits
+
+                REVENUE:
+                    Credits - Debits
+
+                posted_totals stores:
+
+                    Debits - Credits
+
+                Therefore:
+
+                ASSET and EXPENSE:
+                    Use the stored amount directly.
+
+                LIABILITY, EQUITY, and REVENUE:
+                    Negate the stored amount.
+
+                Negative balances are preserved.
+
+                We do not use ABS() or GREATEST()
+                because that would hide legitimate
+                negative account balances.
+            */
+
+            CASE
+
+                -- ==========================================
+                -- ASSETS — DEBIT NORMAL
+                -- ==========================================
+
+                WHEN a.account_type = 'ASSET' THEN
+
+                    COALESCE(
+                        pt.net_debit_balance,
+                        0::NUMERIC
+                    )
+
+
+                -- ==========================================
+                -- EXPENSES — DEBIT NORMAL
+                -- ==========================================
+
+                WHEN a.account_type = 'EXPENSE' THEN
+
+                    COALESCE(
+                        pt.net_debit_balance,
+                        0::NUMERIC
+                    )
+
+
+                -- ==========================================
+                -- LIABILITIES — CREDIT NORMAL
+                -- ==========================================
+
+                WHEN a.account_type = 'LIABILITY' THEN
+
+                    -COALESCE(
+                        pt.net_debit_balance,
+                        0::NUMERIC
+                    )
+
+
+                -- ==========================================
+                -- EQUITY — CREDIT NORMAL
+                -- ==========================================
+
+                WHEN a.account_type = 'EQUITY' THEN
+
+                    -COALESCE(
+                        pt.net_debit_balance,
+                        0::NUMERIC
+                    )
+
+
+                -- ==========================================
+                -- REVENUE — CREDIT NORMAL
+                -- ==========================================
+
+                WHEN a.account_type = 'REVENUE' THEN
+
+                    -COALESCE(
+                        pt.net_debit_balance,
+                        0::NUMERIC
+                    )
+
+
+                -- ==========================================
+                -- DEFENSIVE DEFAULT
+                -- ==========================================
+
+                ELSE 0::NUMERIC
+
+            END AS balance,
+
+
+            -- ==================================================
+            -- STEP 4: RETURN POSTED ENTRY COUNT
+            -- ==================================================
+
+            /*
+                Include accounts with no posted history.
+
+                Such accounts have:
+
+                    balance = 0
+                    postedEntryCount = 0
+
+                Accounts with offsetting entries may
+                have a zero balance but a positive
+                posted entry count.
+            */
+
+            COALESCE(
+                pt.posted_entry_count,
+                0::BIGINT
+            ) AS posted_entry_count
+
+
+        -- ======================================================
+        -- STEP 5: INCLUDE ALL ELIGIBLE BUSINESS ACCOUNTS
+        -- ======================================================
+
+        FROM accounts a
+
+
+        -- ======================================================
+        -- JOIN CALCULATED POSTED BALANCES
+        -- ======================================================
+
+        /*
+            LEFT JOIN ensures accounts without posted
+            transactions are still returned.
+
+            We do not filter by is_active because
+            inactive accounts may contain historical
+            accounting balances.
+
+            We do not filter by reporting_group because
+            unclassified accounts must remain visible
+            for financial statement validation.
+        */
+
+        LEFT JOIN posted_totals pt
+            ON pt.business_id = a.business_id
+           AND pt.account_id = a.id
+
+
+        -- ======================================================
+        -- STEP 6: RESTRICT ACCOUNTS TO ONE BUSINESS
+        -- ======================================================
+
+        WHERE a.business_id = #{businessId}
+
+
+          -- ================================================
+          -- EXCLUDE NON-POSTABLE GROUPING ACCOUNTS
+          -- ================================================
+
+          /*
+              V7 introduced account hierarchies.
+
+              Non-postable parent accounts organize
+              the Chart of Accounts.
+
+              These accounts cannot receive direct
+              journal entries.
+
+              Their child accounts already appear
+              individually in this query.
+
+              Including parent subtotals as separate
+              financial balances would double-count
+              financial activity.
+
+              We therefore return only posting accounts.
+          */
+
+          AND a.is_postable = TRUE
+
+
+          -- ================================================
+          -- INCLUDE ALL FIVE FUNDAMENTAL ACCOUNT TYPES
+          -- ================================================
+
+          /*
+              ASSET, LIABILITY, and EQUITY accounts
+              contribute directly to the Balance Sheet.
+
+              REVENUE and EXPENSE accounts contribute
+              indirectly through unclosed earnings.
+
+              All five account types must be available
+              to the Java service.
+          */
+
+          AND a.account_type IN (
+              'ASSET',
+              'LIABILITY',
+              'EQUITY',
+              'REVENUE',
+              'EXPENSE'
+          )
+
+
+        -- ======================================================
+        -- STEP 7: SORT ACCOUNT BALANCES
+        -- ======================================================
+
+        /*
+            Return financial accounts in a stable order.
+
+            1. Assets
+            2. Liabilities
+            3. Equity
+            4. Revenue
+            5. Expenses
+
+            Within each account type, sort by
+            user-defined account code and account ID.
+
+            The BalanceSheetService will organize
+            the first three types into their V7
+            reporting groups.
+
+            Revenue and Expense will be aggregated
+            into unclosed earnings.
+        */
+
+        ORDER BY
+
+            CASE
+
+                WHEN a.account_type = 'ASSET' THEN 1
+
+                WHEN a.account_type = 'LIABILITY' THEN 2
+
+                WHEN a.account_type = 'EQUITY' THEN 3
+
+                WHEN a.account_type = 'REVENUE' THEN 4
+
+                WHEN a.account_type = 'EXPENSE' THEN 5
+
+                ELSE 6
+
+            END,
+
+            a.code,
+
+            a.id
+
+    </select>
+
+</mapper>
