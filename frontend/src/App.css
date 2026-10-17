@@ -11,6 +11,114 @@
 /* ============================================================ */
 /* SIDEBAR */
 /* ============================================================ */
+/* ============================================================ */
+/* LEDGERBASE — GROUPED SIDEBAR NAVIGATION */
+/* ============================================================ */
+
+/**
+ * Organize sidebar navigation into three groups:
+ *
+ * WORKSPACE
+ * ACCOUNTING
+ * FINANCIAL REPORTS
+ *
+ * IMPORTANT:
+ *
+ * These styles extend our existing sidebar design.
+ *
+ * We preserve:
+ *
+ * - Dark navy sidebar
+ * - Existing navigation icons
+ * - Existing active and hover states
+ * - Existing typography and colors
+ * - Existing sidebar footer
+ *
+ * Only the positioning and spacing of navigation
+ * groups are changed.
+ */
+
+
+/* ============================================================ */
+/* NAVIGATION GROUP CONTAINER */
+/* ============================================================ */
+
+/**
+ * Every group contains:
+ *
+ * 1. A section heading.
+ * 2. One or more navigation buttons.
+ *
+ * Flexbox places these elements vertically.
+ */
+
+.navigation-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}
+
+
+/* ============================================================ */
+/* SPACING BETWEEN NAVIGATION GROUPS */
+/* ============================================================ */
+
+/**
+ * Create visual separation between:
+ *
+ * Workspace -> Accounting
+ * Accounting -> Financial Reports
+ *
+ * No borders or heavy dividers are necessary.
+ *
+ * Whitespace is sufficient to communicate hierarchy.
+ */
+
+.navigation-group + .navigation-group {
+  margin-top: 22px;
+}
+
+
+/* ============================================================ */
+/* GROUP HEADINGS */
+/* ============================================================ */
+
+/**
+ * Reuse the existing navigation-label typography.
+ *
+ * This override only adjusts group heading spacing.
+ *
+ * All headings retain the existing sidebar
+ * appearance and text color.
+ */
+
+.sidebar-navigation .navigation-group .navigation-label {
+  margin: 0 0 8px;
+}
+
+
+/* ============================================================ */
+/* NAVIGATION BUTTON WIDTH */
+/* ============================================================ */
+
+/**
+ * Navigation buttons should fill the available
+ * width inside each group.
+ *
+ * This preserves the existing full-width
+ * active navigation highlight.
+ */
+
+.navigation-group .navigation-item {
+  width: 100%;
+}
+
+
+/* ============================================================ */
+/* END — GROUPED SIDEBAR NAVIGATION */
+/* ============================================================ */
+
 
 .sidebar {
   display: flex;
@@ -484,3 +592,112 @@
     grid-template-columns: 1fr;
   }
 }
+
+
+/* ============================================================ */
+/* LEDGERBASE — GROUPED SIDEBAR NAVIGATION */
+/* ============================================================ */
+
+/**
+ * Organize sidebar navigation into three groups:
+ *
+ * WORKSPACE
+ * ACCOUNTING
+ * FINANCIAL REPORTS
+ *
+ * IMPORTANT:
+ *
+ * These styles extend our existing sidebar design.
+ *
+ * We preserve:
+ *
+ * - Dark navy sidebar
+ * - Existing navigation icons
+ * - Existing active and hover states
+ * - Existing typography and colors
+ * - Existing sidebar footer
+ *
+ * Only the positioning and spacing of navigation
+ * groups are changed.
+ */
+
+
+/* ============================================================ */
+/* NAVIGATION GROUP CONTAINER */
+/* ============================================================ */
+
+/**
+ * Every group contains:
+ *
+ * 1. A section heading.
+ * 2. One or more navigation buttons.
+ *
+ * Flexbox places these elements vertically.
+ */
+
+.navigation-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}
+
+
+/* ============================================================ */
+/* SPACING BETWEEN NAVIGATION GROUPS */
+/* ============================================================ */
+
+/**
+ * Create visual separation between:
+ *
+ * Workspace -> Accounting
+ * Accounting -> Financial Reports
+ *
+ * No borders or heavy dividers are necessary.
+ *
+ * Whitespace is sufficient to communicate hierarchy.
+ */
+
+.navigation-group + .navigation-group {
+  margin-top: 22px;
+}
+
+
+/* ============================================================ */
+/* GROUP HEADINGS */
+/* ============================================================ */
+
+/**
+ * Reuse the existing navigation-label typography.
+ *
+ * This override only adjusts group heading spacing.
+ *
+ * All headings retain the existing sidebar
+ * appearance and text color.
+ */
+
+.sidebar-navigation .navigation-group .navigation-label {
+  margin: 0 0 8px;
+}
+
+
+/* ============================================================ */
+/* NAVIGATION BUTTON WIDTH */
+/* ============================================================ */
+
+/**
+ * Navigation buttons should fill the available
+ * width inside each group.
+ *
+ * This preserves the existing full-width
+ * active navigation highlight.
+ */
+
+.navigation-group .navigation-item {
+  width: 100%;
+}
+
+
+/* ============================================================ */
+/* END — GROUPED SIDEBAR NAVIGATION */
+/* ============================================================ */
