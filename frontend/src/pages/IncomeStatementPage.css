@@ -1,0 +1,414 @@
+/* ============================================================ */
+/* LEDGERBASE — INCOME STATEMENT PAGE STYLES */
+/* ============================================================ */
+
+/**
+ * Extends the existing Trial Balance design.
+ *
+ * Shared visual styles come from TrialBalancePage.css.
+ *
+ * This file adds:
+ *
+ * - Income Statement column proportions
+ * - Reporting group headings
+ * - Financial section subtotals
+ * - Revenue, expense, and net income totals
+ * - Account classification warnings
+ * - Empty activity messages
+ *
+ * IMPORTANT:
+ *
+ * We do not modify the Trial Balance stylesheet.
+ *
+ * "isr-" means Income Statement Report.
+ */
+
+
+/* ============================================================ */
+/* REPORTING DATE CONTROLS */
+/* ============================================================ */
+
+/**
+ * Two date inputs are displayed rather than
+ * the Trial Balance's single as-of date.
+ *
+ * The existing flex layout and responsive rules
+ * are reused from TrialBalancePage.css.
+ */
+
+.isr-page .tb-controls-form {
+  gap: 14px;
+}
+
+
+/* ============================================================ */
+/* CLASSIFICATION STATUS */
+/* ============================================================ */
+
+.isr-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  flex-shrink: 0;
+
+  padding: 8px 12px;
+
+  border-radius: 7px;
+
+  font-size: 11px;
+  font-weight: 700;
+
+  white-space: nowrap;
+}
+
+
+/* ============================================================ */
+/* CLASSIFICATION COMPLETE */
+/* ============================================================ */
+
+/**
+ * A complete classification means that no account
+ * with posted income/expense activity is missing
+ * a financial reporting group.
+ *
+ * It does not mean that the fiscal period is closed.
+ */
+
+.isr-status-complete {
+  border: 1px solid #cbe9dd;
+  background: #e8f8f1;
+  color: #218666;
+}
+
+
+/* ============================================================ */
+/* CLASSIFICATION WARNING */
+/* ============================================================ */
+
+.isr-status-warning {
+  border: 1px solid #efdcb4;
+  background: #fff8e8;
+  color: #95681e;
+}
+
+
+/* ============================================================ */
+/* UNCLASSIFIED ACCOUNT WARNING PANEL */
+/* ============================================================ */
+
+.isr-warning {
+  margin: 0 25px 22px;
+  padding: 17px 19px;
+
+  border: 1px solid #efdcb4;
+  border-radius: 9px;
+
+  background: #fffaf0;
+}
+
+.isr-warning strong {
+  display: block;
+  margin-bottom: 7px;
+
+  color: #8e6325;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.isr-warning p {
+  margin: 0;
+
+  color: #987844;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+
+/* ============================================================ */
+/* EMPTY POSTED ACTIVITY NOTICE */
+/* ============================================================ */
+
+/**
+ * Show a factual empty state without inventing
+ * financial amounts or hiding the report.
+ */
+
+.isr-empty-note {
+  margin: 0 25px 22px;
+  padding: 17px 19px;
+
+  border: 1px solid #dfe8ef;
+  border-radius: 9px;
+
+  background: #f8fafc;
+}
+
+.isr-empty-note strong {
+  display: block;
+  margin-bottom: 7px;
+
+  color: #34475f;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.isr-empty-note p {
+  margin: 0;
+
+  color: #7e8da1;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+
+/* ============================================================ */
+/* INCOME STATEMENT ACCOUNTING TABLE */
+/* ============================================================ */
+
+/**
+ * Trial Balance has five columns.
+ *
+ * Income Statement has three:
+ *
+ * 1. Account Code
+ * 2. Account / Reporting Group
+ * 3. Period Amount
+ *
+ * Override the column proportions only for
+ * the Income Statement table.
+ */
+
+.isr-page .isr-table {
+  min-width: 640px;
+  table-layout: fixed;
+}
+
+.isr-page .isr-table thead th:nth-child(1) {
+  width: 19%;
+}
+
+.isr-page .isr-table thead th:nth-child(2) {
+  width: 53%;
+}
+
+.isr-page .isr-table thead th:nth-child(3) {
+  width: 28%;
+}
+
+
+/* ============================================================ */
+/* REPORTING GROUP HEADING */
+/* ============================================================ */
+
+.isr-section-heading {
+  background: #f4f8fa;
+}
+
+.isr-section-heading th {
+  padding: 15px 20px;
+
+  border-top: 1px solid #e5edf1;
+  border-bottom: 1px solid #e5edf1;
+
+  color: #253c51;
+  font-size: 12px;
+  font-weight: 750;
+  text-align: left;
+}
+
+
+/* ============================================================ */
+/* EMPTY REPORTING GROUP */
+/* ============================================================ */
+
+.isr-page .isr-table td.isr-empty-group {
+  padding: 17px 20px;
+
+  color: #9ba7b7;
+  font-size: 11px;
+  font-style: italic;
+}
+
+
+/* ============================================================ */
+/* REPORTING GROUP SUBTOTAL */
+/* ============================================================ */
+
+/**
+ * Each reporting group subtotal is calculated
+ * by IncomeStatementService using BigDecimal.
+ */
+
+.isr-subtotal-row {
+  background: #fafcfd;
+}
+
+.isr-subtotal-row th,
+.isr-subtotal-row td {
+  padding: 16px 20px;
+
+  border-top: 1px solid #e7eef1;
+  border-bottom: 1px solid #e7eef1;
+
+  color: #34475f;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.isr-subtotal-row th {
+  text-align: left;
+}
+
+.isr-subtotal-row td.tb-money-column {
+  color: #25364d;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+
+/* ============================================================ */
+/* UNCLASSIFIED ACTIVITY SECTION */
+/* ============================================================ */
+
+.isr-unclassified-heading {
+  background: #fff8ea;
+}
+
+.isr-unclassified-heading th {
+  border-color: #f1e4c9;
+  color: #95681e;
+}
+
+
+/* ============================================================ */
+/* ACCOUNT TYPE LABEL */
+/* ============================================================ */
+
+/**
+ * An unclassified account may be REVENUE
+ * or EXPENSE.
+ *
+ * Make that distinction visible beside its name.
+ */
+
+.isr-account-type {
+  display: inline-flex;
+
+  margin-left: 10px;
+  padding: 4px 7px;
+
+  border-radius: 5px;
+
+  background: #f1f4f7;
+  color: #75859a;
+
+  font-size: 10px;
+  font-weight: 650;
+}
+
+
+/* ============================================================ */
+/* REVENUE AND EXPENSE TOTALS */
+/* ============================================================ */
+
+.isr-page .isr-table tfoot {
+  background: #f8fafc;
+}
+
+.isr-total-row th,
+.isr-total-row td {
+  padding: 16px 20px;
+
+  border-top: 1px solid #e6edf1;
+
+  color: #34475f;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.isr-total-row th {
+  text-align: left;
+}
+
+.isr-total-row td.tb-money-column {
+  color: #25364d;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+
+/* ============================================================ */
+/* NET INCOME */
+/* ============================================================ */
+
+/**
+ * Net Income is the final Income Statement figure.
+ *
+ * Emphasize it with a restrained teal background,
+ * consistent with LedgerBase's accounting UI.
+ *
+ * The underlying amount comes from Spring Boot.
+ */
+
+.isr-page .isr-net-income-row {
+  background: #eff8f5;
+}
+
+.isr-page .isr-net-income-row th,
+.isr-page .isr-net-income-row td {
+  border-top: 2px solid #c8e3da;
+
+  color: #176a5d;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.isr-page .isr-net-income-row th {
+  text-align: left;
+}
+
+.isr-page .isr-net-income-row td.tb-money-column {
+  color: #176a5d;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+
+/* ============================================================ */
+/* RESPONSIVE LAYOUT */
+/* ============================================================ */
+
+/**
+ * TrialBalancePage.css already provides responsive
+ * date forms and horizontal table scrolling.
+ *
+ * These additional rules handle the Income Statement's
+ * status badge and warning messages.
+ */
+
+@media (max-width: 760px) {
+
+  .isr-status {
+    align-self: flex-start;
+  }
+
+  .isr-warning,
+  .isr-empty-note {
+    margin: 0 18px 18px;
+  }
+
+}
+
+@media (max-width: 480px) {
+
+  .isr-warning,
+  .isr-empty-note {
+    padding: 15px;
+  }
+
+  .isr-page .isr-table {
+    min-width: 600px;
+  }
+
+}
