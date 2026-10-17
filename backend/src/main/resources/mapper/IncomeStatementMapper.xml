@@ -1,0 +1,448 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+    PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<!-- ============================================================ -->
+<!-- LEDGERBASE — INCOME STATEMENT SQL MAPPER -->
+<!-- ============================================================ -->
+
+<!--
+    PostgreSQL queries for Income Statement reporting.
+
+    Java interface:
+
+    com.ledgerbase.backend.mapper.IncomeStatementMapper
+
+    Responsibilities:
+
+    - Calculate revenue and expense activity
+    - Support inclusive start and end dates
+    - Include only POSTED journal transactions
+    - Restrict all results to one business
+    - Preserve inactive accounts and historical activity
+    - Exclude non-postable grouping accounts
+    - Identify unclassified accounts with posted activity
+    - Preserve exact financial values using NUMERIC
+
+    IMPORTANT:
+
+    This mapper performs READ-ONLY reporting.
+
+    It does not modify accounts, transactions,
+    ledger entries, fiscal years, or accounting periods.
+
+    Financial statement totals will be calculated
+    by IncomeStatementService using Java BigDecimal.
+-->
+
+<mapper namespace="com.ledgerbase.backend.mapper.IncomeStatementMapper">
+
+    <!-- ======================================================== -->
+    <!-- INCOME STATEMENT ROW RESULT MAPPING -->
+    <!-- ======================================================== -->
+
+    <!--
+        Convert PostgreSQL query results into
+        IncomeStatementRow Java objects.
+
+        PostgreSQL uses snake_case column names.
+
+        Java uses camelCase properties.
+
+        Monetary NUMERIC values map to BigDecimal.
+
+        COUNT(*) values map to Long.
+    -->
+
+    <resultMap
+        id="incomeStatementRowResultMap"
+        type="com.ledgerbase.backend.model.IncomeStatementRow">
+
+        <!-- ==================================================== -->
+        <!-- ACCOUNT IDENTIFICATION -->
+        <!-- ==================================================== -->
+
+        <id
+            property="accountId"
+            column="account_id"/>
+
+        <result
+            property="code"
+            column="code"/>
+
+        <result
+            property="name"
+            column="name"/>
+
+
+        <!-- ==================================================== -->
+        <!-- ACCOUNT CLASSIFICATION -->
+        <!-- ==================================================== -->
+
+        <result
+            property="accountType"
+            column="account_type"/>
+
+        <result
+            property="reportingGroup"
+            column="reporting_group"/>
+
+
+        <!-- ==================================================== -->
+        <!-- ACCOUNT STATUS -->
+        <!-- ==================================================== -->
+
+        <result
+            property="active"
+            column="is_active"/>
+
+
+        <!-- ==================================================== -->
+        <!-- CALCULATED FINANCIAL ACTIVITY -->
+        <!-- ==================================================== -->
+
+        <result
+            property="amount"
+            column="amount"
+            javaType="java.math.BigDecimal"/>
+
+
+        <!-- ==================================================== -->
+        <!-- POSTED JOURNAL ENTRY COUNT -->
+        <!-- ==================================================== -->
+
+        <result
+            property="postedEntryCount"
+            column="posted_entry_count"
+            javaType="java.lang.Long"/>
+
+    </resultMap>
+
+
+    <!-- ======================================================== -->
+    <!-- INCOME STATEMENT FOR A REPORTING PERIOD -->
+    <!-- ======================================================== -->
+
+    <!--
+        Maps to the Java method:
+
+        findByBusinessIdAndDateRange(
+            Long businessId,
+            LocalDate startDate,
+            LocalDate endDate
+        )
+
+        MyBatis parameters:
+
+        #{businessId}
+            Business requesting the financial statement.
+
+        #{startDate}
+            First date included in the report.
+
+        #{endDate}
+            Last date included in the report.
+
+        Example:
+
+        startDate = 2026-10-01
+        endDate   = 2026-10-31
+
+        Includes transactions dated October 1
+        through October 31, including both dates.
+
+        The Java service will reject an invalid
+        date range where startDate is after endDate.
+    -->
+
+    <select
+        id="findByBusinessIdAndDateRange"
+        resultMap="incomeStatementRowResultMap">
+
+        -- ======================================================
+        -- STEP 1: CALCULATE POSTED JOURNAL ACTIVITY
+        -- ======================================================
+
+        /*
+            Aggregate posted ledger entries by account.
+
+            We calculate a debit/credit difference
+            using exact PostgreSQL NUMERIC arithmetic.
+
+            Here we initially use:
+
+                credits - debits
+
+            This is positive for normal revenue activity.
+
+            Expenses will have their sign reversed
+            in the final SELECT statement.
+
+            COUNT(*) records how many posted ledger
+            entries contributed to each account.
+
+            This is important because a zero net amount
+            does not necessarily mean there was no
+            financial activity.
+        */
+
+        WITH posted_activity AS (
+
+            SELECT
+                le.business_id,
+                le.account_id,
+
+                -- ==============================================
+                -- CREDIT-POSITIVE NET FINANCIAL ACTIVITY
+                -- ==============================================
+
+                SUM(
+                    le.credit - le.debit
+                ) AS net_credit_activity,
+
+                -- ==============================================
+                -- NUMBER OF POSTED LEDGER ENTRIES
+                -- ==============================================
+
+                COUNT(*) AS posted_entry_count
+
+            FROM ledger_entries le
+
+            -- ==============================================
+            -- JOIN LEDGER ENTRIES TO THEIR TRANSACTIONS
+            -- ==============================================
+
+            /*
+                Join using both business_id and
+                transaction_id for business isolation.
+            */
+
+            INNER JOIN transactions t
+                ON t.business_id = le.business_id
+               AND t.id = le.transaction_id
+
+            WHERE le.business_id = #{businessId}
+
+              -- ============================================
+              -- INCLUDE POSTED TRANSACTIONS ONLY
+              -- ============================================
+
+              AND t.status = 'POSTED'
+
+              -- ============================================
+              -- INCLUSIVE REPORTING START DATE
+              -- ============================================
+
+              AND t.transaction_date &gt;= #{startDate}
+
+              -- ============================================
+              -- INCLUSIVE REPORTING END DATE
+              -- ============================================
+
+              AND t.transaction_date &lt;= #{endDate}
+
+            -- ==============================================
+            -- AGGREGATE ACTIVITY PER ACCOUNT
+            -- ==============================================
+
+            GROUP BY
+                le.business_id,
+                le.account_id
+        )
+
+        -- ======================================================
+        -- STEP 2: SELECT REVENUE AND EXPENSE ACCOUNTS
+        -- ======================================================
+
+        SELECT
+
+            -- ==============================================
+            -- ACCOUNT IDENTIFICATION
+            -- ==============================================
+
+            a.id AS account_id,
+            a.code,
+            a.name,
+
+            -- ==============================================
+            -- ACCOUNT CLASSIFICATION
+            -- ==============================================
+
+            a.account_type,
+            a.reporting_group,
+
+            -- ==============================================
+            -- ACCOUNT STATUS
+            -- ==============================================
+
+            a.is_active,
+
+            -- ==================================================
+            -- STEP 3: APPLY CORRECT ACCOUNTING SIGNS
+            -- ==================================================
+
+            /*
+                Revenue accounts have a normal
+                CREDIT balance.
+
+                Revenue amount:
+
+                    credits - debits
+
+                Expense accounts have a normal
+                DEBIT balance.
+
+                Expense amount:
+
+                    debits - credits
+
+                Because posted_activity stores
+                credits - debits, we negate that
+                amount for expenses.
+
+                Preserve negative results rather than
+                automatically forcing amounts to zero.
+            */
+
+            CASE
+
+                -- ==========================================
+                -- REVENUE: CREDITS MINUS DEBITS
+                -- ==========================================
+
+                WHEN a.account_type = 'REVENUE' THEN
+
+                    COALESCE(
+                        pa.net_credit_activity,
+                        0::NUMERIC
+                    )
+
+                -- ==========================================
+                -- EXPENSE: DEBITS MINUS CREDITS
+                -- ==========================================
+
+                WHEN a.account_type = 'EXPENSE' THEN
+
+                    -COALESCE(
+                        pa.net_credit_activity,
+                        0::NUMERIC
+                    )
+
+                -- ==========================================
+                -- DEFENSIVE DEFAULT
+                -- ==========================================
+
+                ELSE 0::NUMERIC
+
+            END AS amount,
+
+
+            -- ==================================================
+            -- STEP 4: RETURN POSTED ENTRY COUNT
+            -- ==================================================
+
+            /*
+                If the account has no posted entries
+                during the period, return zero.
+
+                This count allows the Java service
+                to distinguish:
+
+                - An unused account with zero activity
+                - An account with offsetting activity
+                  whose net amount is zero
+            */
+
+            COALESCE(
+                pa.posted_entry_count,
+                0::BIGINT
+            ) AS posted_entry_count
+
+
+        -- ======================================================
+        -- STEP 5: INCLUDE ALL RELEVANT BUSINESS ACCOUNTS
+        -- ======================================================
+
+        FROM accounts a
+
+        /*
+            LEFT JOIN ensures that revenue and expense
+            accounts without posted activity still
+            appear with amount = 0.
+
+            Inactive accounts are not filtered out.
+
+            Unclassified accounts are not filtered out.
+        */
+
+        LEFT JOIN posted_activity pa
+            ON pa.business_id = a.business_id
+           AND pa.account_id = a.id
+
+
+        -- ======================================================
+        -- STEP 6: APPLY BUSINESS AND ACCOUNT FILTERS
+        -- ======================================================
+
+        WHERE a.business_id = #{businessId}
+
+          -- ================================================
+          -- ONLY INCOME STATEMENT ACCOUNT TYPES
+          -- ================================================
+
+          AND a.account_type IN (
+              'REVENUE',
+              'EXPENSE'
+          )
+
+          -- ================================================
+          -- ONLY DIRECT POSTING ACCOUNTS
+          -- ================================================
+
+          /*
+              Grouping accounts organize the Chart
+              of Accounts but cannot directly receive
+              journal entries.
+
+              We do not sum child balances into a
+              parent account in this query.
+
+              This prevents double-counting.
+
+              Reporting-group subtotals will be
+              calculated separately in Java.
+          */
+
+          AND a.is_postable = TRUE
+
+
+        -- ======================================================
+        -- STEP 7: SORT FINANCIAL ACCOUNTS
+        -- ======================================================
+
+        /*
+            Display Revenue accounts before Expenses.
+
+            Then order accounts by customizable
+            account codes and database IDs.
+
+            The final financial statement service
+            will organize these accounts further
+            into reporting-group sections.
+        */
+
+        ORDER BY
+
+            CASE
+                WHEN a.account_type = 'REVENUE' THEN 1
+                WHEN a.account_type = 'EXPENSE' THEN 2
+                ELSE 3
+            END,
+
+            a.code,
+            a.id
+
+    </select>
+
+</mapper>

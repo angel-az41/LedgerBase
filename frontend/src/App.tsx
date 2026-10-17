@@ -5,6 +5,7 @@ import {
   BookOpen,
   ArrowLeftRight,
   Scale,
+  TrendingUp,
   CalendarRange,
 } from 'lucide-react'
 
@@ -14,6 +15,7 @@ import AccountsPage from './pages/AccountsPage'
 import FiscalYearsPage from './pages/FiscalYearsPage'
 import TransactionsPage from './pages/TransactionsPage'
 import TrialBalancePage from './pages/TrialBalancePage'
+import IncomeStatementPage from './pages/IncomeStatementPage'
 
 // ============================================================
 // LEDGERBASE — APPLICATION TYPES
@@ -25,13 +27,15 @@ import TrialBalancePage from './pages/TrialBalancePage'
  * TypeScript prevents us from accidentally navigating
  * to a page that does not exist.
  *
- * Trial Balance is our first financial reporting page.
+ * Trial Balance and Income Statement are financial
+ * reporting pages.
  */
 type Page =
   | 'overview'
   | 'accounts'
   | 'transactions'
   | 'trial-balance'
+  | 'income-statement'
   | 'fiscal-years'
 
 /**
@@ -60,7 +64,6 @@ interface NavigationItem {
  * navigation item, allowing our existing CSS to
  * handle hover and active/selected states.
  */
-
 const navigationItems: NavigationItem[] = [
 
   // ==========================================================
@@ -124,6 +127,27 @@ const navigationItems: NavigationItem[] = [
   },
 
   // ==========================================================
+  // INCOME STATEMENT
+  // ==========================================================
+
+  /**
+   * Open the Income Statement reporting interface.
+   *
+   * The icon and active state use the same
+   * styling as our existing sidebar items.
+   */
+  {
+    id: 'income-statement',
+    label: 'Income Statement',
+    icon: (
+      <TrendingUp
+        size={18}
+        strokeWidth={1.8}
+      />
+    ),
+  },
+
+  // ==========================================================
   // FISCAL YEARS & ACCOUNTING PERIODS
   // ==========================================================
 
@@ -180,8 +204,8 @@ function App() {
    * Display different headings depending on the
    * selected navigation item.
    *
-   * Trial Balance is included here so that the
-   * application's page metadata remains complete.
+   * Both Trial Balance and Income Statement are
+   * included in the application's page metadata.
    */
   const pageInformation: Record<
     Page,
@@ -208,10 +232,15 @@ function App() {
       description: 'Review account balances and verify your general ledger.',
     },
 
-      'fiscal-years': {
-        title: 'Fiscal Years & Accounting Periods',
-        description: 'Manage your accounting calendar and monthly posting periods.',
-      },
+    'income-statement': {
+      title: 'Income Statement',
+      description: 'Review revenue, expenses, and net income for a reporting period.',
+    },
+
+    'fiscal-years': {
+      title: 'Fiscal Years & Accounting Periods',
+      description: 'Manage your accounting calendar and monthly posting periods.',
+    },
   }
 
   const currentPage = pageInformation[activePage]
@@ -337,16 +366,18 @@ function App() {
           Preserve the existing shared page header
           for Overview, Chart of Accounts, and Transactions.
 
-          TrialBalancePage already includes its own heading.
+          Trial Balance, Income Statement, and Fiscal Years
+          already include their own page headings.
 
-          Skip the shared heading for Trial Balance so
-          that the title is not displayed twice.
+          We hide the shared heading for those pages
+          to prevent duplicate titles.
 
           We can standardize page headers across all
           reporting pages during a future UI refinement.
         */}
 
         {activePage !== 'trial-balance' &&
+          activePage !== 'income-statement' &&
           activePage !== 'fiscal-years' && (
 
           <header className="page-header">
@@ -572,7 +603,7 @@ function App() {
         {activePage === 'trial-balance' && (
 
           /*
-           * Display the new Trial Balance reporting interface.
+           * Display the Trial Balance reporting interface.
            *
            * TrialBalancePage provides:
            *
@@ -594,20 +625,53 @@ function App() {
         )}
 
         {/* ==================================================== */}
+        {/* INCOME STATEMENT REPORT PAGE */}
+        {/* ==================================================== */}
+
+        {activePage === 'income-statement' && (
+
+          /*
+           * Display the Income Statement reporting interface.
+           *
+           * IncomeStatementPage provides:
+           *
+           * - Inclusive start and end date selectors
+           * - Revenue and expense reporting groups
+           * - Posted account financial activity
+           * - Reporting group subtotals
+           * - Total revenue and total expenses
+           * - Net income
+           * - Unclassified account warnings
+           *
+           * All financial calculations are performed
+           * by the Spring Boot backend.
+           *
+           * Business ID 1 is our existing local
+           * development business.
+           *
+           * The report is generated through the
+           * Spring Boot Income Statement API.
+           */
+
+          <IncomeStatementPage businessId={1} />
+
+        )}
+
+        {/* ==================================================== */}
         {/* FISCAL YEARS & ACCOUNTING PERIODS PAGE */}
         {/* ==================================================== */}
 
         {activePage === 'fiscal-years' && (
 
           /*
-          * Display the fiscal-year management page
-          * for our existing local development business.
-          *
-          * The business ID is temporarily set to 1.
-          *
-          * Later, authentication and business selection
-          * will determine the current business.
-          */
+           * Display the fiscal-year management page
+           * for our existing local development business.
+           *
+           * The business ID is temporarily set to 1.
+           *
+           * Later, authentication and business selection
+           * will determine the current business.
+           */
 
           <FiscalYearsPage
             businessId={1}
