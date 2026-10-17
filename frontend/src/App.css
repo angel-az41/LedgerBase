@@ -1,6 +1,60 @@
 /* ============================================================ */
-/* LEDGERBASE — REACT APPLICATION LAYOUT */
+/* LEDGERBASE — APPLICATION STYLES */
 /* ============================================================ */
+
+/**
+ * Global layout and shared interface styles for LedgerBase.
+ *
+ * FILE ORGANIZATION:
+ *
+ * 1. Application Layout
+ * 2. Sidebar
+ *    2.1 Sidebar Container
+ *    2.2 Branding
+ *    2.3 Navigation
+ *    2.4 Navigation Groups
+ *    2.5 Sidebar Footer
+ * 3. Main Content
+ * 4. Shared Page Header
+ * 5. Overview Dashboard
+ *    5.1 Overview Layout
+ *    5.2 Welcome Panel
+ *    5.3 Financial Metric Cards
+ *    5.4 Quick Access
+ * 6. Legacy Placeholder Components
+ * 7. Responsive Layout
+ *
+ * DESIGN PRINCIPLES:
+ *
+ * - Professional enterprise accounting interface
+ * - Dark navy sidebar with restrained teal accents
+ * - Consistent cards, typography, and spacing
+ * - Reusable CSS classes
+ * - Responsive navigation and content
+ *
+ * Page-specific styles remain in their respective
+ * stylesheets, such as:
+ *
+ * - OverviewPage.css
+ * - TrialBalancePage.css
+ * - IncomeStatementPage.css
+ * - BalanceSheetPage.css
+ */
+
+
+/* ============================================================ */
+/* 1. APPLICATION LAYOUT */
+/* ============================================================ */
+
+/**
+ * Main application shell.
+ *
+ * Flexbox arranges the sidebar and main content
+ * horizontally on desktop screens.
+ *
+ * The sidebar provides navigation, while the main
+ * content displays the currently selected React page.
+ */
 
 .app-shell {
   display: flex;
@@ -8,141 +62,68 @@
   background: #f4f7fb;
 }
 
-/* ============================================================ */
-/* SIDEBAR */
-/* ============================================================ */
-/* ============================================================ */
-/* LEDGERBASE — GROUPED SIDEBAR NAVIGATION */
-/* ============================================================ */
 
-/**
- * Organize sidebar navigation into three groups:
- *
- * WORKSPACE
- * ACCOUNTING
- * FINANCIAL REPORTS
- *
- * IMPORTANT:
- *
- * These styles extend our existing sidebar design.
- *
- * We preserve:
- *
- * - Dark navy sidebar
- * - Existing navigation icons
- * - Existing active and hover states
- * - Existing typography and colors
- * - Existing sidebar footer
- *
- * Only the positioning and spacing of navigation
- * groups are changed.
- */
+/* ============================================================ */
+/* 2. SIDEBAR */
+/* ============================================================ */
 
 
 /* ============================================================ */
-/* NAVIGATION GROUP CONTAINER */
+/* 2.1 SIDEBAR CONTAINER */
 /* ============================================================ */
 
 /**
- * Every group contains:
+ * Fixed-width sidebar for the desktop layout.
  *
- * 1. A section heading.
- * 2. One or more navigation buttons.
+ * The dark navy background provides a consistent
+ * navigation area across all LedgerBase pages.
  *
- * Flexbox places these elements vertically.
+ * The footer is pushed to the bottom using
+ * margin-top: auto.
  */
-
-.navigation-group {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  width: 100%;
-}
-
-
-/* ============================================================ */
-/* SPACING BETWEEN NAVIGATION GROUPS */
-/* ============================================================ */
-
-/**
- * Create visual separation between:
- *
- * Workspace -> Accounting
- * Accounting -> Financial Reports
- *
- * No borders or heavy dividers are necessary.
- *
- * Whitespace is sufficient to communicate hierarchy.
- */
-
-.navigation-group + .navigation-group {
-  margin-top: 22px;
-}
-
-
-/* ============================================================ */
-/* GROUP HEADINGS */
-/* ============================================================ */
-
-/**
- * Reuse the existing navigation-label typography.
- *
- * This override only adjusts group heading spacing.
- *
- * All headings retain the existing sidebar
- * appearance and text color.
- */
-
-.sidebar-navigation .navigation-group .navigation-label {
-  margin: 0 0 8px;
-}
-
-
-/* ============================================================ */
-/* NAVIGATION BUTTON WIDTH */
-/* ============================================================ */
-
-/**
- * Navigation buttons should fill the available
- * width inside each group.
- *
- * This preserves the existing full-width
- * active navigation highlight.
- */
-
-.navigation-group .navigation-item {
-  width: 100%;
-}
-
-
-/* ============================================================ */
-/* END — GROUPED SIDEBAR NAVIGATION */
-/* ============================================================ */
-
 
 .sidebar {
   display: flex;
   flex-direction: column;
+
   width: 250px;
   min-width: 250px;
   min-height: 100vh;
+
   padding: 28px 18px 22px;
+
   background: #101d31;
   color: #c6d2e1;
 }
+
+
+/* ============================================================ */
+/* 2.2 SIDEBAR BRANDING */
+/* ============================================================ */
+
+/**
+ * LedgerBase logo and application name.
+ *
+ * The existing favicon is used as the sidebar logo.
+ *
+ * Branding appears above all navigation groups.
+ */
 
 .sidebar-brand {
   display: flex;
   align-items: center;
   gap: 12px;
+
   padding: 6px 12px 48px;
 }
 
 .brand-logo {
   display: block;
+
   width: 42px;
   height: 42px;
   flex-shrink: 0;
+
   border-radius: 11px;
   object-fit: contain;
 }
@@ -164,9 +145,31 @@
   font-size: 11px;
 }
 
+
 /* ============================================================ */
-/* SIDEBAR NAVIGATION */
+/* 2.3 SIDEBAR NAVIGATION */
 /* ============================================================ */
+
+/**
+ * The sidebar contains three navigation groups:
+ *
+ * WORKSPACE
+ *   - Overview
+ *
+ * ACCOUNTING
+ *   - Transactions
+ *   - Chart of Accounts
+ *   - Fiscal Years & Periods
+ *
+ * FINANCIAL REPORTS
+ *   - Trial Balance
+ *   - Income Statement
+ *   - Balance Sheet
+ *
+ * App.tsx generates these navigation items.
+ *
+ * CSS controls their layout and visual states.
+ */
 
 .sidebar-navigation {
   display: flex;
@@ -174,43 +177,112 @@
   gap: 6px;
 }
 
+
+/* ============================================================ */
+/* NAVIGATION SECTION LABELS */
+/* ============================================================ */
+
+/**
+ * Uppercase category labels separate navigation
+ * into logical application areas.
+ *
+ * Example: FINANCIAL REPORTS
+ */
+
 .navigation-label {
   margin: 0 12px 16px;
+
   color: #8193ac;
   font-size: 10px;
   font-weight: 800;
   letter-spacing: 1.6px;
 }
 
+
+/* ============================================================ */
+/* NAVIGATION BUTTONS */
+/* ============================================================ */
+
+/**
+ * Every navigation item is a button.
+ *
+ * The same styles apply to all groups.
+ *
+ * Default state:
+ *   Muted text on navy background.
+ *
+ * Hover state:
+ *   Slightly lighter background and white text.
+ *
+ * Active state:
+ *   Highlighted background with teal text.
+ */
+
 .navigation-item {
   display: flex;
-  width: 100%;
-  min-height: 48px;
   align-items: center;
   gap: 14px;
+
+  width: 100%;
+  min-height: 48px;
+
   padding: 0 15px;
+
   border: 0;
   border-radius: 9px;
+
   background: transparent;
   color: #b5c5d8;
+
   font-size: 13px;
   font-weight: 550;
   text-align: left;
+
   transition:
     background 0.15s ease,
     color 0.15s ease;
 }
+
+
+/* ============================================================ */
+/* NAVIGATION HOVER STATE */
+/* ============================================================ */
 
 .navigation-item:hover {
   background: #1a2c43;
   color: #ffffff;
 }
 
+
+/* ============================================================ */
+/* ACTIVE NAVIGATION STATE */
+/* ============================================================ */
+
+/**
+ * React adds the active class when:
+ *
+ * activePage === item.id
+ *
+ * The active item uses LedgerBase's teal accent.
+ */
+
 .navigation-item.active {
   background: #263e55;
   color: #5ce0c4;
   font-weight: 700;
 }
+
+
+/* ============================================================ */
+/* NAVIGATION ICONS */
+/* ============================================================ */
+
+/**
+ * Lucide icons are passed from App.tsx.
+ *
+ * The parent button controls the icon color
+ * through CSS inheritance.
+ */
 
 .navigation-icon {
   display: inline-flex;
@@ -219,420 +291,21 @@
   font-size: 18px;
 }
 
-/* ============================================================ */
-/* SIDEBAR FOOTER */
-/* ============================================================ */
-
-.sidebar-footer {
-  margin-top: auto;
-  padding: 20px 12px 0;
-  border-top: 1px solid #29384c;
-}
-
-.environment-status {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  color: #d4dfeb;
-  font-size: 12px;
-}
-
-.environment-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #51d8b9;
-}
-
-.sidebar-footer p {
-  margin: 10px 0 0;
-  color: #8495ad;
-  font-size: 11px;
-}
 
 /* ============================================================ */
-/* MAIN CONTENT */
-/* ============================================================ */
-
-.main-content {
-  flex: 1;
-  min-width: 0;
-  padding: 42px 46px 60px;
-}
-
-/* ============================================================ */
-/* PAGE HEADER */
-/* ============================================================ */
-
-.page-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 24px;
-  margin-bottom: 32px;
-}
-
-.page-eyebrow {
-  margin-bottom: 12px;
-  color: #8292aa;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 1.5px;
-}
-
-.page-header h1 {
-  margin: 0 0 10px;
-  color: #17263e;
-  font-size: 30px;
-  font-weight: 800;
-  letter-spacing: -1.1px;
-}
-
-.page-description {
-  margin: 0;
-  color: #798ba2;
-  font-size: 14px;
-}
-
-.preview-label {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 10px 14px;
-  border: 1px solid #e2e8f0;
-  border-radius: 30px;
-  background: #ffffff;
-  color: #7d8ba0;
-  font-size: 11px;
-  white-space: nowrap;
-}
-
-.preview-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #e7b44d;
-}
-
-/* ============================================================ */
-/* OVERVIEW PAGE */
-/* ============================================================ */
-
-.overview-page {
-  display: flex;
-  flex-direction: column;
-  gap: 26px;
-}
-
-/* ============================================================ */
-/* WELCOME PANEL */
-/* ============================================================ */
-
-.welcome-panel {
-  padding: 34px 36px;
-  border: 1px solid #dfe8ef;
-  border-radius: 13px;
-  background: #ffffff;
-}
-
-.welcome-eyebrow {
-  margin-bottom: 14px;
-  color: #168c78;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 1.3px;
-}
-
-.welcome-panel h2 {
-  margin-bottom: 12px;
-  color: #1e3047;
-  font-size: 26px;
-  letter-spacing: -0.8px;
-}
-
-.welcome-panel > p:last-child {
-  max-width: 570px;
-  margin-bottom: 0;
-  color: #74869d;
-  font-size: 14px;
-  line-height: 1.8;
-}
-
-/* ============================================================ */
-/* FINANCIAL METRIC CARDS */
-/* ============================================================ */
-
-.overview-metrics {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 18px;
-}
-
-.metric-card {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-height: 162px;
-  padding: 24px;
-  border: 1px solid #e6ebf1;
-  border-radius: 12px;
-  background: #ffffff;
-}
-
-.metric-card p {
-  margin: 0;
-  color: #76879e;
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.metric-card strong {
-  color: #1e3047;
-  font-size: 30px;
-  line-height: 1;
-}
-
-.metric-card span {
-  color: #96a3b4;
-  font-size: 11px;
-  line-height: 1.5;
-}
-
-/* ============================================================ */
-/* QUICK ACCESS */
-/* ============================================================ */
-
-.quick-access {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-}
-
-.section-heading h2 {
-  margin: 0 0 7px;
-  color: #22334b;
-  font-size: 18px;
-}
-
-.section-heading p {
-  margin: 0;
-  color: #8594a7;
-  font-size: 12px;
-}
-
-.quick-access-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px;
-}
-
-.quick-access-card {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 26px;
-  border: 1px solid #e6ebf1;
-  border-radius: 12px;
-  background: #ffffff;
-  text-align: left;
-  transition:
-    border-color 0.15s ease,
-    transform 0.15s ease;
-}
-
-.quick-access-card:hover {
-  border-color: #b5dcd4;
-  transform: translateY(-2px);
-}
-
-.quick-access-icon {
-  display: flex;
-  width: 44px;
-  height: 44px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 10px;
-  background: #e9f8f3;
-  color: #168f79;
-  font-size: 23px;
-}
-
-.quick-access-card strong {
-  color: #26374d;
-  font-size: 15px;
-}
-
-.quick-access-card > span:nth-of-type(2) {
-  color: #8190a3;
-  font-size: 12px;
-  line-height: 1.7;
-}
-
-.quick-access-link {
-  margin-top: 5px;
-  color: #138875;
-  font-size: 12px;
-  font-weight: 750;
-}
-
-/* ============================================================ */
-/* PLACEHOLDER PAGES */
-/* ============================================================ */
-
-.placeholder-card {
-  display: flex;
-  min-height: 360px;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 45px 24px;
-  border: 1px solid #e6ebf1;
-  border-radius: 12px;
-  background: #ffffff;
-  text-align: center;
-}
-
-.placeholder-icon {
-  display: flex;
-  width: 56px;
-  height: 56px;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 18px;
-  border-radius: 13px;
-  background: #e9f8f3;
-  color: #168f79;
-  font-size: 27px;
-}
-
-.placeholder-card h2 {
-  margin-bottom: 12px;
-  color: #24364e;
-  font-size: 19px;
-}
-
-.placeholder-card p {
-  max-width: 460px;
-  margin-bottom: 20px;
-  color: #8392a7;
-  font-size: 13px;
-  line-height: 1.8;
-}
-
-.placeholder-status {
-  padding: 9px 13px;
-  border-radius: 30px;
-  background: #f1f5f9;
-  color: #73849b;
-  font-size: 11px;
-  font-weight: 650;
-}
-
-/* ============================================================ */
-/* RESPONSIVE LAYOUT */
-/* ============================================================ */
-
-@media (max-width: 900px) {
-
-  .sidebar {
-    width: 210px;
-    min-width: 210px;
-  }
-
-  .main-content {
-    padding: 32px 25px;
-  }
-
-  .overview-metrics {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 650px) {
-
-  .app-shell {
-    flex-direction: column;
-  }
-
-  .sidebar {
-    width: 100%;
-    min-height: auto;
-    padding: 16px;
-  }
-
-  .sidebar-brand {
-    padding: 0 0 20px;
-  }
-
-  .sidebar-navigation {
-    flex-direction: row;
-    overflow-x: auto;
-  }
-
-  .navigation-label,
-  .sidebar-footer {
-    display: none;
-  }
-
-  .navigation-item {
-    width: auto;
-    min-width: max-content;
-  }
-
-  .main-content {
-    padding: 25px 16px;
-  }
-
-  .page-header {
-    flex-direction: column;
-  }
-
-  .quick-access-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-
-/* ============================================================ */
-/* LEDGERBASE — GROUPED SIDEBAR NAVIGATION */
+/* 2.4 GROUPED SIDEBAR NAVIGATION */
 /* ============================================================ */
 
 /**
- * Organize sidebar navigation into three groups:
+ * Each navigation group contains:
  *
- * WORKSPACE
- * ACCOUNTING
- * FINANCIAL REPORTS
+ * 1. A section heading
+ * 2. One or more navigation buttons
  *
- * IMPORTANT:
+ * Previously these rules appeared multiple times
+ * inside App.css.
  *
- * These styles extend our existing sidebar design.
- *
- * We preserve:
- *
- * - Dark navy sidebar
- * - Existing navigation icons
- * - Existing active and hover states
- * - Existing typography and colors
- * - Existing sidebar footer
- *
- * Only the positioning and spacing of navigation
- * groups are changed.
- */
-
-
-/* ============================================================ */
-/* NAVIGATION GROUP CONTAINER */
-/* ============================================================ */
-
-/**
- * Every group contains:
- *
- * 1. A section heading.
- * 2. One or more navigation buttons.
- *
- * Flexbox places these elements vertically.
+ * They are now kept together in one section.
  */
 
 .navigation-group {
@@ -648,14 +321,10 @@
 /* ============================================================ */
 
 /**
- * Create visual separation between:
+ * Separate navigation categories with whitespace.
  *
- * Workspace -> Accounting
- * Accounting -> Financial Reports
- *
- * No borders or heavy dividers are necessary.
- *
- * Whitespace is sufficient to communicate hierarchy.
+ * A subtle gap is preferable to adding heavy borders
+ * between all sidebar sections.
  */
 
 .navigation-group + .navigation-group {
@@ -664,16 +333,14 @@
 
 
 /* ============================================================ */
-/* GROUP HEADINGS */
+/* GROUP HEADING SPACING */
 /* ============================================================ */
 
 /**
- * Reuse the existing navigation-label typography.
+ * Retain the original navigation-label typography.
  *
- * This override only adjusts group heading spacing.
- *
- * All headings retain the existing sidebar
- * appearance and text color.
+ * Only override its margin when the label appears
+ * inside a grouped navigation section.
  */
 
 .sidebar-navigation .navigation-group .navigation-label {
@@ -682,15 +349,14 @@
 
 
 /* ============================================================ */
-/* NAVIGATION BUTTON WIDTH */
+/* GROUP NAVIGATION ITEM WIDTH */
 /* ============================================================ */
 
 /**
- * Navigation buttons should fill the available
- * width inside each group.
+ * Buttons fill the width of their navigation group.
  *
- * This preserves the existing full-width
- * active navigation highlight.
+ * This preserves the existing full-width active
+ * navigation background.
  */
 
 .navigation-group .navigation-item {
@@ -699,5 +365,859 @@
 
 
 /* ============================================================ */
-/* END — GROUPED SIDEBAR NAVIGATION */
+/* 2.5 SIDEBAR FOOTER */
+/* ============================================================ */
+
+/**
+ * Development environment information.
+ *
+ * margin-top: auto pushes this section toward
+ * the bottom of the sidebar.
+ *
+ * This may later display the authenticated
+ * business and user information.
+ */
+
+.sidebar-footer {
+  margin-top: auto;
+  padding: 20px 12px 0;
+  border-top: 1px solid #29384c;
+}
+
+
+/* ============================================================ */
+/* ENVIRONMENT STATUS */
+/* ============================================================ */
+
+.environment-status {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+
+  color: #d4dfeb;
+  font-size: 12px;
+}
+
+.environment-dot {
+  width: 7px;
+  height: 7px;
+
+  border-radius: 50%;
+  background: #51d8b9;
+}
+
+.sidebar-footer p {
+  margin: 10px 0 0;
+
+  color: #8495ad;
+  font-size: 11px;
+}
+
+
+/* ============================================================ */
+/* 3. MAIN CONTENT */
+/* ============================================================ */
+
+/**
+ * The main content area occupies all remaining
+ * horizontal space after the sidebar.
+ *
+ * min-width: 0 prevents content from forcing
+ * the flex container beyond the viewport.
+ *
+ * Individual reporting pages control their own
+ * tables, forms, and internal layouts.
+ */
+
+.main-content {
+  flex: 1;
+  min-width: 0;
+  padding: 42px 46px 60px;
+}
+
+
+/* ============================================================ */
+/* 4. SHARED PAGE HEADER */
+/* ============================================================ */
+
+/**
+ * Shared application heading for:
+ *
+ * - Overview
+ * - Chart of Accounts
+ * - Transactions
+ *
+ * Financial reports and Fiscal Years already
+ * render their own page-level headings.
+ *
+ * App.tsx hides this shared header for those pages.
+ */
+
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+
+  margin-bottom: 32px;
+}
+
+
+/* ============================================================ */
+/* PAGE EYEBROW */
+/* ============================================================ */
+
+.page-eyebrow {
+  margin-bottom: 12px;
+
+  color: #8292aa;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+}
+
+
+/* ============================================================ */
+/* PAGE TITLE */
+/* ============================================================ */
+
+.page-header h1 {
+  margin: 0 0 10px;
+
+  color: #17263e;
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: -1.1px;
+}
+
+
+/* ============================================================ */
+/* PAGE DESCRIPTION */
+/* ============================================================ */
+
+.page-description {
+  margin: 0;
+
+  color: #798ba2;
+  font-size: 14px;
+}
+
+
+/* ============================================================ */
+/* DEVELOPMENT PREVIEW BADGE */
+/* ============================================================ */
+
+/**
+ * Preserve the existing UI Preview badge.
+ *
+ * This can be removed during a later UI polish
+ * step when we no longer want to display it.
+ */
+
+.preview-label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+
+  padding: 10px 14px;
+
+  border: 1px solid #e2e8f0;
+  border-radius: 30px;
+
+  background: #ffffff;
+  color: #7d8ba0;
+
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.preview-dot {
+  width: 7px;
+  height: 7px;
+
+  border-radius: 50%;
+  background: #e7b44d;
+}
+
+
+/* ============================================================ */
+/* 5. OVERVIEW DASHBOARD */
+/* ============================================================ */
+
+/**
+ * Shared styles for the Overview dashboard.
+ *
+ * OverviewPage.tsx handles:
+ *
+ * - Retrieving financial metrics
+ * - Refreshing dashboard data
+ * - Loading and error states
+ * - Financial reporting warnings
+ *
+ * OverviewPage.css provides styles for its
+ * newer financial headings and notices.
+ *
+ * App.css retains the original layout, welcome
+ * card, metric cards, and Quick Access styles.
+ */
+
+
+/* ============================================================ */
+/* 5.1 OVERVIEW LAYOUT */
+/* ============================================================ */
+
+/**
+ * Stack the Overview sections vertically.
+ *
+ * The spacing between sections is controlled
+ * by the existing 26px gap.
+ */
+
+.overview-page {
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+}
+
+
+/* ============================================================ */
+/* 5.2 WELCOME PANEL */
+/* ============================================================ */
+
+/**
+ * Main introductory card on the Overview page.
+ *
+ * Preserve:
+ *
+ * - White background
+ * - Subtle border
+ * - Existing padding
+ * - Rounded corners
+ */
+
+.welcome-panel {
+  padding: 34px 36px;
+
+  border: 1px solid #dfe8ef;
+  border-radius: 13px;
+
+  background: #ffffff;
+}
+
+
+/* ============================================================ */
+/* WELCOME EYEBROW */
+/* ============================================================ */
+
+.welcome-eyebrow {
+  margin-bottom: 14px;
+
+  color: #168c78;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1.3px;
+}
+
+
+/* ============================================================ */
+/* WELCOME TITLE */
+/* ============================================================ */
+
+.welcome-panel h2 {
+  margin-bottom: 12px;
+
+  color: #1e3047;
+  font-size: 26px;
+  letter-spacing: -0.8px;
+}
+
+
+/* ============================================================ */
+/* WELCOME DESCRIPTION */
+/* ============================================================ */
+
+/**
+ * Display the welcome description on one line
+ * when there is sufficient desktop space.
+ *
+ * The original max-width: 570px was causing
+ * the description to wrap.
+ *
+ * We now keep the description unconstrained
+ * on desktop screens.
+ *
+ * At viewport widths of 900px or less,
+ * the text is allowed to wrap again.
+ *
+ * This combines the original rule and the
+ * later CSS override into one location.
+ */
+
+.welcome-panel > p:last-child {
+  max-width: none;
+  margin-bottom: 0;
+
+  color: #74869d;
+  font-size: 14px;
+  line-height: 1.8;
+
+  white-space: nowrap;
+}
+
+
+/* ============================================================ */
+/* 5.3 FINANCIAL METRIC CARDS */
+/* ============================================================ */
+
+/**
+ * Three accounting metrics:
+ *
+ * - Total Assets
+ * - Total Liabilities
+ * - Net Income
+ *
+ * The underlying financial amounts are supplied
+ * by the LedgerBase backend.
+ *
+ * This CSS only controls their appearance.
+ */
+
+.overview-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+
+
+/* ============================================================ */
+/* METRIC CARD */
+/* ============================================================ */
+
+.metric-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+
+  min-height: 162px;
+  padding: 24px;
+
+  border: 1px solid #e6ebf1;
+  border-radius: 12px;
+
+  background: #ffffff;
+}
+
+
+/* ============================================================ */
+/* METRIC LABEL */
+/* ============================================================ */
+
+.metric-card p {
+  margin: 0;
+
+  color: #76879e;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+
+/* ============================================================ */
+/* METRIC VALUE */
+/* ============================================================ */
+
+.metric-card strong {
+  color: #1e3047;
+  font-size: 30px;
+  line-height: 1;
+}
+
+
+/* ============================================================ */
+/* METRIC REPORTING PERIOD */
+/* ============================================================ */
+
+/**
+ * Examples:
+ *
+ * As of October 17, 2026
+ *
+ * FY2026 — January 1 to October 17, 2026
+ *
+ * These labels come from the dashboard's
+ * actual financial reporting periods.
+ */
+
+.metric-card span {
+  color: #96a3b4;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+
+/* ============================================================ */
+/* 5.4 QUICK ACCESS */
+/* ============================================================ */
+
+/**
+ * Quick Access provides shortcuts to:
+ *
+ * - Chart of Accounts
+ * - Transactions
+ *
+ * Clicking a card updates the selected page
+ * through the callback supplied by App.tsx.
+ */
+
+.quick-access {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+
+/* ============================================================ */
+/* QUICK ACCESS SECTION HEADING */
+/* ============================================================ */
+
+.section-heading h2 {
+  margin: 0 0 7px;
+
+  color: #22334b;
+  font-size: 18px;
+}
+
+.section-heading p {
+  margin: 0;
+
+  color: #8594a7;
+  font-size: 12px;
+}
+
+
+/* ============================================================ */
+/* QUICK ACCESS GRID */
+/* ============================================================ */
+
+/**
+ * Show the two shortcut cards side by side
+ * on desktop screens.
+ *
+ * They stack vertically on smaller screens.
+ */
+
+.quick-access-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+
+/* ============================================================ */
+/* QUICK ACCESS CARD */
+/* ============================================================ */
+
+.quick-access-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+
+  padding: 26px;
+
+  border: 1px solid #e6ebf1;
+  border-radius: 12px;
+
+  background: #ffffff;
+  text-align: left;
+
+  transition:
+    border-color 0.15s ease,
+    transform 0.15s ease;
+}
+
+
+/* ============================================================ */
+/* QUICK ACCESS HOVER STATE */
+/* ============================================================ */
+
+/**
+ * Light teal border and slight upward movement
+ * provide feedback that the card is interactive.
+ */
+
+.quick-access-card:hover {
+  border-color: #b5dcd4;
+  transform: translateY(-2px);
+}
+
+
+/* ============================================================ */
+/* QUICK ACCESS ICON */
+/* ============================================================ */
+
+.quick-access-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 44px;
+  height: 44px;
+
+  border-radius: 10px;
+
+  background: #e9f8f3;
+  color: #168f79;
+
+  font-size: 23px;
+}
+
+
+/* ============================================================ */
+/* QUICK ACCESS CARD TITLE */
+/* ============================================================ */
+
+.quick-access-card strong {
+  color: #26374d;
+  font-size: 15px;
+}
+
+
+/* ============================================================ */
+/* QUICK ACCESS CARD DESCRIPTION */
+/* ============================================================ */
+
+.quick-access-card > span:nth-of-type(2) {
+  color: #8190a3;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+
+/* ============================================================ */
+/* QUICK ACCESS ACTION TEXT */
+/* ============================================================ */
+
+.quick-access-link {
+  margin-top: 5px;
+
+  color: #138875;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+
+/* ============================================================ */
+/* 6. LEGACY PLACEHOLDER COMPONENTS */
+/* ============================================================ */
+
+/**
+ * Styles used by the earlier placeholder pages.
+ *
+ * All current main application pages have real
+ * React components, but these styles are preserved
+ * for compatibility.
+ *
+ * They can be removed later after verifying that
+ * no other components use these class names.
+ */
+
+.placeholder-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+
+  min-height: 360px;
+  padding: 45px 24px;
+
+  border: 1px solid #e6ebf1;
+  border-radius: 12px;
+
+  background: #ffffff;
+  text-align: center;
+}
+
+.placeholder-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 56px;
+  height: 56px;
+  margin-bottom: 18px;
+
+  border-radius: 13px;
+
+  background: #e9f8f3;
+  color: #168f79;
+
+  font-size: 27px;
+}
+
+.placeholder-card h2 {
+  margin-bottom: 12px;
+
+  color: #24364e;
+  font-size: 19px;
+}
+
+.placeholder-card p {
+  max-width: 460px;
+  margin-bottom: 20px;
+
+  color: #8392a7;
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.placeholder-status {
+  padding: 9px 13px;
+
+  border-radius: 30px;
+
+  background: #f1f5f9;
+  color: #73849b;
+
+  font-size: 11px;
+  font-weight: 650;
+}
+
+
+/* ============================================================ */
+/* 7. RESPONSIVE LAYOUT */
+/* ============================================================ */
+
+/**
+ * Responsive rules are consolidated at the end.
+ *
+ * BREAKPOINTS:
+ *
+ * 900px:
+ *   Smaller desktop and tablet layouts.
+ *
+ * 650px:
+ *   Mobile layouts.
+ *
+ * All responsive overrides stay together so
+ * they are easier to maintain.
+ */
+
+
+/* ============================================================ */
+/* 7.1 TABLET — 900PX AND BELOW */
+/* ============================================================ */
+
+@media (max-width: 900px) {
+
+  /* ========================================================== */
+  /* SIDEBAR WIDTH */
+  /* ========================================================== */
+
+  /**
+   * Reduce sidebar width to leave more space
+   * for the content on smaller screens.
+   */
+
+  .sidebar {
+    width: 210px;
+    min-width: 210px;
+  }
+
+
+  /* ========================================================== */
+  /* MAIN CONTENT SPACING */
+  /* ========================================================== */
+
+  .main-content {
+    padding: 32px 25px;
+  }
+
+
+  /* ========================================================== */
+  /* FINANCIAL METRIC CARDS */
+  /* ========================================================== */
+
+  /**
+   * Stack metrics vertically when three cards
+   * would become too narrow.
+   */
+
+  .overview-metrics {
+    grid-template-columns: 1fr;
+  }
+
+
+  /* ========================================================== */
+  /* WELCOME DESCRIPTION */
+  /* ========================================================== */
+
+  /**
+   * Allow text wrapping on narrower screens.
+   *
+   * This prevents the desktop white-space: nowrap
+   * rule from causing horizontal overflow.
+   */
+
+  .welcome-panel > p:last-child {
+    white-space: normal;
+  }
+
+}
+
+
+/* ============================================================ */
+/* 7.2 MOBILE — 650PX AND BELOW */
+/* ============================================================ */
+
+@media (max-width: 650px) {
+
+  /* ========================================================== */
+  /* APPLICATION LAYOUT */
+  /* ========================================================== */
+
+  /**
+   * Place the sidebar above the main content.
+   */
+
+  .app-shell {
+    flex-direction: column;
+  }
+
+
+  /* ========================================================== */
+  /* MOBILE SIDEBAR */
+  /* ========================================================== */
+
+  .sidebar {
+    width: 100%;
+    min-width: 0;
+    min-height: auto;
+    padding: 16px;
+  }
+
+
+  /* ========================================================== */
+  /* MOBILE BRANDING */
+  /* ========================================================== */
+
+  .sidebar-brand {
+    padding: 0 0 20px;
+  }
+
+
+  /* ========================================================== */
+  /* MOBILE NAVIGATION */
+  /* ========================================================== */
+
+  /**
+   * On mobile, the sidebar becomes a horizontal
+   * navigation strip.
+   *
+   * Users can scroll horizontally to reach
+   * additional application pages.
+   */
+
+  .sidebar-navigation {
+    flex-direction: row;
+    overflow-x: auto;
+  }
+
+
+  /* ========================================================== */
+  /* MOBILE NAVIGATION GROUPS */
+  /* ========================================================== */
+
+  /**
+   * The desktop navigation groups contain
+   * vertically stacked buttons.
+   *
+   * On mobile, they must also flow horizontally.
+   *
+   * Without this override, the grouped sidebar
+   * would appear as multiple narrow columns.
+   *
+   * Group headings are hidden on mobile below.
+   */
+
+  .navigation-group {
+    flex: 0 0 auto;
+    flex-direction: row;
+    width: max-content;
+    gap: 6px;
+  }
+
+  .navigation-group + .navigation-group {
+    margin-top: 0;
+  }
+
+
+  /* ========================================================== */
+  /* HIDE MOBILE NAVIGATION HEADINGS AND FOOTER */
+  /* ========================================================== */
+
+  /**
+   * Hide category headings to save vertical space.
+   *
+   * The navigation buttons remain accessible,
+   * and their labels remain visible.
+   */
+
+  .navigation-label,
+  .sidebar-footer {
+    display: none;
+  }
+
+
+  /* ========================================================== */
+  /* MOBILE NAVIGATION BUTTONS */
+  /* ========================================================== */
+
+  /**
+   * Override the desktop full-width buttons.
+   *
+   * Each navigation item should occupy only
+   * as much horizontal space as it needs.
+   */
+
+  .navigation-group .navigation-item {
+    width: auto;
+    min-width: max-content;
+  }
+
+
+  /* ========================================================== */
+  /* MOBILE MAIN CONTENT */
+  /* ========================================================== */
+
+  .main-content {
+    padding: 25px 16px;
+  }
+
+
+  /* ========================================================== */
+  /* MOBILE PAGE HEADER */
+  /* ========================================================== */
+
+  .page-header {
+    flex-direction: column;
+  }
+
+
+  /* ========================================================== */
+  /* MOBILE QUICK ACCESS */
+  /* ========================================================== */
+
+  /**
+   * Stack the two Quick Access cards vertically.
+   */
+
+  .quick-access-grid {
+    grid-template-columns: 1fr;
+  }
+
+}
+
+
+/* ============================================================ */
+/* END — LEDGERBASE APPLICATION STYLES */
 /* ============================================================ */
