@@ -1,0 +1,188 @@
+/* ============================================================ */
+/* LEDGERBASE — OVERVIEW DASHBOARD STYLES */
+/* ============================================================ */
+
+/**
+ * Extends the existing App.css dashboard design.
+ *
+ * The welcome panel, metric cards, Quick Access
+ * cards, and overall layout still use their original
+ * CSS classes and existing styles.
+ *
+ * New styles are scoped under overview-.
+ */
+
+
+/* ============================================================ */
+/* FINANCIAL OVERVIEW HEADING */
+/* ============================================================ */
+
+.overview-financial-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin: 0 0 20px;
+}
+
+.overview-financial-heading h2 {
+  margin: 0 0 6px;
+  color: #24364b;
+  font-size: 16px;
+  font-weight: 750;
+}
+
+.overview-financial-heading p {
+  margin: 0;
+  color: #8290a1;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+
+/* ============================================================ */
+/* DASHBOARD REFRESH BUTTON */
+/* ============================================================ */
+
+.overview-refresh-button {
+  border: 1px solid #dce6eb;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 10px 16px;
+  color: #365066;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.overview-refresh-button:hover:not(:disabled) {
+  background: #f1f7f7;
+  border-color: #a8d5cc;
+}
+
+.overview-refresh-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+
+/* ============================================================ */
+/* FINANCIAL NOTICES */
+/* ============================================================ */
+
+/**
+ * Financial notices communicate:
+ *
+ * - API errors
+ * - Missing fiscal years
+ * - Accounting equation problems
+ * - Incomplete account classifications
+ *
+ * They do not alter the backend's financial values.
+ */
+
+.overview-notice {
+  margin: 0 0 16px;
+  padding: 16px 19px;
+  border: 1px solid #dfe8ef;
+  border-radius: 9px;
+  background: #f8fafc;
+}
+
+.overview-notice strong {
+  display: block;
+  margin-bottom: 6px;
+  color: #34475f;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.overview-notice p {
+  margin: 0;
+  color: #738397;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+
+/* ============================================================ */
+/* INFORMATION NOTICE */
+/* ============================================================ */
+
+.overview-notice-info {
+  border-color: #d8e7ef;
+  background: #f5f9fc;
+}
+
+.overview-notice-info strong {
+  color: #365c75;
+}
+
+
+/* ============================================================ */
+/* CLASSIFICATION / RECONCILIATION WARNING */
+/* ============================================================ */
+
+.overview-notice-warning {
+  border-color: #efdcb4;
+  background: #fffaf0;
+}
+
+.overview-notice-warning strong {
+  color: #95681e;
+}
+
+.overview-notice-warning p {
+  color: #987844;
+}
+
+
+/* ============================================================ */
+/* API ERROR NOTICE */
+/* ============================================================ */
+
+.overview-notice-error {
+  border-color: #f0cece;
+  background: #fff7f7;
+}
+
+.overview-notice-error strong {
+  color: #ac4242;
+}
+
+.overview-notice-error p {
+  color: #a15f5f;
+}
+
+.overview-notice-error button {
+  margin-top: 12px;
+  padding: 8px 12px;
+  border: 1px solid #e6bdbd;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #ac4242;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.overview-notice-error button:hover {
+  background: #fff0f0;
+}
+
+
+/* ============================================================ */
+/* RESPONSIVE DASHBOARD HEADING */
+/* ============================================================ */
+
+@media (max-width: 600px) {
+
+  .overview-financial-heading {
+    align-items: flex-start;
+  }
+
+}

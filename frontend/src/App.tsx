@@ -12,9 +12,20 @@ import {
 
 import './App.css'
 
+// ============================================================
+// LEDGERBASE — PAGE COMPONENTS
+// ============================================================
+
+/**
+ * Each major LedgerBase screen has its own React component.
+ *
+ * OverviewPage now retrieves real financial data instead
+ * of displaying hardcoded placeholder metrics.
+ */
+import OverviewPage from './pages/OverviewPage'
 import AccountsPage from './pages/AccountsPage'
-import FiscalYearsPage from './pages/FiscalYearsPage'
 import TransactionsPage from './pages/TransactionsPage'
+import FiscalYearsPage from './pages/FiscalYearsPage'
 import TrialBalancePage from './pages/TrialBalancePage'
 import IncomeStatementPage from './pages/IncomeStatementPage'
 import BalanceSheetPage from './pages/BalanceSheetPage'
@@ -24,12 +35,10 @@ import BalanceSheetPage from './pages/BalanceSheetPage'
 // ============================================================
 
 /**
- * Define every available page in LedgerBase.
+ * Union of all currently supported application pages.
  *
- * TypeScript restricts navigation to valid page identifiers.
- *
- * The application currently uses React state for navigation.
- * We do not need React Router for this MVP.
+ * TypeScript helps prevent navigation to pages
+ * that are not implemented.
  */
 type Page =
   | 'overview'
@@ -40,22 +49,12 @@ type Page =
   | 'balance-sheet'
   | 'fiscal-years'
 
-
 // ============================================================
-// SIDEBAR NAVIGATION ITEM
+// SIDEBAR NAVIGATION TYPES
 // ============================================================
 
 /**
- * Represents one clickable sidebar item.
- *
- * id:
- *   Identifies the page to display.
- *
- * label:
- *   Text displayed in the sidebar.
- *
- * icon:
- *   Lucide React icon rendered beside the label.
+ * One clickable sidebar navigation item.
  */
 interface NavigationItem {
   id: Page
@@ -63,40 +62,14 @@ interface NavigationItem {
   icon: ReactNode
 }
 
-
-// ============================================================
-// SIDEBAR NAVIGATION GROUP
-// ============================================================
-
 /**
- * Represents a group of related navigation items.
+ * A group of related sidebar navigation items.
  *
- * Previously, all LedgerBase pages appeared under
- * a single WORKSPACE heading.
+ * LedgerBase currently has three groups:
  *
- * As our application grows, it is better to separate:
- *
- * 1. Workspace
- * 2. Accounting
- * 3. Financial Reports
- *
- * Each group has:
- *
- * - A visible section heading.
- * - An accessible label for screen readers.
- * - Its own collection of navigation items.
- *
- * IMPORTANT:
- *
- * These groups only organize the sidebar.
- *
- * They do not change:
- *
- * - The selected page state.
- * - Our existing page components.
- * - Backend API calls.
- * - Business IDs.
- * - Application routing behavior.
+ * - Workspace
+ * - Accounting
+ * - Financial Reports
  */
 interface NavigationGroup {
   heading: string
@@ -104,51 +77,34 @@ interface NavigationGroup {
   items: NavigationItem[]
 }
 
-
 // ============================================================
-// GROUPED NAVIGATION CONFIGURATION
+// GROUPED SIDEBAR CONFIGURATION
 // ============================================================
 
 /**
- * Organize LedgerBase's navigation into three sections.
+ * Define the sidebar structure separately from App().
  *
- * Each navigation item continues using:
+ * This keeps the main component easier to maintain
+ * as LedgerBase grows.
  *
- * - Icon size: 18
- * - Stroke width: 1.8
+ * Every existing icon retains:
  *
- * All active, hover, and normal states still come
- * from the existing .navigation-item CSS classes.
+ * - size={18}
+ * - strokeWidth={1.8}
  *
- * No changes to individual icon styling are required.
+ * The existing App.css controls the visual design.
  */
 const navigationGroups: NavigationGroup[] = [
 
   // ==========================================================
-  // GROUP 1 — WORKSPACE
+  // WORKSPACE
   // ==========================================================
 
-  /**
-   * The Workspace group contains the application's
-   * main landing page.
-   *
-   * Future additions might include:
-   *
-   * - Dashboard
-   * - Notifications
-   * - Recent Activity
-   *
-   * For now, Overview is the only page in this group.
-   */
   {
     heading: 'WORKSPACE',
     accessibleLabel: 'Workspace',
 
     items: [
-
-      // ======================================================
-      // OVERVIEW
-      // ======================================================
 
       {
         id: 'overview',
@@ -164,39 +120,15 @@ const navigationGroups: NavigationGroup[] = [
     ],
   },
 
-
   // ==========================================================
-  // GROUP 2 — ACCOUNTING
+  // ACCOUNTING
   // ==========================================================
 
-  /**
-   * Accounting contains day-to-day financial operations.
-   *
-   * Recommended order:
-   *
-   * 1. Transactions
-   * 2. Chart of Accounts
-   * 3. Fiscal Years & Periods
-   *
-   * Transactions appears first because creating,
-   * reviewing, and posting financial entries is
-   * a common accounting workflow.
-   *
-   * Chart of Accounts provides the account structure
-   * used by those transactions.
-   *
-   * Fiscal Years & Periods controls the accounting
-   * calendar and when entries may be posted.
-   */
   {
     heading: 'ACCOUNTING',
     accessibleLabel: 'Accounting',
 
     items: [
-
-      // ======================================================
-      // TRANSACTIONS
-      // ======================================================
 
       {
         id: 'transactions',
@@ -209,11 +141,6 @@ const navigationGroups: NavigationGroup[] = [
         ),
       },
 
-
-      // ======================================================
-      // CHART OF ACCOUNTS
-      // ======================================================
-
       {
         id: 'accounts',
         label: 'Chart of Accounts',
@@ -224,11 +151,6 @@ const navigationGroups: NavigationGroup[] = [
           />
         ),
       },
-
-
-      // ======================================================
-      // FISCAL YEARS AND ACCOUNTING PERIODS
-      // ======================================================
 
       {
         id: 'fiscal-years',
@@ -244,41 +166,15 @@ const navigationGroups: NavigationGroup[] = [
     ],
   },
 
-
   // ==========================================================
-  // GROUP 3 — FINANCIAL REPORTS
+  // FINANCIAL REPORTS
   // ==========================================================
 
-  /**
-   * Financial Reports contains read-only reports
-   * generated from posted general ledger entries.
-   *
-   * Recommended order:
-   *
-   * 1. Trial Balance
-   * 2. Income Statement
-   * 3. Balance Sheet
-   *
-   * Trial Balance helps verify account balances.
-   *
-   * Income Statement explains revenue, expenses,
-   * and net income over a reporting period.
-   *
-   * Balance Sheet shows assets, liabilities,
-   * and equity as of a selected date.
-   *
-   * All monetary calculations remain in PostgreSQL
-   * and Spring Boot, not in the sidebar.
-   */
   {
     heading: 'FINANCIAL REPORTS',
     accessibleLabel: 'Financial Reports',
 
     items: [
-
-      // ======================================================
-      // TRIAL BALANCE
-      // ======================================================
 
       {
         id: 'trial-balance',
@@ -291,11 +187,6 @@ const navigationGroups: NavigationGroup[] = [
         ),
       },
 
-
-      // ======================================================
-      // INCOME STATEMENT
-      // ======================================================
-
       {
         id: 'income-statement',
         label: 'Income Statement',
@@ -306,11 +197,6 @@ const navigationGroups: NavigationGroup[] = [
           />
         ),
       },
-
-
-      // ======================================================
-      // BALANCE SHEET
-      // ======================================================
 
       {
         id: 'balance-sheet',
@@ -328,66 +214,66 @@ const navigationGroups: NavigationGroup[] = [
 
 ]
 
-
 // ============================================================
-// APPLICATION COMPONENT
+// MAIN LEDGERBASE APPLICATION
 // ============================================================
 
 /**
- * App is the main component for LedgerBase.
+ * App manages the application's selected page.
  *
- * React's useState hook stores the currently selected page.
- *
- * Clicking a navigation item updates activePage.
- *
- * React then displays the corresponding component
- * without reloading the browser.
+ * React state is sufficient for our current navigation
+ * because the application does not yet require
+ * URL-based routing.
  *
  * IMPORTANT:
  *
- * Sidebar grouping changes only how the navigation
- * items are organized visually.
+ * App is responsible for navigation.
  *
- * All page selection and rendering logic remains
- * the same as before.
+ * Individual page components are responsible
+ * for their own data fetching and presentation.
  *
- * Business ID 1 is our current local development
- * business until authenticated business selection
- * is introduced.
+ * This separation makes the application easier
+ * to extend and test.
  */
 function App() {
 
-  // ============================================================
-  // CURRENTLY SELECTED PAGE
-  // ============================================================
+  // ==========================================================
+  // SELECTED PAGE STATE
+  // ==========================================================
 
   /**
-   * Start LedgerBase on its Overview page.
+   * Start on the Overview dashboard.
    *
-   * activePage:
-   *   The currently selected navigation page.
-   *
-   * setActivePage:
-   *   Updates that selected page.
+   * Clicking any sidebar item updates activePage.
    */
   const [activePage, setActivePage] =
     useState<Page>('overview')
 
-
-  // ============================================================
-  // PAGE INFORMATION
-  // ============================================================
+  // ==========================================================
+  // CURRENT DEVELOPMENT BUSINESS
+  // ==========================================================
 
   /**
-   * Store each page's title and description.
+   * Business ID 1 is our current local demo business.
    *
-   * Record<Page, ...> requires every Page identifier
-   * to have a corresponding definition.
+   * Using a shared constant keeps every page pointed
+   * at the same business.
    *
-   * Some pages display the shared application header.
+   * Later, authenticated business selection will
+   * determine this value dynamically.
+   */
+  const businessId = 1
+
+  // ==========================================================
+  // PAGE INFORMATION
+  // ==========================================================
+
+  /**
+   * Information displayed in the shared page header.
    *
-   * Financial reports and Fiscal Years have their own
-   * headings and therefore hide the shared header.
+   * Reporting pages and Fiscal Years already provide
+   * their own headings, so the shared header is hidden
+   * when those pages are selected.
    */
   const pageInformation: Record<
     Page,
@@ -433,17 +319,16 @@ function App() {
 
   const currentPage = pageInformation[activePage]
 
-
-  // ============================================================
+  // ==========================================================
   // RENDER APPLICATION
-  // ============================================================
+  // ==========================================================
 
   return (
 
     <div className="app-shell">
 
       {/* ====================================================== */}
-      {/* SIDEBAR NAVIGATION */}
+      {/* SIDEBAR */}
       {/* ====================================================== */}
 
       <aside className="sidebar">
@@ -453,10 +338,6 @@ function App() {
         {/* ==================================================== */}
 
         <div className="sidebar-brand">
-
-          {/* ================================================== */}
-          {/* LEDGERBASE BRAND LOGO */}
-          {/* ================================================== */}
 
           <img
             src="/ledgerbase-favicon.png"
@@ -475,45 +356,29 @@ function App() {
 
         </div>
 
-
         {/* ==================================================== */}
         {/* GROUPED SIDEBAR NAVIGATION */}
         {/* ==================================================== */}
 
         {/*
-          Previously, we rendered one flat array:
+          Navigation groups are rendered dynamically.
 
-          navigationItems.map(...)
+          Outer map:
+            Renders Workspace, Accounting, and Reports.
 
-          That meant all pages appeared beneath the
-          same WORKSPACE heading.
+          Inner map:
+            Renders the clickable pages inside each group.
 
-          Now we render two levels:
-
-          navigationGroups.map(...)
-              |
-              v
-          group.items.map(...)
-
-          Each group renders:
-
-          1. Its category heading.
-          2. Its corresponding navigation buttons.
-
-          Existing navigation-item styling is preserved.
-
-          The new navigation-group class only controls
-          grouping and spacing.
+          Existing navigation-item CSS styles provide:
+          - Hover appearance
+          - Active appearance
+          - Icon and text layout
         */}
 
         <nav
           className="sidebar-navigation"
           aria-label="Main navigation"
         >
-
-          {/* ================================================== */}
-          {/* RENDER NAVIGATION GROUPS */}
-          {/* ================================================== */}
 
           {navigationGroups.map((group) => (
 
@@ -525,15 +390,8 @@ function App() {
             >
 
               {/* ============================================== */}
-              {/* GROUP HEADING */}
+              {/* NAVIGATION GROUP HEADING */}
               {/* ============================================== */}
-
-              {/*
-                Reuse the existing navigation-label class.
-
-                This keeps the headings consistent with
-                the original WORKSPACE label.
-              */}
 
               <p
                 className="navigation-label"
@@ -542,9 +400,8 @@ function App() {
                 {group.heading}
               </p>
 
-
               {/* ============================================== */}
-              {/* NAVIGATION ITEMS INSIDE THIS GROUP */}
+              {/* GROUP NAVIGATION ITEMS */}
               {/* ============================================== */}
 
               {group.items.map((item) => (
@@ -565,21 +422,12 @@ function App() {
                   onClick={() => setActivePage(item.id)}
                 >
 
-                  {/* ========================================== */}
-                  {/* NAVIGATION ICON */}
-                  {/* ========================================== */}
-
                   <span
                     className="navigation-icon"
                     aria-hidden="true"
                   >
                     {item.icon}
                   </span>
-
-
-                  {/* ========================================== */}
-                  {/* NAVIGATION LABEL */}
-                  {/* ========================================== */}
 
                   <span>{item.label}</span>
 
@@ -593,17 +441,9 @@ function App() {
 
         </nav>
 
-
         {/* ==================================================== */}
-        {/* DEVELOPMENT ENVIRONMENT INFORMATION */}
+        {/* SIDEBAR FOOTER */}
         {/* ==================================================== */}
-
-        {/*
-          Preserve the existing development indicator.
-
-          Later, this footer can be extended with
-          authenticated user and business information.
-        */}
 
         <div className="sidebar-footer">
 
@@ -621,9 +461,8 @@ function App() {
 
       </aside>
 
-
       {/* ====================================================== */}
-      {/* MAIN APPLICATION CONTENT */}
+      {/* MAIN CONTENT */}
       {/* ====================================================== */}
 
       <main className="main-content">
@@ -633,25 +472,17 @@ function App() {
         {/* ==================================================== */}
 
         {/*
-          The shared page header appears for:
+          The shared header is displayed for:
 
           - Overview
           - Chart of Accounts
           - Transactions
 
-          These pages use the application-level heading.
+          Other pages already display their own titles.
 
-          The following pages render their own heading:
-
-          - Trial Balance
-          - Income Statement
-          - Balance Sheet
-          - Fiscal Years & Periods
-
-          We hide the shared header for those pages
-          to prevent duplicate titles.
-
-          Sidebar grouping does not affect this behavior.
+          OverviewPage deliberately does not provide
+          an additional page-level h1 because App
+          renders the shared Overview heading.
         */}
 
         {activePage !== 'trial-balance' &&
@@ -687,318 +518,151 @@ function App() {
 
         )}
 
+        {/* ==================================================== */}
+        {/* OVERVIEW — REAL FINANCIAL DASHBOARD */}
+        {/* ==================================================== */}
 
-        {/* ==================================================== */}
-        {/* OVERVIEW PAGE */}
-        {/* ==================================================== */}
+        {/*
+          MILESTONE 18:
+
+          Previously, this section contained hardcoded
+          metric cards with placeholder values.
+
+          We now render the dedicated OverviewPage.
+
+          OverviewPage is responsible for:
+
+          1. Retrieving the Balance Sheet.
+          2. Retrieving configured fiscal years.
+          3. Finding the fiscal year covering today.
+          4. Retrieving fiscal-year-to-date Net Income.
+          5. Displaying exact backend financial values.
+          6. Showing loading and error states.
+          7. Displaying classification warnings.
+          8. Refreshing the dashboard.
+
+          Navigation stays in App.
+
+          The onNavigate callback allows Quick Access
+          buttons to open Accounts or Transactions
+          without duplicating navigation state.
+        */}
 
         {activePage === 'overview' && (
 
-          <div className="overview-page">
-
-            {/* ================================================== */}
-            {/* WELCOME SECTION */}
-            {/* ================================================== */}
-
-            <section className="welcome-panel">
-
-              <p className="welcome-eyebrow">
-                FINANCIAL WORKSPACE
-              </p>
-
-              <h2>Welcome to LedgerBase</h2>
-
-              <p>
-                Manage your general ledger, organize accounts,
-                and build reliable accounting records
-                in one workspace.
-              </p>
-
-            </section>
-
-
-            {/* ================================================== */}
-            {/* FINANCIAL METRICS */}
-            {/* ================================================== */}
-
-            <section className="overview-metrics">
-
-              <article className="metric-card">
-
-                <p>Total Assets</p>
-
-                <strong>—</strong>
-
-                <span>
-                  Available after financial reporting
-                </span>
-
-              </article>
-
-
-              <article className="metric-card">
-
-                <p>Total Liabilities</p>
-
-                <strong>—</strong>
-
-                <span>
-                  Available after financial reporting
-                </span>
-
-              </article>
-
-
-              <article className="metric-card">
-
-                <p>Net Income</p>
-
-                <strong>—</strong>
-
-                <span>
-                  Available after financial reporting
-                </span>
-
-              </article>
-
-            </section>
-
-
-            {/* ================================================== */}
-            {/* QUICK NAVIGATION */}
-            {/* ================================================== */}
-
-            <section className="quick-access">
-
-              <div className="section-heading">
-
-                <h2>Quick Access</h2>
-
-                <p>
-                  Continue working in your accounting workspace.
-                </p>
-
-              </div>
-
-
-              <div className="quick-access-grid">
-
-                {/* ============================================== */}
-                {/* CHART OF ACCOUNTS QUICK ACCESS */}
-                {/* ============================================== */}
-
-                <button
-                  type="button"
-                  className="quick-access-card"
-                  onClick={() => setActivePage('accounts')}
-                >
-
-                  <span className="quick-access-icon">
-                    ▤
-                  </span>
-
-                  <strong>Chart of Accounts</strong>
-
-                  <span>
-                    View and organize your general ledger accounts.
-                  </span>
-
-                  <span className="quick-access-link">
-                    Open accounts →
-                  </span>
-
-                </button>
-
-
-                {/* ============================================== */}
-                {/* TRANSACTIONS QUICK ACCESS */}
-                {/* ============================================== */}
-
-                <button
-                  type="button"
-                  className="quick-access-card"
-                  onClick={() => setActivePage('transactions')}
-                >
-
-                  <span className="quick-access-icon">
-                    ⇄
-                  </span>
-
-                  <strong>Transactions</strong>
-
-                  <span>
-                    Create, review, and post accounting entries.
-                  </span>
-
-                  <span className="quick-access-link">
-                    Open transactions →
-                  </span>
-
-                </button>
-
-              </div>
-
-            </section>
-
-          </div>
+          <OverviewPage
+            businessId={businessId}
+            onNavigate={(page) => setActivePage(page)}
+          />
 
         )}
 
-
         {/* ==================================================== */}
-        {/* CHART OF ACCOUNTS PAGE */}
+        {/* CHART OF ACCOUNTS */}
         {/* ==================================================== */}
 
         {activePage === 'accounts' && (
 
           /*
-           * Display the Chart of Accounts.
+           * Manage the general ledger account structure.
            *
-           * Includes:
-           *
-           * - Account types
-           * - Reporting classifications
-           * - Parent-child account hierarchy
-           * - Postable and grouping accounts
-           *
-           * Business ID 1 is the local demo business.
+           * Includes account classifications, parent
+           * hierarchy, and posting-account settings.
            */
 
-          <AccountsPage businessId={1} />
+          <AccountsPage businessId={businessId} />
 
         )}
 
-
         {/* ==================================================== */}
-        {/* TRANSACTIONS PAGE */}
+        {/* TRANSACTIONS */}
         {/* ==================================================== */}
 
         {activePage === 'transactions' && (
 
           /*
-           * Display the Transaction Register.
+           * Create, review, and post journal entries.
            *
-           * Users can create, review, and post
-           * accounting transactions.
-           *
-           * Business ID 1 is the local demo business.
+           * All account activity is scoped to
+           * the selected business.
            */
 
-          <TransactionsPage businessId={1} />
+          <TransactionsPage businessId={businessId} />
 
         )}
 
-
         {/* ==================================================== */}
-        {/* TRIAL BALANCE REPORT PAGE */}
+        {/* TRIAL BALANCE */}
         {/* ==================================================== */}
 
         {activePage === 'trial-balance' && (
 
           /*
-           * Display the Trial Balance.
-           *
-           * Features:
-           *
-           * - As-of reporting date
-           * - Actual posted account balances
-           * - Debit and credit columns
-           * - Accounting totals
-           * - Balanced/unbalanced indicator
-           *
-           * Calculations are performed by Spring Boot.
+           * Review debit and credit balances
+           * from posted general ledger entries.
            */
 
-          <TrialBalancePage businessId={1} />
+          <TrialBalancePage businessId={businessId} />
 
         )}
 
-
         {/* ==================================================== */}
-        {/* INCOME STATEMENT REPORT PAGE */}
+        {/* INCOME STATEMENT */}
         {/* ==================================================== */}
 
         {activePage === 'income-statement' && (
 
           /*
-           * Display the Income Statement.
+           * Review revenue, expenses, and net income
+           * over an inclusive reporting date range.
            *
-           * Features:
-           *
-           * - Start and end dates
-           * - Revenue and expense reporting groups
-           * - Account-level financial activity
-           * - Reporting group subtotals
-           * - Net income
-           * - Classification warnings
-           *
-           * Calculations are performed by Spring Boot.
+           * Spring Boot calculates all financial totals.
            */
 
-          <IncomeStatementPage businessId={1} />
+          <IncomeStatementPage businessId={businessId} />
 
         )}
 
-
         {/* ==================================================== */}
-        {/* BALANCE SHEET REPORT PAGE */}
+        {/* BALANCE SHEET */}
         {/* ==================================================== */}
 
         {activePage === 'balance-sheet' && (
 
           /*
-           * Display the Balance Sheet.
+           * Review the business's financial position
+           * as of a selected date.
            *
-           * Features:
+           * Includes:
            *
-           * - As-of reporting date
-           * - Current and non-current assets
-           * - Current and non-current liabilities
-           * - Contributed capital
-           * - Retained earnings
-           * - Other equity
-           * - Unclosed earnings
+           * - Assets
+           * - Liabilities
+           * - Posted Equity
+           * - Unclosed Earnings
            * - Accounting equation reconciliation
-           * - Classification warnings
-           *
-           * Assets = Liabilities + Equity
-           *
-           * All amounts come from the Spring Boot API.
-           *
-           * The page never calculates financial totals
-           * using JavaScript floating-point arithmetic.
            */
 
-          <BalanceSheetPage businessId={1} />
+          <BalanceSheetPage businessId={businessId} />
 
         )}
 
-
         {/* ==================================================== */}
-        {/* FISCAL YEARS & ACCOUNTING PERIODS PAGE */}
+        {/* FISCAL YEARS & ACCOUNTING PERIODS */}
         {/* ==================================================== */}
 
         {activePage === 'fiscal-years' && (
 
           /*
-           * Display fiscal-year management.
+           * Manage the business's accounting calendar.
            *
-           * Features:
+           * actorId=1 is still a development placeholder.
            *
-           * - Fiscal year configuration
-           * - Monthly accounting periods
-           * - Period closing and reopening
-           * - Accounting period audit records
-           *
-           * Business ID 1 and Actor ID 1 are temporary
-           * local-development values.
-           *
-           * Authentication and authorization will
-           * eventually supply these values securely.
+           * Authentication will provide this value
+           * in a future milestone.
            */
 
           <FiscalYearsPage
-            businessId={1}
+            businessId={businessId}
             actorId={1}
           />
 
@@ -1010,7 +674,6 @@ function App() {
 
   )
 }
-
 
 // ============================================================
 // EXPORT APPLICATION
