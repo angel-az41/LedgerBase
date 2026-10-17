@@ -1,0 +1,364 @@
+/* ============================================================ */
+/* LEDGERBASE — BALANCE SHEET PAGE STYLES */
+/* ============================================================ */
+
+/**
+ * Extends TrialBalancePage.css without changing existing pages.
+ *
+ * bsr- means Balance Sheet Report.
+ *
+ * Shared tb- classes retain the existing enterprise-accounting
+ * design: white cards, readable tables, navy typography, and
+ * restrained teal accents.
+ */
+
+
+/* ============================================================ */
+/* AS-OF DATE AND REPORT STATUS */
+/* ============================================================ */
+
+.bsr-statuses {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.bsr-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 8px 12px;
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.bsr-status-complete {
+  border: 1px solid #cbe9dd;
+  background: #e8f8f1;
+  color: #218666;
+}
+
+.bsr-status-warning {
+  border: 1px solid #efdcb4;
+  background: #fff8e8;
+  color: #95681e;
+}
+
+
+/* ============================================================ */
+/* WARNINGS AND EMPTY-ACCOUNT NOTICE */
+/* ============================================================ */
+
+.bsr-warning {
+  margin: 0 25px 22px;
+  padding: 17px 19px;
+  border: 1px solid #efdcb4;
+  border-radius: 9px;
+  background: #fffaf0;
+}
+
+.bsr-warning strong {
+  display: block;
+  margin-bottom: 7px;
+  color: #8e6325;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.bsr-warning p {
+  margin: 0;
+  color: #987844;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.bsr-empty-note {
+  margin: 0 25px 22px;
+  padding: 17px 19px;
+  border: 1px solid #dfe8ef;
+  border-radius: 9px;
+  background: #f8fafc;
+}
+
+.bsr-empty-note strong {
+  display: block;
+  margin-bottom: 7px;
+  color: #34475f;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.bsr-empty-note p {
+  margin: 0;
+  color: #7e8da1;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+
+/* ============================================================ */
+/* THREE-COLUMN ACCOUNTING TABLE */
+/* ============================================================ */
+
+.bsr-page .bsr-table {
+  min-width: 640px;
+  table-layout: fixed;
+}
+
+.bsr-page .bsr-table thead th:nth-child(1) {
+  width: 19%;
+}
+
+.bsr-page .bsr-table thead th:nth-child(2) {
+  width: 53%;
+}
+
+.bsr-page .bsr-table thead th:nth-child(3) {
+  width: 28%;
+}
+
+
+/* ============================================================ */
+/* MAJOR FINANCIAL STATEMENT HEADINGS */
+/* ============================================================ */
+
+.bsr-major-heading {
+  background: #eaf1f5;
+}
+
+.bsr-major-heading th {
+  padding: 17px 20px;
+  border-top: 2px solid #dbe6ec;
+  border-bottom: 1px solid #dbe6ec;
+  color: #1f364c;
+  font-size: 13px;
+  font-weight: 800;
+  text-align: left;
+}
+
+
+/* ============================================================ */
+/* V7 REPORTING GROUPS */
+/* ============================================================ */
+
+.bsr-section-heading {
+  background: #f4f8fa;
+}
+
+.bsr-section-heading th {
+  padding: 15px 20px;
+  border-top: 1px solid #e5edf1;
+  border-bottom: 1px solid #e5edf1;
+  color: #253c51;
+  font-size: 12px;
+  font-weight: 750;
+  text-align: left;
+}
+
+.bsr-page .bsr-table td.bsr-empty-group {
+  padding: 17px 20px;
+  color: #9ba7b7;
+  font-size: 11px;
+  font-style: italic;
+}
+
+
+/* ============================================================ */
+/* CLASSIFIED SECTION SUBTOTALS */
+/* ============================================================ */
+
+.bsr-subtotal-row {
+  background: #fafcfd;
+}
+
+.bsr-subtotal-row th,
+.bsr-subtotal-row td {
+  padding: 16px 20px;
+  border-top: 1px solid #e7eef1;
+  border-bottom: 1px solid #e7eef1;
+  color: #34475f;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.bsr-subtotal-row th {
+  text-align: left;
+}
+
+.bsr-subtotal-row td.tb-money-column {
+  color: #25364d;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+
+/* ============================================================ */
+/* MAJOR TOTALS AND EQUITY DETAILS */
+/* ============================================================ */
+
+.bsr-major-total-row {
+  background: #f1f6f8;
+}
+
+.bsr-major-total-row th,
+.bsr-major-total-row td {
+  padding: 17px 20px;
+  border-top: 1px solid #dce7eb;
+  border-bottom: 1px solid #dce7eb;
+  color: #25364d;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.bsr-major-total-row th,
+.bsr-total-row th {
+  text-align: left;
+}
+
+.bsr-total-row {
+  background: #f8fafc;
+}
+
+.bsr-total-row th,
+.bsr-total-row td {
+  padding: 16px 20px;
+  border-top: 1px solid #e6edf1;
+  color: #34475f;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.bsr-total-note {
+  display: block;
+  margin-top: 5px;
+  color: #8190a1;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.bsr-page .bsr-table .tb-money-column {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+
+/* ============================================================ */
+/* UNCLASSIFIED ACCOUNTS */
+/* ============================================================ */
+
+.bsr-unclassified-heading {
+  background: #fff8ea;
+}
+
+.bsr-unclassified-heading th {
+  border-color: #f1e4c9;
+  color: #95681e;
+}
+
+.bsr-account-type {
+  display: inline-flex;
+  margin-left: 10px;
+  padding: 4px 7px;
+  border-radius: 5px;
+  background: #f1f4f7;
+  color: #75859a;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+
+/* ============================================================ */
+/* EQUATION RECONCILIATION */
+/* ============================================================ */
+
+.bsr-page .bsr-table tfoot {
+  background: #f8fafc;
+}
+
+.bsr-final-total-row {
+  background: #eff8f5;
+}
+
+.bsr-final-total-row th,
+.bsr-final-total-row td {
+  padding: 18px 20px;
+  border-top: 2px solid #c8e3da;
+  color: #176a5d;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.bsr-final-total-row th,
+.bsr-difference-row th {
+  text-align: left;
+}
+
+.bsr-difference-row th,
+.bsr-difference-row td {
+  padding: 16px 20px;
+  border-top: 1px solid #e5edf1;
+  font-size: 12px;
+  font-weight: 750;
+  color: #34475f;
+}
+
+.bsr-equation-row th {
+  padding: 13px 20px;
+  border-top: 1px solid #e5edf1;
+  font-size: 11px;
+  font-weight: 750;
+  text-align: left;
+}
+
+.bsr-equation-success {
+  background: #eff8f5;
+}
+
+.bsr-equation-success th {
+  color: #218666;
+}
+
+.bsr-equation-warning {
+  background: #fff8ea;
+}
+
+.bsr-equation-warning th {
+  color: #95681e;
+}
+
+
+/* ============================================================ */
+/* RESPONSIVE LAYOUT */
+/* ============================================================ */
+
+@media (max-width: 760px) {
+
+  .bsr-statuses {
+    justify-content: flex-start;
+  }
+
+  .bsr-warning,
+  .bsr-empty-note {
+    margin: 0 18px 18px;
+  }
+
+}
+
+@media (max-width: 480px) {
+
+  .bsr-warning,
+  .bsr-empty-note {
+    padding: 15px;
+  }
+
+  .bsr-page .bsr-table {
+    min-width: 600px;
+  }
+
+}
