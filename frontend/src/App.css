@@ -1219,5 +1219,207 @@
 
 
 /* ============================================================ */
+/* 8. BUSINESS SELECTOR */
+/* ============================================================ */
+
+/**
+ * The business selector appears directly below the
+ * LedgerBase branding and above the navigation groups.
+ *
+ * DESIGN:
+ *
+ * - Dark navy background
+ * - Subtle borders
+ * - Muted uppercase label
+ * - Teal focus indicator
+ * - Consistent rounded corners
+ *
+ * These rules only affect the new business selector.
+ * Existing navigation and dashboard styles are preserved.
+ */
+
+
+/* ============================================================ */
+/* 8.1 BRANDING SPACING */
+/* ============================================================ */
+
+/**
+ * The original branding had 48px of bottom padding.
+ *
+ * Reduce this slightly to make room for the selector
+ * while keeping a clear separation from the logo.
+ */
+.sidebar .sidebar-brand {
+  padding-bottom: 20px;
+}
+
+
+/* ============================================================ */
+/* 8.2 BUSINESS SELECTOR CONTAINER */
+/* ============================================================ */
+
+/**
+ * Align the selector with the existing sidebar
+ * labels and navigation content.
+ *
+ * The bottom margin separates the selector
+ * from the WORKSPACE navigation group.
+ */
+.sidebar-business-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+
+  min-width: 0;
+
+  padding: 0 12px;
+  margin-bottom: 30px;
+}
+
+
+/* ============================================================ */
+/* 8.3 BUSINESS SELECTOR LABEL */
+/* ============================================================ */
+
+/**
+ * Match the existing navigation section headings:
+ *
+ * WORKSPACE
+ * ACCOUNTING
+ * FINANCIAL REPORTS
+ */
+.business-selector-label {
+  color: #8193ac;
+
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1.4px;
+}
+
+
+/* ============================================================ */
+/* 8.4 BUSINESS SELECTOR DROPDOWN */
+/* ============================================================ */
+
+/**
+ * Use a native HTML select element.
+ *
+ * This provides built-in keyboard navigation
+ * and accessibility support.
+ *
+ * The dropdown adopts LedgerBase's navy palette
+ * and the rounded corners used by navigation buttons.
+ */
+.business-selector-input {
+  box-sizing: border-box;
+
+  display: block;
+
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+
+  padding: 10px 9px;
+
+  border: 1px solid #344960;
+  border-radius: 9px;
+
+  background: #1a2c43;
+  color: #e5edf6;
+
+  font-size: 12px;
+  font-weight: 600;
+
+  cursor: pointer;
+
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease;
+}
+
+
+/* ============================================================ */
+/* 8.5 HOVER STATE */
+/* ============================================================ */
+
+/**
+ * Provide subtle feedback when the user
+ * moves their mouse over the selector.
+ */
+.business-selector-input:hover:not(:disabled) {
+  background: #22374e;
+  border-color: #4c657d;
+}
+
+
+/* ============================================================ */
+/* 8.6 KEYBOARD FOCUS */
+/* ============================================================ */
+
+/**
+ * The teal focus outline makes the selector
+ * easy to identify during keyboard navigation.
+ */
+.business-selector-input:focus-visible {
+  outline: 2px solid #5ce0c4;
+  outline-offset: 2px;
+
+  border-color: #5ce0c4;
+}
+
+
+/* ============================================================ */
+/* 8.7 DISABLED STATE */
+/* ============================================================ */
+
+/**
+ * Disable interaction while businesses are loading
+ * or when the API request fails.
+ */
+.business-selector-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+
+/* ============================================================ */
+/* 8.8 DROPDOWN OPTIONS */
+/* ============================================================ */
+
+/**
+ * Native option styling differs across browsers.
+ * These colors apply where the browser permits them.
+ */
+.business-selector-input option {
+  background: #101d31;
+  color: #ffffff;
+}
+
+
+/* ============================================================ */
+/* 8.9 MOBILE BUSINESS SELECTOR */
+/* ============================================================ */
+
+/**
+ * On narrow screens, the sidebar becomes a top section.
+ *
+ * Give the selector the available width before the
+ * horizontal navigation buttons.
+ */
+@media (max-width: 650px) {
+
+  .sidebar-business-selector {
+    padding: 0;
+    margin-bottom: 18px;
+  }
+
+  .business-selector-input {
+    width: 100%;
+  }
+
+}
+
+
+/* ============================================================ */
 /* END — LEDGERBASE APPLICATION STYLES */
 /* ============================================================ */
