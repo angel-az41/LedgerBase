@@ -33,6 +33,7 @@ import './TransactionDetails.css'
  * Features:
  *
  * - Retrieve transaction details from Spring Boot
+ * - Display business-specific journal references
  * - Display account codes and names
  * - Display debit and credit amounts
  * - Calculate total debits and credits
@@ -44,6 +45,26 @@ import './TransactionDetails.css'
  *
  * The backend and PostgreSQL enforce the accounting
  * rules and immutability of posted transactions.
+ *
+ * IMPORTANT:
+ *
+ * Internal transaction IDs and business-specific
+ * journal references serve different purposes.
+ *
+ * transactionId:
+ *   Used to retrieve and post a transaction through
+ *   the Spring Boot API.
+ *
+ * journalReference:
+ *   Used to identify a journal entry to the user.
+ *
+ * Example:
+ *
+ * Internal database ID: 2
+ * Business journal reference: JE-0001
+ *
+ * We never reconstruct the displayed reference
+ * from the internal database ID.
  */
 
 // ============================================================
@@ -52,15 +73,24 @@ import './TransactionDetails.css'
 
 interface TransactionDetailsProps {
   businessId: number
+
+  /**
+   * Globally unique internal database transaction ID.
+   *
+   * The parent passes this ID when opening the panel.
+   *
+   * All API calls continue using transactionId,
+   * not journalReference.
+   */
   transactionId: number
+
   onClose: () => void
 
   /**
-   * The parent page will use this callback to
+   * The parent page uses this callback to
    * refresh the register after successful posting.
    *
-   * Optional for now so we can update the parent
-   * in a separate step.
+   * Optional to support other potential callers.
    */
   onPosted?: (transaction: LedgerTransaction) => void
 }
@@ -307,6 +337,30 @@ function TransactionDetails({
   }, [details])
 
   // ============================================================
+  // BUSINESS-SPECIFIC JOURNAL REFERENCE
+  // ============================================================
+
+  /**
+   * Read the formatted reference returned by Spring Boot.
+   *
+   * Example:
+   *
+   * journalNumber: 1
+   * journalReference: JE-0001
+   *
+   * Different businesses may have the same reference,
+   * so the reference must not replace transactionId
+   * when making backend requests.
+   *
+   * Before the API finishes loading, this value is null.
+   *
+   * We display a generic label in that case rather
+   * than showing a misleading internal database ID.
+   */
+  const journalReference =
+    details?.transaction.journalReference ?? null
+
+  // ============================================================
   // CHECK WHETHER TRANSACTION CAN BE POSTED
   // ============================================================
 
@@ -379,8 +433,18 @@ function TransactionDetails({
    * - Perform its posting validation
    * - Change its status to POSTED
    * - Create an audit event
+   * - Preserve its assigned journal number
    *
    * PostgreSQL rules protect posted entries.
+   *
+   * IMPORTANT:
+   *
+   * The POST request uses the internal transactionId.
+   *
+   * For example, JE-0001 might have internal ID 2.
+   *
+   * Sending JE-0001 in place of the numeric ID would
+   * not match the existing backend API.
    */
   async function handleConfirmPost(): Promise<void> {
 
@@ -412,6 +476,9 @@ function TransactionDetails({
       /**
        * Immediately show POSTED in this panel
        * after the backend confirms success.
+       *
+       * The returned transaction also includes
+       * the unchanged journal reference.
        */
       setDetails((previousDetails) => {
 
@@ -436,8 +503,8 @@ function TransactionDetails({
       // ========================================================
 
       /**
-       * We'll connect this callback to the
-       * Transaction Register in a later step.
+       * Notify TransactionsPage so it refreshes
+       * the register and displays a success notice.
        */
       onPosted?.(postedTransaction)
 
@@ -474,8 +541,14 @@ function TransactionDetails({
 
         <div>
 
+          {/* ================================================== */}
+          {/* BUSINESS-SPECIFIC JOURNAL HEADING */}
+          {/* ================================================== */}
+
           <h2>
-            Transaction #{transactionId}
+            {journalReference
+              ? `Journal Entry ${journalReference}`
+              : 'Journal Entry'}
           </h2>
 
           <p>
@@ -724,9 +797,15 @@ function TransactionDetails({
                     Confirm Transaction Posting
                   </h3>
 
+                  {/* ========================================== */}
+                  {/* JOURNAL REFERENCE IN CONFIRMATION */}
+                  {/* ========================================== */}
+
                   <p id="transaction-post-confirm-description">
-                    You are about to post transaction
-                    {' '}#{transactionId}.
+                    You are about to post journal entry
+                    {' '}
+                    {journalReference ?? '(reference unavailable)'}.
+                    {' '}
                     Once posted, this journal entry becomes
                     finalized and its financial entries
                     cannot be edited or deleted.
@@ -788,7 +867,9 @@ function TransactionDetails({
               className="transaction-posted-notice"
               role="status"
             >
-              ✓ This transaction is posted and finalized.
+              {journalReference
+                ? `✓ Journal entry ${journalReference} is posted and finalized.`
+                : '✓ This transaction is posted and finalized.'}
             </p>
 
           )}
