@@ -1421,5 +1421,119 @@
 
 
 /* ============================================================ */
+/* 9. FIXED DESKTOP SIDEBAR AND INDEPENDENT CONTENT SCROLLING */
+/* ============================================================ */
+
+/**
+ * Keep LedgerBase's sidebar visible while users scroll
+ * through long accounting reports and transaction tables.
+ *
+ * DESIGN:
+ *
+ * - The application fills the browser viewport.
+ * - The sidebar stays in its existing left position.
+ * - The main content scrolls independently.
+ * - The sidebar can scroll internally when necessary.
+ * - The existing mobile layout is not affected.
+ *
+ * Apply these rules only above the existing 650px
+ * mobile breakpoint.
+ */
+
+@media (min-width: 651px) {
+
+  /* ========================================================== */
+  /* 9.1 APPLICATION VIEWPORT */
+  /* ========================================================== */
+
+  /**
+   * Restrict the desktop application shell to the
+   * height of the browser viewport.
+   *
+   * Previously, min-height: 100vh allowed the entire
+   * application to grow with long financial reports.
+   *
+   * That caused the sidebar navigation to scroll
+   * out of view together with the main content.
+   *
+   * The 100vh fallback supports older browsers.
+   * 100dvh accounts for dynamic browser viewport sizing.
+   */
+
+  .app-shell {
+
+    height: 100vh;
+    height: 100dvh;
+
+    min-height: 0;
+
+    overflow: hidden;
+
+  }
+
+  /* ========================================================== */
+  /* 9.2 FIXED LEFT SIDEBAR */
+  /* ========================================================== */
+
+  /**
+   * Keep the sidebar within the viewport height.
+   *
+   * Its horizontal position, width, background,
+   * padding, branding, and navigation styles
+   * remain unchanged.
+   *
+   * overflow-y: auto allows the sidebar to scroll
+   * independently if its navigation items exceed
+   * the available screen height.
+   *
+   * The footer remains at the bottom whenever
+   * sufficient vertical space is available.
+   */
+
+  .sidebar {
+
+    box-sizing: border-box;
+
+    height: 100%;
+    min-height: 0;
+
+    overflow-y: auto;
+
+  }
+
+  /* ========================================================== */
+  /* 9.3 INDEPENDENT MAIN CONTENT SCROLLING */
+  /* ========================================================== */
+
+  /**
+   * Make the right-hand workspace independently scrollable.
+   *
+   * Long reports, transaction registers, and accounting
+   * forms can scroll without moving the left sidebar.
+   *
+   * Preserve the existing:
+   *
+   * - Flex sizing
+   * - Main content padding
+   * - Background
+   * - Financial report styling
+   * - Horizontal table scrolling
+   */
+
+  .main-content {
+
+    box-sizing: border-box;
+
+    height: 100%;
+    min-height: 0;
+
+    overflow-y: auto;
+
+  }
+
+}
+
+
+/* ============================================================ */
 /* END — LEDGERBASE APPLICATION STYLES */
 /* ============================================================ */
