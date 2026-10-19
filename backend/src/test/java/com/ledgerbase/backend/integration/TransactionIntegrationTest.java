@@ -382,12 +382,48 @@ class TransactionIntegrationTest {
                 testBusinessId,
                 createRequest("500.00", "500.00")
             );
+        
+        // ============================================================
+        // VERIFY TRANSACTION HEADER
+        // ============================================================
 
-        // Verify the transaction header.
+        // PostgreSQL generates the globally unique internal ID.
         assertNotNull(saved.getId());
+
+        // Newly created transactions must remain drafts.
         assertEquals("DRAFT", saved.getStatus());
+
+        // Verify that the transaction belongs to our test business.
         assertEquals(testBusinessId, saved.getBusinessId());
         assertEquals(testUserId, saved.getCreatedBy());
+
+        // ============================================================
+        // VERIFY BUSINESS-SPECIFIC JOURNAL NUMBERING
+        // ============================================================
+
+        // This is the first transaction for this test business.
+        // Its journal sequence must therefore start from 1.
+        assertEquals(1L, saved.getJournalNumber());
+
+        // The user-facing reference is generated from the
+        // business-specific journal number, not the global ID.
+        assertEquals("JE-0001", saved.getJournalReference());
+
+        // Independently verify that PostgreSQL stored the
+        // correct journal number in the mapping table.
+        Long storedJournalNumber = jdbcTemplate.queryForObject(
+            """
+            SELECT journal_number
+            FROM transaction_journal_numbers
+            WHERE business_id = ?
+              AND transaction_id = ?
+            """,
+            Long.class,
+            testBusinessId,
+            saved.getId()
+        );
+
+        assertEquals(1L, storedJournalNumber);
 
         Integer transactionCount = jdbcTemplate.queryForObject(
             """
@@ -493,8 +529,144 @@ class TransactionIntegrationTest {
         assertEquals(1, auditCount);
     }
 
+
     // ============================================================
-    // TEST 2 — REJECT UNBALANCED TRANSACTIONS
+    // TEST 2 — SEQUENTIAL JOURNAL NUMBERS WITHIN ONE BUSINESS
+    // ============================================================
+
+    /**
+     * Verify that each new transaction receives the next
+     * available journal number within its business.
+     *
+     * Expected:
+     *
+     * First transaction  -> JE-0001
+     * Second transaction -> JE-0002
+     *
+     * PostgreSQL allocates these numbers automatically
+     * through the trigger introduced in Flyway V8.
+     *
+     * Both transactions are created in ledgerbase_test
+     * and rolled back after this test.
+     */
+    @Test
+    void assignsSequentialJournalNumbersWithinBusiness() {
+
+        // ========================================================
+        // 1. CREATE TWO DRAFT TRANSACTIONS
+        // ========================================================
+
+        LedgerTransaction first =
+            transactionService.createDraftTransaction(
+                testBusinessId,
+                createRequest("100.00", "100.00")
+            );
+
+        LedgerTransaction second =
+            transactionService.createDraftTransaction(
+                testBusinessId,
+                createRequest("200.00", "200.00")
+            );
+
+
+        // ========================================================
+        // 2. VERIFY INDEPENDENT INTERNAL TRANSACTION IDS
+        // ========================================================
+
+        // Every transaction must have a generated database ID.
+        assertNotNull(first.getId());
+        assertNotNull(second.getId());
+
+        // Two different transactions cannot share an internal ID.
+        assertNotEquals(
+            first.getId(),
+            second.getId()
+        );
+
+
+        // ========================================================
+        // 3. VERIFY SEQUENTIAL JOURNAL REFERENCES
+        // ========================================================
+
+        // The first journal within this business starts at 1.
+        assertEquals(1L, first.getJournalNumber());
+        assertEquals("JE-0001", first.getJournalReference());
+
+        // The next journal advances the company's sequence.
+        assertEquals(2L, second.getJournalNumber());
+        assertEquals("JE-0002", second.getJournalReference());
+
+
+        // ========================================================
+        // 4. VERIFY JOURNAL NUMBERS IN POSTGRESQL
+        // ========================================================
+
+        // Retrieve the journal numbers directly from the
+        // mapping table to independently verify persistence.
+        List<Long> storedNumbers = jdbcTemplate.queryForList(
+            """
+            SELECT journal_number
+            FROM transaction_journal_numbers
+            WHERE business_id = ?
+            ORDER BY journal_number
+            """,
+            Long.class,
+            testBusinessId
+        );
+
+        assertEquals(
+            List.of(1L, 2L),
+            storedNumbers
+        );
+
+
+        // ========================================================
+        // 5. VERIFY THE BUSINESS JOURNAL COUNTER
+        // ========================================================
+
+        // After creating two transactions, PostgreSQL
+        // should remember that the last allocated
+        // journal number for this business is 2.
+        Long counter = jdbcTemplate.queryForObject(
+            """
+            SELECT last_journal_number
+            FROM business_journal_counters
+            WHERE business_id = ?
+            """,
+            Long.class,
+            testBusinessId
+        );
+
+        assertEquals(2L, counter);
+
+
+        // ========================================================
+        // 6. VERIFY TRANSACTION LIST RETRIEVAL
+        // ========================================================
+
+        // The service must return the populated journal
+        // numbers when retrieving existing transactions.
+        List<LedgerTransaction> transactions =
+            transactionService.getTransactions(testBusinessId);
+
+        assertEquals(2, transactions.size());
+
+        // Verify the two expected references regardless of
+        // transaction-list ordering.
+        List<String> references = transactions.stream()
+            .map(LedgerTransaction::getJournalReference)
+            .sorted()
+            .toList();
+
+        assertEquals(
+            List.of("JE-0001", "JE-0002"),
+            references
+        );
+    }
+
+
+    // ============================================================
+    // TEST 3 — REJECT UNBALANCED TRANSACTIONS
     // ============================================================
 
     /**
@@ -559,7 +731,7 @@ class TransactionIntegrationTest {
     }
 
     // ============================================================
-    // TEST 3 — CREATE THROUGH HTTP
+    // TEST 4 — CREATE THROUGH HTTP
     // ============================================================
 
     /**
@@ -599,9 +771,20 @@ class TransactionIntegrationTest {
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(requestBody)
             )
+            // The REST endpoint must return HTTP 201 Created.
             .andExpect(status().isCreated())
+            // PostgreSQL generates the internal transaction ID.
             .andExpect(jsonPath("$.id").isNumber())
+            // A newly created transaction must remain DRAFT.
             .andExpect(jsonPath("$.status").value("DRAFT"))
+            // The database trigger assigns journal number 1
+            // because this is the business's first transaction.
+            .andExpect(jsonPath("$.journalNumber").value(1))
+            // The creation API must immediately return the
+            // company-specific reference without another GET.
+            .andExpect(
+                jsonPath("$.journalReference").value("JE-0001")
+            )
             .andExpect(
                 jsonPath("$.businessId").value(testBusinessId)
             )
@@ -672,7 +855,7 @@ class TransactionIntegrationTest {
     }
 
     // ============================================================
-    // TEST 4 — LIST TRANSACTIONS THROUGH HTTP
+    // TEST 5 — LIST TRANSACTIONS THROUGH HTTP
     // ============================================================
 
     /**
@@ -704,7 +887,7 @@ class TransactionIntegrationTest {
     }
 
     // ============================================================
-    // TEST 5 — RETRIEVE TRANSACTION DETAILS
+    // TEST 6 — RETRIEVE TRANSACTION DETAILS
     // ============================================================
 
     /**
@@ -771,7 +954,7 @@ class TransactionIntegrationTest {
     }
 
     // ============================================================
-    // TEST 6 — BUSINESS ISOLATION
+    // TEST 7 — BUSINESS ISOLATION
     // ============================================================
 
     /**
@@ -822,8 +1005,9 @@ class TransactionIntegrationTest {
             );
     }
 
+    
     // ============================================================
-    // TEST 7 — POST A VALID TRANSACTION
+    // TEST 8 — POST A VALID TRANSACTION
     // ============================================================
 
     /**
@@ -869,7 +1053,20 @@ class TransactionIntegrationTest {
             + "/" + draft.getId()
             + "/post";
 
-        // User 2 posts the draft through HTTP.
+        // ============================================================
+        // VERIFY JOURNAL REFERENCE BEFORE POSTING
+        // ============================================================
+
+        // The first transaction in this test business starts at 1.
+        assertEquals(1L, draft.getJournalNumber());
+        assertEquals("JE-0001", draft.getJournalReference());
+
+        // ============================================================
+        // POST TRANSACTION AND VERIFY HTTP RESPONSE
+        // ============================================================
+
+        // Posting changes the status but must preserve both the
+        // internal ID and the company's journal reference.
         postAsActor(mvc(), url, postingActorId)
             .andExpect(status().isOk())
             .andExpect(
@@ -877,7 +1074,33 @@ class TransactionIntegrationTest {
             )
             .andExpect(
                 jsonPath("$.status").value("POSTED")
+            )
+            .andExpect(
+                jsonPath("$.journalNumber").value(1)
+            )
+            .andExpect(
+                jsonPath("$.journalReference").value("JE-0001")
             );
+
+        // ============================================================
+        // VERIFY THE STORED JOURNAL NUMBER DID NOT CHANGE
+        // ============================================================
+
+        // Query the persisted mapping rather than relying only
+        // on the JSON response from the controller.
+        Long storedJournalNumber = jdbcTemplate.queryForObject(
+            """
+            SELECT journal_number
+            FROM transaction_journal_numbers
+            WHERE business_id = ?
+              AND transaction_id = ?
+            """,
+            Long.class,
+            testBusinessId,
+            draft.getId()
+        );
+
+        assertEquals(1L, storedJournalNumber);
 
         // Check the actual database status.
         String databaseStatus = jdbcTemplate.queryForObject(
@@ -950,8 +1173,9 @@ class TransactionIntegrationTest {
         assertEquals(2, historyCount);
     }
 
+
     // ============================================================
-    // TEST 8 — PREVENT DUPLICATE POSTING
+    // TEST 9 — PREVENT DUPLICATE POSTING
     // ============================================================
 
     /**
@@ -1012,7 +1236,7 @@ class TransactionIntegrationTest {
     }
 
     // ============================================================
-    // TEST 9 — REJECT POSTING A MISSING TRANSACTION
+    // TEST 10 — REJECT POSTING A MISSING TRANSACTION
     // ============================================================
 
     /**
@@ -1041,7 +1265,7 @@ class TransactionIntegrationTest {
     }
 
     // ============================================================
-    // TEST 10 — REJECT POSTING WITH AN INACTIVE ACCOUNT
+    // TEST 11 — REJECT POSTING WITH AN INACTIVE ACCOUNT
     // ============================================================
 
     /**
@@ -1120,7 +1344,7 @@ class TransactionIntegrationTest {
     }
 
     // ============================================================
-    // TEST 11 — PREVENT EDITING POSTED LEDGER ENTRIES
+    // TEST 12 — PREVENT EDITING POSTED LEDGER ENTRIES
     // ============================================================
 
     /**
@@ -1223,7 +1447,7 @@ class TransactionIntegrationTest {
     }
 
     // ============================================================
-    // TEST 12 — PREVENT ADDING ENTRIES AFTER POSTING
+    // TEST 13 — PREVENT ADDING ENTRIES AFTER POSTING
     // ============================================================
 
     /**
@@ -1308,7 +1532,7 @@ class TransactionIntegrationTest {
     }
 
     // ============================================================
-    // TEST 13 — PREVENT DELETING ENTRIES AFTER POSTING
+    // TEST 14 — PREVENT DELETING ENTRIES AFTER POSTING
     // ============================================================
 
     /**
@@ -1417,7 +1641,7 @@ class TransactionIntegrationTest {
     }
 
     // ============================================================
-    // TEST 14 — PREVENT EDITING POSTED TRANSACTION HEADERS
+    // TEST 15 — PREVENT EDITING POSTED TRANSACTION HEADERS
     // ============================================================
 
     /**
@@ -1515,7 +1739,7 @@ class TransactionIntegrationTest {
     }
 
     // ============================================================
-    // TEST 15 — PREVENT DELETING POSTED TRANSACTIONS
+    // TEST 16 — PREVENT DELETING POSTED TRANSACTIONS
     // ============================================================
 
     /**
@@ -1606,7 +1830,7 @@ class TransactionIntegrationTest {
     }
 
     // ============================================================
-    // TEST 16 — REJECT FUTURE-DATED DRAFT CREATION
+    // TEST 17 — REJECT FUTURE-DATED DRAFT CREATION
     // ============================================================
 
     /**
@@ -1728,7 +1952,7 @@ class TransactionIntegrationTest {
 
 
     // ============================================================
-    // TEST 17 — REJECT POSTING A FUTURE-DATED DRAFT
+    // TEST 18 — REJECT POSTING A FUTURE-DATED DRAFT
     // ============================================================
 
     /**
@@ -1896,7 +2120,7 @@ class TransactionIntegrationTest {
     }
 
     // ============================================================
-    // TEST 18 — REJECT POSTING INTO A CLOSED ACCOUNTING PERIOD
+    // TEST 19 — REJECT POSTING INTO A CLOSED ACCOUNTING PERIOD
     // ============================================================
 
     /**
@@ -1995,7 +2219,7 @@ class TransactionIntegrationTest {
 
 
     // ============================================================
-    // TEST 19 — REJECT POSTING WITHOUT AN ACCOUNTING PERIOD
+    // TEST 20 — REJECT POSTING WITHOUT AN ACCOUNTING PERIOD
     // ============================================================
 
     /**
@@ -2093,6 +2317,218 @@ class TransactionIntegrationTest {
         // ========================================================
 
         assertRejectedPostingPreservesDraft(draft.getId());
+    }
+
+
+    // ============================================================
+    // TEST 21 — INDEPENDENT JOURNAL NUMBERING ACROSS BUSINESSES
+    // ============================================================
+
+    /**
+     * Verify that journal numbering is independent for
+     * each business.
+     *
+     * Creation order:
+     *
+     * Business A -> JE-0001
+     * Business B -> JE-0001
+     * Business A -> JE-0002
+     *
+     * PostgreSQL generates globally unique internal IDs,
+     * but journal numbers restart for each business.
+     *
+     * All test records are rolled back automatically.
+     */
+    @Test
+    void assignsIndependentJournalNumbersAcrossBusinesses() {
+
+        // ========================================================
+        // 1. CREATE BUSINESS A'S FIRST TRANSACTION
+        // ========================================================
+
+        LedgerTransaction firstA =
+            transactionService.createDraftTransaction(
+                testBusinessId,
+                createRequest("100.00", "100.00")
+            );
+
+        assertEquals(1L, firstA.getJournalNumber());
+        assertEquals("JE-0001", firstA.getJournalReference());
+
+
+        // ========================================================
+        // 2. CREATE A SECOND TEST BUSINESS
+        // ========================================================
+
+        // Reuse our temporary test user as the owner.
+        Long businessBId = jdbcTemplate.queryForObject(
+            """
+            INSERT INTO businesses (
+                owner_id,
+                name,
+                currency
+            )
+            VALUES (?, ?, ?)
+            RETURNING id
+            """,
+            Long.class,
+            testUserId,
+            "Journal Numbering Business B",
+            "USD"
+        );
+
+        // Create Business B's own Cash account.
+        Long cashBId = jdbcTemplate.queryForObject(
+            """
+            INSERT INTO accounts (
+                business_id,
+                code,
+                name,
+                account_type
+            )
+            VALUES (?, ?, ?, ?)
+            RETURNING id
+            """,
+            Long.class,
+            businessBId,
+            "1000",
+            "Cash",
+            "ASSET"
+        );
+
+        // Create Business B's own Revenue account.
+        Long revenueBId = jdbcTemplate.queryForObject(
+            """
+            INSERT INTO accounts (
+                business_id,
+                code,
+                name,
+                account_type
+            )
+            VALUES (?, ?, ?, ?)
+            RETURNING id
+            """,
+            Long.class,
+            businessBId,
+            "4000",
+            "Consulting Revenue",
+            "REVENUE"
+        );
+
+
+        // ========================================================
+        // 3. CREATE BUSINESS B'S FIRST TRANSACTION
+        // ========================================================
+
+        // Build a balanced journal using Business B's
+        // accounts, not the accounts belonging to A.
+        CreateTransactionRequest requestB =
+            new CreateTransactionRequest(
+                testUserId,
+                "Business B consulting payment",
+                LocalDate.of(2026, 10, 11),
+                List.of(
+                    new CreateLedgerEntryRequest(
+                        cashBId,
+                        new BigDecimal("300.00"),
+                        new BigDecimal("0.00")
+                    ),
+                    new CreateLedgerEntryRequest(
+                        revenueBId,
+                        new BigDecimal("0.00"),
+                        new BigDecimal("300.00")
+                    )
+                )
+            );
+
+        LedgerTransaction firstB =
+            transactionService.createDraftTransaction(
+                businessBId,
+                requestB
+            );
+
+        // Business B must start its own sequence at 1.
+        assertEquals(1L, firstB.getJournalNumber());
+        assertEquals("JE-0001", firstB.getJournalReference());
+
+
+        // ========================================================
+        // 4. CREATE BUSINESS A'S SECOND TRANSACTION
+        // ========================================================
+
+        LedgerTransaction secondA =
+            transactionService.createDraftTransaction(
+                testBusinessId,
+                createRequest("200.00", "200.00")
+            );
+
+        // Business A must continue its existing sequence.
+        assertEquals(2L, secondA.getJournalNumber());
+        assertEquals("JE-0002", secondA.getJournalReference());
+
+
+        // ========================================================
+        // 5. VERIFY INTERNAL TRANSACTION IDS ARE UNIQUE
+        // ========================================================
+
+        assertNotEquals(firstA.getId(), firstB.getId());
+        assertNotEquals(firstA.getId(), secondA.getId());
+        assertNotEquals(firstB.getId(), secondA.getId());
+
+
+        // ========================================================
+        // 6. VERIFY BOTH BUSINESS COUNTERS IN POSTGRESQL
+        // ========================================================
+
+        Long counterA = jdbcTemplate.queryForObject(
+            """
+            SELECT last_journal_number
+            FROM business_journal_counters
+            WHERE business_id = ?
+            """,
+            Long.class,
+            testBusinessId
+        );
+
+        Long counterB = jdbcTemplate.queryForObject(
+            """
+            SELECT last_journal_number
+            FROM business_journal_counters
+            WHERE business_id = ?
+            """,
+            Long.class,
+            businessBId
+        );
+
+        assertEquals(2L, counterA);
+        assertEquals(1L, counterB);
+
+
+        // ========================================================
+        // 7. VERIFY BUSINESS-SCOPED TRANSACTION LISTS
+        // ========================================================
+
+        List<LedgerTransaction> transactionsA =
+            transactionService.getTransactions(testBusinessId);
+
+        List<LedgerTransaction> transactionsB =
+            transactionService.getTransactions(businessBId);
+
+        // Business A has two transactions.
+        assertEquals(2, transactionsA.size());
+
+        // Business B has only its own transaction.
+        assertEquals(1, transactionsB.size());
+
+        assertEquals(
+            businessBId,
+            transactionsB.get(0).getBusinessId()
+        );
+
+        assertEquals(
+            "JE-0001",
+            transactionsB.get(0).getJournalReference()
+        );
     }
 
 

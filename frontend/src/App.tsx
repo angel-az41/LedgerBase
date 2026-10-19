@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 
 import {
   LayoutDashboard,
@@ -13,14 +13,30 @@ import {
 import './App.css'
 
 // ============================================================
+// LEDGERBASE — BUSINESS MANAGEMENT API
+// ============================================================
+
+/**
+ * getBusinesses() retrieves businesses from Spring Boot.
+ *
+ * Business defines the TypeScript structure of a business.
+ *
+ * The frontend does not hardcode the available businesses.
+ */
+import {
+  getBusinesses,
+  type Business,
+} from './api/businesses'
+
+// ============================================================
 // LEDGERBASE — PAGE COMPONENTS
 // ============================================================
 
 /**
  * Each major LedgerBase screen has its own React component.
  *
- * OverviewPage now retrieves real financial data instead
- * of displaying hardcoded placeholder metrics.
+ * All financial pages receive the currently selected
+ * business ID from this application component.
  */
 import OverviewPage from './pages/OverviewPage'
 import AccountsPage from './pages/AccountsPage'
@@ -35,10 +51,7 @@ import BalanceSheetPage from './pages/BalanceSheetPage'
 // ============================================================
 
 /**
- * Union of all currently supported application pages.
- *
- * TypeScript helps prevent navigation to pages
- * that are not implemented.
+ * Union of all supported application pages.
  */
 type Page =
   | 'overview'
@@ -63,13 +76,7 @@ interface NavigationItem {
 }
 
 /**
- * A group of related sidebar navigation items.
- *
- * LedgerBase currently has three groups:
- *
- * - Workspace
- * - Accounting
- * - Financial Reports
+ * One group of sidebar navigation items.
  */
 interface NavigationGroup {
   heading: string
@@ -82,17 +89,8 @@ interface NavigationGroup {
 // ============================================================
 
 /**
- * Define the sidebar structure separately from App().
- *
- * This keeps the main component easier to maintain
- * as LedgerBase grows.
- *
- * Every existing icon retains:
- *
- * - size={18}
- * - strokeWidth={1.8}
- *
- * The existing App.css controls the visual design.
+ * Preserve LedgerBase's existing navigation groups,
+ * labels, and lucide-react icons.
  */
 const navigationGroups: NavigationGroup[] = [
 
@@ -105,7 +103,6 @@ const navigationGroups: NavigationGroup[] = [
     accessibleLabel: 'Workspace',
 
     items: [
-
       {
         id: 'overview',
         label: 'Overview',
@@ -116,7 +113,6 @@ const navigationGroups: NavigationGroup[] = [
           />
         ),
       },
-
     ],
   },
 
@@ -129,7 +125,6 @@ const navigationGroups: NavigationGroup[] = [
     accessibleLabel: 'Accounting',
 
     items: [
-
       {
         id: 'transactions',
         label: 'Transactions',
@@ -140,7 +135,6 @@ const navigationGroups: NavigationGroup[] = [
           />
         ),
       },
-
       {
         id: 'accounts',
         label: 'Chart of Accounts',
@@ -151,7 +145,6 @@ const navigationGroups: NavigationGroup[] = [
           />
         ),
       },
-
       {
         id: 'fiscal-years',
         label: 'Fiscal Years & Periods',
@@ -162,7 +155,6 @@ const navigationGroups: NavigationGroup[] = [
           />
         ),
       },
-
     ],
   },
 
@@ -175,7 +167,6 @@ const navigationGroups: NavigationGroup[] = [
     accessibleLabel: 'Financial Reports',
 
     items: [
-
       {
         id: 'trial-balance',
         label: 'Trial Balance',
@@ -186,7 +177,6 @@ const navigationGroups: NavigationGroup[] = [
           />
         ),
       },
-
       {
         id: 'income-statement',
         label: 'Income Statement',
@@ -197,7 +187,6 @@ const navigationGroups: NavigationGroup[] = [
           />
         ),
       },
-
       {
         id: 'balance-sheet',
         label: 'Balance Sheet',
@@ -208,33 +197,33 @@ const navigationGroups: NavigationGroup[] = [
           />
         ),
       },
-
     ],
   },
-
 ]
+
+// ============================================================
+// BUSINESS SELECTION CONFIGURATION
+// ============================================================
+
+/**
+ * Browser storage key used to remember which business
+ * was selected during the previous session.
+ *
+ * This stores only a business ID.
+ *
+ * It is a UI preference, NOT an authentication
+ * credential or authorization mechanism.
+ *
+ * Any stored ID must also exist in the list
+ * returned by the backend.
+ */
+const SELECTED_BUSINESS_STORAGE_KEY =
+  'ledgerbase.selectedBusinessId'
 
 // ============================================================
 // MAIN LEDGERBASE APPLICATION
 // ============================================================
 
-/**
- * App manages the application's selected page.
- *
- * React state is sufficient for our current navigation
- * because the application does not yet require
- * URL-based routing.
- *
- * IMPORTANT:
- *
- * App is responsible for navigation.
- *
- * Individual page components are responsible
- * for their own data fetching and presentation.
- *
- * This separation makes the application easier
- * to extend and test.
- */
 function App() {
 
   // ==========================================================
@@ -244,36 +233,314 @@ function App() {
   /**
    * Start on the Overview dashboard.
    *
-   * Clicking any sidebar item updates activePage.
+   * Sidebar navigation updates this state.
    */
   const [activePage, setActivePage] =
     useState<Page>('overview')
 
   // ==========================================================
-  // CURRENT DEVELOPMENT BUSINESS
+  // AVAILABLE BUSINESSES
   // ==========================================================
 
   /**
-   * Business ID 1 is our current local demo business.
+   * Businesses retrieved from:
    *
-   * Using a shared constant keeps every page pointed
-   * at the same business.
+   * GET /api/v1/businesses
    *
-   * Later, authenticated business selection will
-   * determine this value dynamically.
+   * Example:
+   *
+   * [
+   *   { id: 1, name: "LedgerBase Demo Business", ... },
+   *   { id: 2, name: "ABC Consulting LLC", ... }
+   * ]
    */
-  const businessId = 1
+  const [businesses, setBusinesses] =
+    useState<Business[]>([])
+
+  // ==========================================================
+  // SELECTED BUSINESS
+  // ==========================================================
+
+  /**
+   * Previously, LedgerBase always used:
+   *
+   * const businessId = 1
+   *
+   * Now the selected business is stored in React state.
+   *
+   * null means a valid business has not yet been selected.
+   */
+  const [selectedBusinessId, setSelectedBusinessId] =
+    useState<number | null>(null)
+
+  // ==========================================================
+  // BUSINESS LOADING AND ERROR STATES
+  // ==========================================================
+
+  /**
+   * Avoid rendering accounting pages before we know
+   * which business should be displayed.
+   */
+  const [businessesLoading, setBusinessesLoading] =
+    useState(true)
+
+  const [businessesError, setBusinessesError] =
+    useState<string | null>(null)
+
+  // ==========================================================
+  // LOAD AVAILABLE BUSINESSES ON STARTUP
+  // ==========================================================
+
+  /**
+   * useEffect runs after the application mounts.
+   *
+   * We retrieve the list of available businesses
+   * from the backend instead of hardcoding business IDs.
+   *
+   * SELECTION PRIORITY:
+   *
+   * 1. Keep a valid existing React selection.
+   * 2. Restore a valid previously saved business.
+   * 3. Fall back to the first available business.
+   * 4. Use null if no businesses are available.
+   *
+   * IMPORTANT:
+   *
+   * A remembered ID is accepted only if it exists
+   * in the business list returned by the API.
+   */
+  useEffect(() => {
+
+    // ========================================================
+    // CLEANUP FLAG
+    // ========================================================
+
+    /**
+     * If the component unmounts before the API finishes,
+     * don't update its state afterward.
+     */
+    let active = true
+
+    // ========================================================
+    // FETCH BUSINESSES
+    // ========================================================
+
+    async function loadBusinesses() {
+
+      try {
+
+        const availableBusinesses = await getBusinesses()
+
+        if (!active) {
+          return
+        }
+
+        // ====================================================
+        // STORE AVAILABLE BUSINESSES
+        // ====================================================
+
+        setBusinesses(availableBusinesses)
+
+        // ====================================================
+        // READ PREVIOUS BUSINESS PREFERENCE
+        // ====================================================
+
+        let rememberedBusinessId: number | null = null
+
+        try {
+
+          const storedId = window.localStorage.getItem(
+            SELECTED_BUSINESS_STORAGE_KEY,
+          )
+
+          if (storedId !== null) {
+
+            const parsedId = Number(storedId)
+
+            if (Number.isSafeInteger(parsedId)) {
+              rememberedBusinessId = parsedId
+            }
+          }
+
+        } catch {
+
+          /**
+           * Some browser configurations restrict
+           * access to localStorage.
+           *
+           * LedgerBase should still work even if
+           * the preference cannot be read.
+           */
+          rememberedBusinessId = null
+        }
+
+        // ====================================================
+        // SELECT A VALID BUSINESS
+        // ====================================================
+
+        setSelectedBusinessId((previousBusinessId) => {
+
+          /**
+           * Preserve the current selection if
+           * it still exists in the API results.
+           */
+          const previousBusiness =
+            availableBusinesses.find(
+              (business) =>
+                business.id === previousBusinessId,
+            )
+
+          if (previousBusiness) {
+            return previousBusiness.id
+          }
+
+          /**
+           * Otherwise, restore the remembered business
+           * if the backend still returns it.
+           */
+          const rememberedBusiness =
+            availableBusinesses.find(
+              (business) =>
+                business.id === rememberedBusinessId,
+            )
+
+          if (rememberedBusiness) {
+            return rememberedBusiness.id
+          }
+
+          /**
+           * Otherwise, select the first business.
+           *
+           * An empty list results in null.
+           */
+          return availableBusinesses[0]?.id ?? null
+        })
+
+        setBusinessesError(null)
+
+      } catch (error) {
+
+        if (!active) {
+          return
+        }
+
+        // ====================================================
+        // DISPLAY A USEFUL ERROR
+        // ====================================================
+
+        setBusinessesError(
+          error instanceof Error
+            ? error.message
+            : 'Unable to load businesses.',
+        )
+
+      } finally {
+
+        if (active) {
+          setBusinessesLoading(false)
+        }
+      }
+    }
+
+    // ========================================================
+    // START INITIAL REQUEST
+    // ========================================================
+
+    void loadBusinesses()
+
+    // ========================================================
+    // CLEAN UP WHEN COMPONENT UNMOUNTS
+    // ========================================================
+
+    return () => {
+      active = false
+    }
+
+  }, [])
+
+  // ==========================================================
+  // HANDLE BUSINESS SELECTION
+  // ==========================================================
+
+  /**
+   * This function runs when the user chooses a business
+   * from the sidebar dropdown.
+   *
+   * Example:
+   *
+   * LedgerBase Demo Business -> ABC Consulting LLC
+   *
+   * The new business ID is passed to all accounting pages.
+   *
+   * We also navigate back to Overview so the user
+   * begins in a consistent workspace.
+   */
+  function handleBusinessChange(newBusinessId: number) {
+
+    // ========================================================
+    // ENSURE BUSINESS EXISTS IN THE AVAILABLE LIST
+    // ========================================================
+
+    const selectedBusiness = businesses.find(
+      (business) => business.id === newBusinessId,
+    )
+
+    if (!selectedBusiness) {
+      return
+    }
+
+    // ========================================================
+    // UPDATE REACT STATE
+    // ========================================================
+
+    setSelectedBusinessId(selectedBusiness.id)
+
+    setActivePage('overview')
+
+    // ========================================================
+    // REMEMBER BUSINESS PREFERENCE
+    // ========================================================
+
+    /**
+     * This affects only the browser's local UI preference.
+     *
+     * Actual business data remains in PostgreSQL.
+     */
+    try {
+
+      window.localStorage.setItem(
+        SELECTED_BUSINESS_STORAGE_KEY,
+        String(selectedBusiness.id),
+      )
+
+    } catch {
+
+      /**
+       * Browser storage is optional.
+       *
+       * Business switching still works without it.
+       */
+    }
+  }
+
+  // ==========================================================
+  // SELECTED BUSINESS ID FOR ACCOUNTING PAGES
+  // ==========================================================
+
+  /**
+   * All accounting pages continue to receive
+   * the same businessId prop they used previously.
+   *
+   * The difference is that its value is now dynamic.
+   */
+  const businessId = selectedBusinessId
 
   // ==========================================================
   // PAGE INFORMATION
   // ==========================================================
 
   /**
-   * Information displayed in the shared page header.
-   *
-   * Reporting pages and Fiscal Years already provide
-   * their own headings, so the shared header is hidden
-   * when those pages are selected.
+   * Preserve the existing shared page headings.
    */
   const pageInformation: Record<
     Page,
@@ -314,7 +581,6 @@ function App() {
       title: 'Fiscal Years & Accounting Periods',
       description: 'Manage your accounting calendar and monthly posting periods.',
     },
-
   }
 
   const currentPage = pageInformation[activePage]
@@ -334,7 +600,7 @@ function App() {
       <aside className="sidebar">
 
         {/* ==================================================== */}
-        {/* APPLICATION BRANDING */}
+        {/* APPLICATION BRANDING — UNCHANGED */}
         {/* ==================================================== */}
 
         <div className="sidebar-brand">
@@ -357,23 +623,80 @@ function App() {
         </div>
 
         {/* ==================================================== */}
-        {/* GROUPED SIDEBAR NAVIGATION */}
+        {/* BUSINESS SELECTOR — NEW */}
         {/* ==================================================== */}
 
         {/*
-          Navigation groups are rendered dynamically.
+          The business selector sits beneath the LedgerBase
+          branding and above the existing navigation groups.
 
-          Outer map:
-            Renders Workspace, Accounting, and Reports.
+          We use a native HTML select element because it
+          supports keyboard navigation and screen readers.
 
-          Inner map:
-            Renders the clickable pages inside each group.
-
-          Existing navigation-item CSS styles provide:
-          - Hover appearance
-          - Active appearance
-          - Icon and text layout
+          We'll add matching professional styling in App.css
+          after confirming that the functionality works.
         */}
+
+        <div className="sidebar-business-selector">
+
+          <label
+            htmlFor="active-business"
+            className="business-selector-label"
+          >
+            CURRENT BUSINESS
+          </label>
+
+          <select
+            id="active-business"
+            className="business-selector-input"
+            value={businessId ?? ''}
+            disabled={
+              businessesLoading ||
+              businessesError !== null ||
+              businesses.length === 0
+            }
+            onChange={(event) => {
+
+              const newBusinessId = Number(
+                event.target.value,
+              )
+
+              handleBusinessChange(newBusinessId)
+            }}
+          >
+
+            {businesses.length === 0 ? (
+
+              <option value="">
+
+                {businessesLoading
+                  ? 'Loading businesses...'
+                  : 'No businesses available'}
+
+              </option>
+
+            ) : (
+
+              businesses.map((business) => (
+
+                <option
+                  key={business.id}
+                  value={business.id}
+                >
+                  {business.name}
+                </option>
+
+              ))
+
+            )}
+
+          </select>
+
+        </div>
+
+        {/* ==================================================== */}
+        {/* GROUPED SIDEBAR NAVIGATION — UNCHANGED */}
+        {/* ==================================================== */}
 
         <nav
           className="sidebar-navigation"
@@ -389,20 +712,12 @@ function App() {
               aria-label={group.accessibleLabel}
             >
 
-              {/* ============================================== */}
-              {/* NAVIGATION GROUP HEADING */}
-              {/* ============================================== */}
-
               <p
                 className="navigation-label"
                 aria-hidden="true"
               >
                 {group.heading}
               </p>
-
-              {/* ============================================== */}
-              {/* GROUP NAVIGATION ITEMS */}
-              {/* ============================================== */}
 
               {group.items.map((item) => (
 
@@ -442,7 +757,7 @@ function App() {
         </nav>
 
         {/* ==================================================== */}
-        {/* SIDEBAR FOOTER */}
+        {/* SIDEBAR FOOTER — UNCHANGED */}
         {/* ==================================================== */}
 
         <div className="sidebar-footer">
@@ -465,206 +780,213 @@ function App() {
       {/* MAIN CONTENT */}
       {/* ====================================================== */}
 
-      <main className="main-content">
+      {/*
+        The key is important for business switching.
+
+        When businessId changes, React creates a fresh
+        main-content subtree.
+
+        This resets page-specific state such as:
+        - Previously loaded accounts
+        - Transaction forms and lists
+        - Report date selections
+        - Dashboard metrics
+        - Fiscal-year and period selections
+
+        The new page then loads data for the newly
+        selected business.
+
+        The DOM layout and existing CSS classes
+        remain unchanged.
+      */}
+
+      <main
+        key={businessId ?? 'unselected'}
+        className="main-content"
+      >
 
         {/* ==================================================== */}
-        {/* SHARED PAGE HEADER */}
+        {/* BUSINESS LOADING STATE */}
         {/* ==================================================== */}
 
-        {/*
-          The shared header is displayed for:
+        {businessesLoading && (
 
-          - Overview
-          - Chart of Accounts
-          - Transactions
-
-          Other pages already display their own titles.
-
-          OverviewPage deliberately does not provide
-          an additional page-level h1 because App
-          renders the shared Overview heading.
-        */}
-
-        {activePage !== 'trial-balance' &&
-          activePage !== 'income-statement' &&
-          activePage !== 'balance-sheet' &&
-          activePage !== 'fiscal-years' && (
-
-          <header className="page-header">
-
-            <div>
-
-              <p className="page-eyebrow">
-                LEDGERBASE / WORKSPACE
-              </p>
-
-              <h1>{currentPage.title}</h1>
-
-              <p className="page-description">
-                {currentPage.description}
-              </p>
-
-            </div>
-
-            <div className="preview-label">
-
-              <span className="preview-dot"></span>
-
-              UI Preview
-
-            </div>
-
-          </header>
+          <p
+            className="page-description"
+            role="status"
+          >
+            Loading your businesses...
+          </p>
 
         )}
 
         {/* ==================================================== */}
-        {/* OVERVIEW — REAL FINANCIAL DASHBOARD */}
+        {/* BUSINESS LOADING ERROR */}
         {/* ==================================================== */}
 
-        {/*
-          MILESTONE 18:
+        {!businessesLoading && businessesError && (
 
-          Previously, this section contained hardcoded
-          metric cards with placeholder values.
+          <div role="alert">
 
-          We now render the dedicated OverviewPage.
+            <h1>Unable to load businesses</h1>
 
-          OverviewPage is responsible for:
+            <p className="page-description">
+              {businessesError}
+            </p>
 
-          1. Retrieving the Balance Sheet.
-          2. Retrieving configured fiscal years.
-          3. Finding the fiscal year covering today.
-          4. Retrieving fiscal-year-to-date Net Income.
-          5. Displaying exact backend financial values.
-          6. Showing loading and error states.
-          7. Displaying classification warnings.
-          8. Refreshing the dashboard.
+            <p className="page-description">
+              Check that the LedgerBase backend is running,
+              then refresh the page.
+            </p>
 
-          Navigation stays in App.
-
-          The onNavigate callback allows Quick Access
-          buttons to open Accounts or Transactions
-          without duplicating navigation state.
-        */}
-
-        {activePage === 'overview' && (
-
-          <OverviewPage
-            businessId={businessId}
-            onNavigate={(page) => setActivePage(page)}
-          />
+          </div>
 
         )}
 
         {/* ==================================================== */}
-        {/* CHART OF ACCOUNTS */}
+        {/* NO BUSINESSES AVAILABLE */}
         {/* ==================================================== */}
 
-        {activePage === 'accounts' && (
+        {!businessesLoading &&
+          !businessesError &&
+          businessId === null && (
 
-          /*
-           * Manage the general ledger account structure.
-           *
-           * Includes account classifications, parent
-           * hierarchy, and posting-account settings.
-           */
+          <div>
 
-          <AccountsPage businessId={businessId} />
+            <h1>No businesses available</h1>
+
+            <p className="page-description">
+              Create a business to begin using LedgerBase.
+            </p>
+
+          </div>
 
         )}
 
         {/* ==================================================== */}
-        {/* TRANSACTIONS */}
+        {/* RENDER THE SELECTED BUSINESS WORKSPACE */}
         {/* ==================================================== */}
 
-        {activePage === 'transactions' && (
+        {businessId !== null &&
+          !businessesLoading &&
+          !businessesError && (
 
-          /*
-           * Create, review, and post journal entries.
-           *
-           * All account activity is scoped to
-           * the selected business.
-           */
+          <>
 
-          <TransactionsPage businessId={businessId} />
+            {/* ================================================= */}
+            {/* SHARED PAGE HEADER */}
+            {/* ================================================= */}
 
-        )}
+            {activePage !== 'trial-balance' &&
+              activePage !== 'income-statement' &&
+              activePage !== 'balance-sheet' &&
+              activePage !== 'fiscal-years' && (
 
-        {/* ==================================================== */}
-        {/* TRIAL BALANCE */}
-        {/* ==================================================== */}
+              <header className="page-header">
 
-        {activePage === 'trial-balance' && (
+                <div>
 
-          /*
-           * Review debit and credit balances
-           * from posted general ledger entries.
-           */
+                  <p className="page-eyebrow">
+                    LEDGERBASE / WORKSPACE
+                  </p>
 
-          <TrialBalancePage businessId={businessId} />
+                  <h1>{currentPage.title}</h1>
 
-        )}
+                  <p className="page-description">
+                    {currentPage.description}
+                  </p>
 
-        {/* ==================================================== */}
-        {/* INCOME STATEMENT */}
-        {/* ==================================================== */}
+                </div>
 
-        {activePage === 'income-statement' && (
+                <div className="preview-label">
 
-          /*
-           * Review revenue, expenses, and net income
-           * over an inclusive reporting date range.
-           *
-           * Spring Boot calculates all financial totals.
-           */
+                  <span className="preview-dot"></span>
 
-          <IncomeStatementPage businessId={businessId} />
+                  UI Preview
 
-        )}
+                </div>
 
-        {/* ==================================================== */}
-        {/* BALANCE SHEET */}
-        {/* ==================================================== */}
+              </header>
 
-        {activePage === 'balance-sheet' && (
+            )}
 
-          /*
-           * Review the business's financial position
-           * as of a selected date.
-           *
-           * Includes:
-           *
-           * - Assets
-           * - Liabilities
-           * - Posted Equity
-           * - Unclosed Earnings
-           * - Accounting equation reconciliation
-           */
+            {/* ================================================= */}
+            {/* OVERVIEW — FINANCIAL DASHBOARD */}
+            {/* ================================================= */}
 
-          <BalanceSheetPage businessId={businessId} />
+            {activePage === 'overview' && (
 
-        )}
+              <OverviewPage
+                businessId={businessId}
+                onNavigate={(page) => setActivePage(page)}
+              />
 
-        {/* ==================================================== */}
-        {/* FISCAL YEARS & ACCOUNTING PERIODS */}
-        {/* ==================================================== */}
+            )}
 
-        {activePage === 'fiscal-years' && (
+            {/* ================================================= */}
+            {/* CHART OF ACCOUNTS */}
+            {/* ================================================= */}
 
-          /*
-           * Manage the business's accounting calendar.
-           *
-           * actorId=1 is still a development placeholder.
-           *
-           * Authentication will provide this value
-           * in a future milestone.
-           */
+            {activePage === 'accounts' && (
 
-          <FiscalYearsPage
-            businessId={businessId}
-            actorId={1}
-          />
+              <AccountsPage businessId={businessId} />
+
+            )}
+
+            {/* ================================================= */}
+            {/* TRANSACTIONS */}
+            {/* ================================================= */}
+
+            {activePage === 'transactions' && (
+
+              <TransactionsPage businessId={businessId} />
+
+            )}
+
+            {/* ================================================= */}
+            {/* TRIAL BALANCE */}
+            {/* ================================================= */}
+
+            {activePage === 'trial-balance' && (
+
+              <TrialBalancePage businessId={businessId} />
+
+            )}
+
+            {/* ================================================= */}
+            {/* INCOME STATEMENT */}
+            {/* ================================================= */}
+
+            {activePage === 'income-statement' && (
+
+              <IncomeStatementPage businessId={businessId} />
+
+            )}
+
+            {/* ================================================= */}
+            {/* BALANCE SHEET */}
+            {/* ================================================= */}
+
+            {activePage === 'balance-sheet' && (
+
+              <BalanceSheetPage businessId={businessId} />
+
+            )}
+
+            {/* ================================================= */}
+            {/* FISCAL YEARS & ACCOUNTING PERIODS */}
+            {/* ================================================= */}
+
+            {activePage === 'fiscal-years' && (
+
+              <FiscalYearsPage
+                businessId={businessId}
+                actorId={1}
+              />
+
+            )}
+
+          </>
 
         )}
 

@@ -1,4 +1,3 @@
-
 import { useEffect, useMemo, useState } from 'react'
 
 import {
@@ -26,7 +25,7 @@ import './TransactionsPage.css'
  *
  * - Retrieve financial transactions
  * - Display transaction statistics
- * - Search transactions by description or ID
+ * - Search by description, journal reference, or internal ID
  * - Filter by posting status
  * - Sort transactions by accounting date
  * - Refresh transaction data
@@ -52,7 +51,7 @@ import './TransactionsPage.css'
  * TransactionsPage receives the current business ID
  * from its parent component, App.tsx.
  *
- * During local development, businessId is set to 1.
+ * App.tsx supplies the currently selected business ID.
  */
 interface TransactionsPageProps {
   businessId: number
@@ -314,11 +313,14 @@ function TransactionsPage({
       .filter((transaction) => {
 
         /**
-         * Search by transaction description
-         * or database transaction ID.
+         * Search by description or company-specific reference.
+         * Retain internal ID searching for diagnostics only;
+         * IDs must not become user-facing references.
          */
         const matchesSearch =
           transaction.description.toLowerCase().includes(query) ||
+          (transaction.journalReference ?? '')
+            .toLowerCase().includes(query) ||
           String(transaction.id).includes(query)
 
         /**
@@ -434,7 +436,9 @@ function TransactionsPage({
     // ==========================================================
 
     setSuccessMessage(
-      `Draft transaction #${transaction.id} created successfully.`,
+      transaction.journalReference
+        ? `Draft ${transaction.journalReference} created successfully.`
+        : 'Draft transaction created successfully.',
     )
 
     // ==========================================================
@@ -505,7 +509,9 @@ function TransactionsPage({
     // ==========================================================
 
     setSuccessMessage(
-      `Transaction #${transaction.id} posted successfully.`,
+      transaction.journalReference
+        ? `Journal entry ${transaction.journalReference} posted successfully.`
+        : 'Transaction posted successfully.',
     )
 
     // ==========================================================
@@ -711,7 +717,7 @@ function TransactionsPage({
             <input
               type="search"
               value={searchQuery}
-              placeholder="Search by description or transaction ID..."
+              placeholder="Search by description or journal reference..."
               onChange={(event) =>
                 setSearchQuery(event.target.value)
               }
@@ -860,7 +866,7 @@ function TransactionsPage({
                   <tr>
 
                     <th scope="col">
-                      Transaction ID
+                      Journal Reference
                     </th>
 
                     <th scope="col">
@@ -905,11 +911,11 @@ function TransactionsPage({
                     <tr key={transaction.id}>
 
                       {/* ======================================== */}
-                      {/* TRANSACTION ID */}
+                      {/* BUSINESS-SPECIFIC JOURNAL REFERENCE */}
                       {/* ======================================== */}
 
                       <td className="transactions-id">
-                        #{transaction.id}
+                        {transaction.journalReference ?? '—'}
                       </td>
 
                       {/* ======================================== */}
@@ -975,7 +981,11 @@ function TransactionsPage({
                         <button
                           type="button"
                           className="transactions-view-button"
-                          aria-label={`View transaction ${transaction.id} details`}
+                          aria-label={
+                            transaction.journalReference
+                              ? `View ${transaction.journalReference} details`
+                              : 'View transaction details'
+                          }
                           onClick={() =>
                             handleViewDetails(transaction.id)
                           }
