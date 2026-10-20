@@ -739,3 +739,75 @@
   color: #9aa5b3;
   font-style: italic;
 }
+
+/* ============================================================ */
+/* LEDGERBASE — ACCOUNT EXPORT CONTROLS */
+/* ============================================================ */
+
+/**
+ * Group the export format selector and download
+ * button together inside the existing toolbar.
+ */
+
+.coa-export-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ============================================================ */
+/* EXPORT FORMAT SELECTOR */
+/* ============================================================ */
+
+.coa-export-select {
+  min-height: 38px;
+  padding: 0 11px;
+  border: 1px solid #dce5ec;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #38546a;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.coa-export-select:focus-visible {
+  outline: 2px solid #35aa94;
+  outline-offset: 2px;
+}
+
+/* ============================================================ */
+/* EXPORT BUTTON */
+/* ============================================================ */
+
+.coa-export-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+/* ============================================================ */
+/* EXPORT ERROR MESSAGE */
+/* ============================================================ */
+
+.coa-export-error {
+  margin-bottom: 20px;
+  padding: 13px 16px;
+  border: 1px solid #f0cece;
+  border-radius: 8px;
+  background: #fff6f5;
+  color: #a34747;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* ============================================================ */
+/* RESPONSIVE EXPORT CONTROLS */
+/* ============================================================ */
+
+@media (max-width: 760px) {
+  .coa-export-actions {
+    flex-wrap: wrap;
+  }
+}

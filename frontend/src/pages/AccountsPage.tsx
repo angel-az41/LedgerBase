@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 
+import { Download } from 'lucide-react'
+
 import {
   getAccounts,
   getAccountBalances,
@@ -8,10 +10,14 @@ import {
   type AccountBalance,
 } from '../api/accounts'
 
+import {
+  exportAccounts,
+  type AccountExportFormat,
+} from '../api/accountExports'
+
 import AccountActions from '../components/accounts/AccountActions'
 import NewAccountForm from '../components/accounts/NewAccountForm'
 import ImportAccountsDialog from '../components/accounts/ImportAccountsDialog'
-
 
 import './AccountsPage.css'
 
@@ -25,7 +31,7 @@ import './AccountsPage.css'
  * Account information and calculated balances are
  * retrieved from the Spring Boot backend.
  *
- * Existing functionality:
+ * Supported functionality:
  *
  * - Retrieve accounts from PostgreSQL
  * - Display real posted account balances
@@ -36,6 +42,8 @@ import './AccountsPage.css'
  * - Create new accounts
  * - Rename active accounts
  * - Deactivate accounts with confirmation
+ * - Import CSV/XLSX accounts
+ * - Export CSV/XLSX accounts
  * - Display success notifications
  * - Handle loading, error, and empty states
  *
@@ -52,7 +60,7 @@ import './AccountsPage.css'
  * preserved to maintain the current enterprise UI.
  *
  * Grouping accounts never receive direct journal
- * entries. Hierarchical subtotals will be handled
+ * entries. Hierarchical subtotals are handled
  * separately from underlying ledger balances.
  */
 
@@ -63,8 +71,7 @@ import './AccountsPage.css'
 /**
  * The selected business ID comes from App.tsx.
  *
- * During local development, we use business 1.
- * Business selection will become dynamic later.
+ * All account operations must use this business ID.
  */
 interface AccountsPageProps {
   businessId: number
@@ -155,10 +162,12 @@ function formatDate(
 ): string {
 
   return new Intl.DateTimeFormat('en-US', {
+
     year: 'numeric',
     month: 'short',
     day: 'numeric',
     timeZone: 'UTC',
+
   }).format(new Date(dateString))
 }
 
@@ -227,7 +236,9 @@ function formatAccountBalance(
   // ==========================================================
 
   const negativeSign = match[1]
+
   const wholePart = match[2]
+
   const decimalPart = match[3] ?? ''
 
   // ==========================================================
@@ -277,7 +288,7 @@ function AccountsPage({
    *
    * GET /api/v1/businesses/{businessId}/accounts
    *
-   * These records now include V7 fields:
+   * These records include V7 fields:
    *
    * reportingGroup
    * parentAccountId
@@ -341,6 +352,34 @@ function AccountsPage({
   const [successMessage, setSuccessMessage] = useState('')
 
   // ==========================================================
+  // ACCOUNT EXPORT STATE
+  // ==========================================================
+
+  /**
+   * The user can download account data in CSV or Excel.
+   *
+   * CSV is selected by default because it is compatible
+   * with spreadsheets and other accounting systems.
+   */
+  const [exportFormat, setExportFormat] =
+    useState<AccountExportFormat>('csv')
+
+  /**
+   * Prevent duplicate export requests while a
+   * download is being processed.
+   */
+  const [isExporting, setIsExporting] = useState(false)
+
+  /**
+   * Export errors are kept separate from account
+   * loading errors.
+   *
+   * A failed export should not hide the account table
+   * or imply that the database was modified.
+   */
+  const [exportError, setExportError] = useState('')
+
+  // ==========================================================
   // LOAD ACCOUNTS AND BALANCES FROM SPRING BOOT
   // ==========================================================
 
@@ -350,12 +389,13 @@ function AccountsPage({
    * 1. The page mounts.
    * 2. The selected business changes.
    * 3. An account is created, renamed, or deactivated.
-   * 4. The user clicks Refresh.
+   * 4. An account import succeeds.
+   * 5. The user clicks Refresh.
    *
    * Promise.all() runs both requests concurrently.
    *
-   * If either request fails, we display an error
-   * rather than showing potentially misleading data.
+   * If either request fails, display an error rather
+   * than potentially misleading account data.
    */
   useEffect(() => {
 
@@ -378,8 +418,11 @@ function AccountsPage({
 
         const [accountData, balanceData] =
           await Promise.all([
+
             getAccounts(businessId),
+
             getAccountBalances(businessId),
+
           ])
 
         // ====================================================
@@ -457,12 +500,17 @@ function AccountsPage({
   const balancesByAccountId = useMemo(() => {
 
     return new Map(
+
       accountBalances.map(
         (accountBalance) => [
+
           accountBalance.id,
+
           accountBalance.balance,
+
         ],
       ),
+
     )
 
   }, [accountBalances])
@@ -480,16 +528,21 @@ function AccountsPage({
    * Account IDs are more reliable than account codes
    * when representing database relationships.
    *
-   * The backend scopes all returned accounts
+   * The backend scopes returned accounts
    * to the requested business.
    */
   const accountsById = useMemo(() => {
 
     return new Map(
+
       accounts.map((account) => [
+
         account.id,
+
         account,
+
       ]),
+
     )
 
   }, [accounts])
@@ -528,7 +581,7 @@ function AccountsPage({
   // ==========================================================
 
   /**
-   * Preserve the existing search and filter behavior.
+   * Preserve existing search and filter behavior.
    *
    * Accounts can be searched by:
    *
@@ -536,10 +589,10 @@ function AccountsPage({
    * - Account name
    * - Fundamental account type
    *
-   * We preserve numeric-aware account-code ordering.
+   * Preserve numeric-aware account-code ordering.
    *
    * Parent-child relationships are displayed
-   * through indentation, not a new sorting algorithm.
+   * through indentation.
    */
   const filteredAccounts = useMemo(() => {
 
@@ -613,11 +666,11 @@ function AccountsPage({
   /**
    * Preserve the existing account creation workflow.
    *
-   * After a successful creation:
+   * After successful creation:
    *
-   * - Close the form
-   * - Show success feedback
-   * - Refresh accounts and balances
+   * - Close the form.
+   * - Show success feedback.
+   * - Refresh accounts and balances.
    */
   function handleAccountCreated(
     account: Account,
@@ -644,7 +697,7 @@ function AccountsPage({
    * - Rename
    * - Deactivate
    *
-   * Refresh data after a successful operation.
+   * Refresh data after successful operations.
    */
   function handleAccountUpdated(
     message: string,
@@ -656,17 +709,17 @@ function AccountsPage({
       (previousVersion) => previousVersion + 1,
     )
   }
-    
-  // ============================================================
+
+  // ==========================================================
   // ACCOUNT IMPORT — SUCCESS HANDLER
-  // ============================================================
+  // ==========================================================
 
   /**
    * Called after Spring Boot successfully imports accounts.
    *
    * The database transaction has completed.
    *
-   * We reuse the existing refreshVersion mechanism
+   * Reuse the existing refreshVersion mechanism
    * to reload both:
    *
    * - Chart of Accounts
@@ -685,6 +738,68 @@ function AccountsPage({
     setRefreshVersion(
       (previousVersion) => previousVersion + 1,
     )
+  }
+
+  // ==========================================================
+  // EXPORT CHART OF ACCOUNTS
+  // ==========================================================
+
+  /**
+   * Ask Spring Boot to generate the current business's
+   * account export.
+   *
+   * The frontend never creates financial records
+   * or recalculates balances for this download.
+   *
+   * Supported file types:
+   *
+   * - CSV
+   * - XLSX
+   *
+   * The export filename comes from the API response,
+   * with a fallback in accountExports.ts.
+   */
+  async function handleExportAccounts(): Promise<void> {
+
+    // ========================================================
+    // PREVENT DUPLICATE EXPORT REQUESTS
+    // ========================================================
+
+    if (isExporting) {
+      return
+    }
+
+    setIsExporting(true)
+
+    setExportError('')
+
+    try {
+
+      // ======================================================
+      // REQUEST EXPORT FROM SPRING BOOT
+      // ======================================================
+
+      await exportAccounts(
+        businessId,
+        exportFormat,
+      )
+
+    } catch (error: unknown) {
+
+      // ======================================================
+      // DISPLAY DOWNLOAD ERROR
+      // ======================================================
+
+      setExportError(
+        error instanceof Error
+          ? error.message
+          : 'Unable to export accounts.',
+      )
+
+    } finally {
+
+      setIsExporting(false)
+    }
   }
 
   // ==========================================================
@@ -778,6 +893,21 @@ function AccountsPage({
       )}
 
       {/* ==================================================== */}
+      {/* ACCOUNT EXPORT ERROR NOTIFICATION */}
+      {/* ==================================================== */}
+
+      {exportError && (
+
+        <div
+          className="coa-export-error"
+          role="alert"
+        >
+          {exportError}
+        </div>
+
+      )}
+
+      {/* ==================================================== */}
       {/* NEW ACCOUNT FORM */}
       {/* ==================================================== */}
 
@@ -820,14 +950,74 @@ function AccountsPage({
 
           <div className="coa-table-actions">
 
-            {/* ======================================================== */}
+            {/* ============================================== */}
             {/* IMPORT CHART OF ACCOUNTS */}
-            {/* ======================================================== */}
+            {/* ============================================== */}
 
             <ImportAccountsDialog
               businessId={businessId}
               onImported={handleAccountsImported}
             />
+
+            {/* ============================================== */}
+            {/* EXPORT CHART OF ACCOUNTS */}
+            {/* ============================================== */}
+
+            <div className="coa-export-actions">
+
+              {/* ============================================ */}
+              {/* EXPORT FORMAT SELECTOR */}
+              {/* ============================================ */}
+
+              <label
+                htmlFor="coa-export-format"
+                className="coa-visually-hidden"
+              >
+                Export file format
+              </label>
+
+              <select
+                id="coa-export-format"
+                className="coa-export-select"
+                value={exportFormat}
+                disabled={isExporting}
+                onChange={(event) =>
+                  setExportFormat(
+                    event.target.value as AccountExportFormat,
+                  )
+                }
+              >
+                <option value="csv">
+                  CSV
+                </option>
+
+                <option value="xlsx">
+                  Excel (.xlsx)
+                </option>
+              </select>
+
+              {/* ============================================ */}
+              {/* EXPORT BUTTON */}
+              {/* ============================================ */}
+
+              <button
+                type="button"
+                className="coa-refresh-button coa-export-button"
+                disabled={isLoading || isExporting}
+                onClick={() => void handleExportAccounts()}
+              >
+                <Download
+                  size={15}
+                  strokeWidth={1.8}
+                />
+
+                {isExporting
+                  ? 'Exporting...'
+                  : 'Export'
+                }
+              </button>
+
+            </div>
 
             {/* ============================================== */}
             {/* CREATE ACCOUNT BUTTON */}
@@ -1155,11 +1345,13 @@ function AccountsPage({
                             {account.parentAccountId !== null && (
 
                               <>
+
                                 {' · Under '}
 
                                 {accountsById.get(
                                   account.parentAccountId,
                                 )?.name ?? 'Unknown parent'}
+
                               </>
 
                             )}
@@ -1330,7 +1522,6 @@ function AccountsPage({
       </section>
 
     </section>
-
   )
 }
 
