@@ -23,6 +23,76 @@ The application is currently under active development.
 
 ---
 
+## Screenshots & Demo
+
+LedgerBase provides a React-based accounting workspace
+for managing financial records, processing journal entries,
+and generating financial statements.
+
+The screenshots below use the fictional demonstration
+business **ABC Consulting LLC** and its October 2026
+accounting transactions.
+
+### Financial Dashboard
+
+The Overview dashboard displays financial performance,
+accounting health indicators, and recent journal activity
+using data retrieved from the backend.
+
+![LedgerBase Financial Dashboard](docs/screenshots/01-dashboard.png)
+
+### Accounting Workflows
+
+| Chart of Accounts | Journal Transactions |
+|---|---|
+| ![Chart of Accounts](docs/screenshots/02-chart-of-accounts.png) | ![Journal Transactions](docs/screenshots/03-transactions.png) |
+| Account management, reporting classifications, hierarchy, and CSV/XLSX import/export. | Business-specific journal references, transaction statuses, and double-entry posting workflows. |
+
+### Financial Reporting
+
+LedgerBase generates a Trial Balance, Income Statement,
+and Balance Sheet from posted ledger entries.
+
+<details>
+<summary><strong>View Financial Report Screenshots</strong></summary>
+
+#### Trial Balance
+
+![Trial Balance](docs/screenshots/04-trial-balance.png)
+
+#### Income Statement
+
+![Income Statement](docs/screenshots/05-income-statement.png)
+
+#### Balance Sheet
+
+![Balance Sheet](docs/screenshots/06-balance-sheet.png)
+
+</details>
+
+### Accounting Demonstration
+
+The ABC Consulting LLC scenario includes eight posted
+journal entries covering capital contributions, expenses,
+revenue recognition, receivables, payables, customer
+advances, and fixed-asset purchases.
+
+The documented demonstration verifies:
+
+- Equal Trial Balance debit and credit totals.
+- Revenue and expense recognition.
+- Net Income of $4,800.00.
+- Balanced total assets of $32,800.00.
+- Balance Sheet reconciliation with a $0.00 difference.
+
+**[View the Complete Accounting Demonstration](docs/accounting-demo.md)**
+
+The demonstration data is stored in the local development
+database and is not automatically seeded when cloning
+the repository.
+
+---
+
 ## Tech Stack
 
 | Layer | Technologies |
@@ -39,6 +109,10 @@ The application is currently under active development.
 ---
 
 ## Architecture
+
+For a detailed explanation of the application layers,
+accounting workflows, and database architecture, see
+the [System Architecture Guide](docs/architecture.md).
 
 LedgerBase follows a layered full-stack architecture.
 
@@ -303,6 +377,128 @@ Implemented safeguards include:
 These controls support the reliability of the
 general ledger and financial reporting workflows.
 
+### 8. Chart of Accounts Import and Export
+
+LedgerBase supports importing and exporting general ledger
+account definitions in CSV and Microsoft Excel formats.
+
+**Supported formats**
+
+- CSV (`.csv`)
+- Microsoft Excel (`.xlsx`)
+
+**Export functionality**
+
+- Export a selected business's Chart of Accounts.
+- Download account definitions in CSV or Excel format.
+- Preserve account codes, names, classifications,
+  reporting groups, and account hierarchy information.
+- Generate export files from authoritative PostgreSQL data.
+
+**Import functionality**
+
+- Upload CSV or Excel account files.
+- Parse account definitions and validate input data.
+- Preview parsed rows before committing changes.
+- Display row-level validation errors.
+- Prevent duplicate account codes within a business.
+- Resolve parent-child relationships regardless of
+  the order of accounts in the uploaded file.
+- Support posting and non-posting grouping accounts.
+- Import validated records within a database transaction.
+- Roll back the transaction if an import operation fails.
+- Refresh the Chart of Accounts after a successful import.
+
+**Import workflow**
+
+```text
+Select CSV/XLSX File
+         |
+         v
+Parse Account Data
+         |
+         v
+Validate Accounts
+         |
+         v
+Display Import Preview
+         |
+         v
+Review Validation Results
+         |
+         v
+Confirm Import
+         |
+         v
+Transactional Database Insert
+         |
+         v
+Refresh Chart of Accounts
+```
+
+The import preview does not create database records.
+
+Account import currently supports creating new accounts.
+Existing account codes cannot be reused, including those
+belonging to inactive accounts.
+
+Updating existing accounts and skipping duplicates during
+import are reserved for future enhancements.
+
+
+### 9. Financial Overview Dashboard
+
+LedgerBase provides a financial dashboard for monitoring
+accounting performance, journal activity, and reporting
+integrity for the selected business.
+
+**Financial metrics**
+
+- Total Assets as of the selected reporting date.
+- Total Liabilities as of the selected reporting date.
+- Fiscal-year-to-date Net Income.
+- Reporting period information derived from configured
+  fiscal years.
+
+All financial values are calculated using existing
+Spring Boot reporting services and PostgreSQL data.
+
+The React frontend displays these results without
+performing floating-point financial calculations.
+
+**Journal activity**
+
+- Total journal count.
+- Posted journal count.
+- Draft journal count.
+- Five most recently created journal entries.
+- Business-specific journal references.
+- Journal descriptions, accounting dates, and statuses.
+
+Draft journal entries are excluded from posted
+financial balances.
+
+**Accounting health indicators**
+
+The dashboard displays the results of existing
+backend financial reporting checks:
+
+- Balance Sheet reconciliation.
+- Balance Sheet reporting classification completeness.
+- Income Statement reporting classification completeness.
+
+Financial reporting warnings remain visible when
+accounting checks require attention.
+
+**User experience**
+
+- Business-specific dashboard information.
+- Refreshable financial metrics and journal activity.
+- Independent loading and error states.
+- Quick navigation to Chart of Accounts and Transactions.
+- Responsive enterprise accounting interface.
+
+
 ---
 
 ## Accounting Demo
@@ -432,17 +628,84 @@ cd LedgerBase
 
 ### 2. Configure Environment Variables
 
-Configure the local database environment variables
-required by Docker Compose and Spring Boot.
+LedgerBase uses environment variables to configure the
+local PostgreSQL database connection.
 
-LedgerBase uses a local `.env` file for development
-configuration.
+The repository includes a `.env.example` file containing
+the required configuration template.
 
-The exact values must match the PostgreSQL
-credentials configured for the development environment.
+The actual `.env` file is excluded from Git to prevent
+database credentials from being committed.
 
-Do not commit database passwords or other secrets
-to GitHub.
+**Create your local environment configuration**
+
+From the project root:
+
+```bash
+cp .env.example .env
+```
+
+**Important:** Run this command only during initial setup.
+If you already have a working `.env` file, keep it rather
+than overwriting your existing database configuration.
+
+Open `.env` and replace the example password with a
+strong password of your choice:
+
+```dotenv
+POSTGRES_PASSWORD=your-local-database-password
+```
+
+Do not use the example placeholder as your actual password.
+
+**How environment configuration works**
+
+LedgerBase uses the `POSTGRES_PASSWORD` environment
+variable in two places:
+
+1. `docker-compose.yml` configures the PostgreSQL
+   database container.
+2. `backend/src/main/resources/application.yaml`
+   configures the Spring Boot database connection.
+
+Both services must use the same database password.
+
+**Local database configuration**
+
+| Setting | Value |
+|---|---|
+| Database engine | PostgreSQL 17 |
+| Database name | `ledgerbase` |
+| Database user | `ledgerbase` |
+| Host | `localhost` |
+| Host port | `5434` |
+| Container port | `5432` |
+| Password | Configured using `POSTGRES_PASSWORD` |
+
+The database connection details above describe the
+default LedgerBase local development environment.
+
+**Important: Docker volume persistence**
+
+PostgreSQL stores its data in a persistent Docker volume.
+
+Once the database has been initialized, changing
+`POSTGRES_PASSWORD` in `.env` does not automatically
+change the existing PostgreSQL user's password.
+
+Use the original password for an existing database,
+or update its credentials explicitly.
+
+Do not delete the database volume merely to change
+a password, as doing so can remove development data.
+
+**Security notes**
+
+- Never commit `.env` to Git.
+- Never put real credentials in `.env.example`.
+- Do not share database passwords in screenshots or logs.
+- Production deployments require separate secrets
+  management and security configuration.
 
 ### 3. Start PostgreSQL
 
@@ -543,22 +806,82 @@ can be demonstrated.
 
 ### Backend Tests
 
-The backend includes automated tests for accounting
-operations, database behavior, and REST APIs.
+LedgerBase includes automated integration tests covering
+REST APIs, accounting operations, database constraints,
+transaction rollback, and financial reporting.
+
+**Test database isolation**
+
+Two PostgreSQL databases are used during development:
+
+| Database | Purpose |
+|---|---|
+| `ledgerbase` | Local development and demo records |
+| `ledgerbase_test` | Automated integration tests |
+
+The test profile is defined in:
+
+`backend/src/test/resources/application-test.yaml`
+
+Integration tests use the Spring Boot `test` profile
+to connect to the separate test database.
+
+This prevents normal integration-test operations from
+modifying the development application's accounting data
+when the test configuration is correctly applied.
+
+**Run the backend test suite**
+
+Ensure PostgreSQL is running.
 
 From the project root:
 
 ```bash
+set -a
+source .env
+set +a
+
 cd backend
-./mvnw test
+./mvnw clean verify
 ```
 
-Integration tests require the configured PostgreSQL
-test database environment.
+The Maven verification process compiles the application
+and runs the configured automated tests.
 
-The development and test databases should remain
-separate to avoid modifying real development records
-while running automated tests.
+**Important considerations**
+
+- The `ledgerbase_test` database must exist before
+  integration tests execute.
+- Ensure the test profile points to `ledgerbase_test`
+  before running integration tests.
+- Integration tests may create, update, or delete
+  records in the test database.
+- Never configure the test profile to use the
+  development database.
+- A fresh PostgreSQL installation may require
+  creating `ledgerbase_test` before testing.
+
+
+**Initialize the test database**
+
+A fresh PostgreSQL container creates the main `ledgerbase`
+database but does not automatically create `ledgerbase_test`.
+
+After starting PostgreSQL, create the test database:
+
+```bash
+docker exec ledgerbase-postgres \
+  psql -U ledgerbase -d postgres \
+  -c "CREATE DATABASE ledgerbase_test;"
+```
+
+Run this command only once. If the test database already
+exists, skip this step.
+
+Spring Boot's test profile connects to `ledgerbase_test`.
+Flyway manages the schema migrations for the configured
+test database.
+
 
 ### Frontend Production Build
 
@@ -616,14 +939,19 @@ LedgerBase is being developed incrementally.
 
 Potential next features include:
 
-### Financial Data Import
+### Additional Financial Data Import and Migration
 
-- Import Chart of Accounts data from Excel or CSV.
-- Import journal entries and financial records.
-- Validate imported accounting data.
-- Prevent duplicate imports.
-- Support opening financial balances and migration
-  from external accounting systems.
+Chart of Accounts CSV/XLSX import and export are already
+implemented.
+
+Potential future extensions include:
+
+- Import journal entries from external accounting systems.
+- Import customer and vendor records.
+- Support opening financial balance migration.
+- Add an explicit skip-existing account import mode.
+- Support carefully validated updates to existing accounts.
+- Provide additional migration and reconciliation tools.
 
 ### Authentication and Authorization
 
