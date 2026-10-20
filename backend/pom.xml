@@ -158,6 +158,31 @@
         </dependency>
 
         <!-- ==================================
+             EXCEL IMPORT AND EXPORT
+             ================================== -->
+
+        <!--
+            Apache POI:
+            Read and write Microsoft Excel .xlsx files.
+
+            Milestone 20 uses this library to:
+
+            1. Export the Chart of Accounts to Excel.
+            2. Generate downloadable import templates.
+            3. Read uploaded Excel spreadsheets.
+            4. Support future journal entry and
+               financial report import/export.
+
+            The poi-ooxml dependency includes the
+            core POI libraries required for .xlsx.
+        -->
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>5.5.1</version>
+        </dependency>
+
+        <!-- ==================================
              TESTING DEPENDENCIES
              ================================== -->
 
