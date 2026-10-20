@@ -183,6 +183,34 @@
         </dependency>
 
         <!-- ==================================
+             CSV IMPORT PROCESSING
+             ================================== -->
+
+        <!--
+            Apache Commons CSV:
+            Parse uploaded CSV files safely.
+
+            Unlike String.split(","), this library
+            correctly handles:
+
+            1. Commas inside quoted account names.
+            2. Escaped quotation marks.
+            3. Multiline CSV fields.
+            4. CSV files exported by LedgerBase.
+
+            CSV records will be converted into
+            AccountImportRow objects.
+
+            This dependency is for CSV parsing;
+            Apache POI remains responsible for XLSX.
+        -->
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-csv</artifactId>
+            <version>1.14.1</version>
+        </dependency>
+
+        <!-- ==================================
              TESTING DEPENDENCIES
              ================================== -->
 
