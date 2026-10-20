@@ -126,20 +126,20 @@ const navigationGroups: NavigationGroup[] = [
 
     items: [
       {
-        id: 'transactions',
-        label: 'Transactions',
+        id: 'accounts',
+        label: 'Chart of Accounts',
         icon: (
-          <ArrowLeftRight
+          <BookOpen
             size={18}
             strokeWidth={1.8}
           />
         ),
       },
       {
-        id: 'accounts',
-        label: 'Chart of Accounts',
+        id: 'transactions',
+        label: 'Transactions',
         icon: (
-          <BookOpen
+          <ArrowLeftRight
             size={18}
             strokeWidth={1.8}
           />

@@ -8,8 +8,10 @@ import {
   type AccountBalance,
 } from '../api/accounts'
 
-import NewAccountForm from '../components/accounts/NewAccountForm'
 import AccountActions from '../components/accounts/AccountActions'
+import NewAccountForm from '../components/accounts/NewAccountForm'
+import ImportAccountsDialog from '../components/accounts/ImportAccountsDialog'
+
 
 import './AccountsPage.css'
 
@@ -654,6 +656,36 @@ function AccountsPage({
       (previousVersion) => previousVersion + 1,
     )
   }
+    
+  // ============================================================
+  // ACCOUNT IMPORT — SUCCESS HANDLER
+  // ============================================================
+
+  /**
+   * Called after Spring Boot successfully imports accounts.
+   *
+   * The database transaction has completed.
+   *
+   * We reuse the existing refreshVersion mechanism
+   * to reload both:
+   *
+   * - Chart of Accounts
+   * - Posted account balances
+   *
+   * No local placeholder account data is created.
+   */
+  function handleAccountsImported(
+    importedRows: number,
+  ): void {
+
+    setSuccessMessage(
+      `Successfully imported ${importedRows} accounts.`,
+    )
+
+    setRefreshVersion(
+      (previousVersion) => previousVersion + 1,
+    )
+  }
 
   // ==========================================================
   // REFRESH ACCOUNT DATA
@@ -787,6 +819,15 @@ function AccountsPage({
           {/* ================================================ */}
 
           <div className="coa-table-actions">
+
+            {/* ======================================================== */}
+            {/* IMPORT CHART OF ACCOUNTS */}
+            {/* ======================================================== */}
+
+            <ImportAccountsDialog
+              businessId={businessId}
+              onImported={handleAccountsImported}
+            />
 
             {/* ============================================== */}
             {/* CREATE ACCOUNT BUTTON */}

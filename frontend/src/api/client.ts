@@ -204,3 +204,59 @@ export async function patchNoContent(
   // HTTP 204 is a successful response without JSON.
   await ensureSuccessfulResponse(response)
 }
+
+ // ============================================================
+ // HTTP MULTIPART POST
+ // ============================================================
+
+ /**
+  * Upload multipart/form-data to the Spring Boot backend.
+  *
+  * Unlike postJson(), this helper sends FormData.
+  *
+  * Used for:
+  *
+  * - CSV account import preview
+  * - XLSX account import preview
+  * - Confirmed account imports
+  *
+  * IMPORTANT:
+  *
+  * Do not manually set the Content-Type header.
+  *
+  * The browser automatically adds the correct
+  * multipart/form-data boundary.
+  *
+  * Manually setting Content-Type would prevent
+  * Spring Boot from correctly parsing the upload.
+  *
+  * Reuse the existing shared JSON response and
+  * HTTP error handling functions.
+  */
+ export async function postMultipart<TResponse>(
+   path: string,
+   formData: FormData,
+ ): Promise<TResponse> {
+
+   // ==========================================================
+   // SEND MULTIPART REQUEST
+   // ==========================================================
+
+   const response = await fetch(path, {
+
+     method: 'POST',
+
+     headers: {
+       Accept: 'application/json',
+     },
+
+     body: formData,
+
+   })
+
+   // ==========================================================
+   // VALIDATE RESPONSE AND PARSE JSON
+   // ==========================================================
+
+   return parseJsonResponse<TResponse>(response)
+ }
