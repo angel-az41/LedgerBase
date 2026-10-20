@@ -158,6 +158,59 @@
         </dependency>
 
         <!-- ==================================
+             EXCEL IMPORT AND EXPORT
+             ================================== -->
+
+        <!--
+            Apache POI:
+            Read and write Microsoft Excel .xlsx files.
+
+            Milestone 20 uses this library to:
+
+            1. Export the Chart of Accounts to Excel.
+            2. Generate downloadable import templates.
+            3. Read uploaded Excel spreadsheets.
+            4. Support future journal entry and
+               financial report import/export.
+
+            The poi-ooxml dependency includes the
+            core POI libraries required for .xlsx.
+        -->
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>5.5.1</version>
+        </dependency>
+
+        <!-- ==================================
+             CSV IMPORT PROCESSING
+             ================================== -->
+
+        <!--
+            Apache Commons CSV:
+            Parse uploaded CSV files safely.
+
+            Unlike String.split(","), this library
+            correctly handles:
+
+            1. Commas inside quoted account names.
+            2. Escaped quotation marks.
+            3. Multiline CSV fields.
+            4. CSV files exported by LedgerBase.
+
+            CSV records will be converted into
+            AccountImportRow objects.
+
+            This dependency is for CSV parsing;
+            Apache POI remains responsible for XLSX.
+        -->
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-csv</artifactId>
+            <version>1.14.1</version>
+        </dependency>
+
+        <!-- ==================================
              TESTING DEPENDENCIES
              ================================== -->
 

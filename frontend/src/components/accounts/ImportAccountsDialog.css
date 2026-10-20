@@ -1,0 +1,409 @@
+/* ============================================================ */
+/* LEDGERBASE — ACCOUNT IMPORT DIALOG */
+/* ============================================================ */
+
+/**
+ * Enterprise accounting import interface.
+ *
+ * All component-specific selectors use
+ * the coa-import- prefix to prevent conflicts
+ * with the existing Chart of Accounts styles.
+ */
+
+/* ============================================================ */
+/* IMPORT TRIGGER */
+/* ============================================================ */
+
+.coa-import-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+/* ============================================================ */
+/* MODAL DIALOG */
+/* ============================================================ */
+
+.coa-import-dialog {
+  width: min(960px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  margin: auto;
+  padding: 0;
+  overflow: auto;
+  box-sizing: border-box;
+  border: 1px solid #e1e8ef;
+  border-radius: 14px;
+  background: #ffffff;
+  color: #24364d;
+  box-shadow: 0 24px 80px rgba(15, 35, 55, 0.2);
+}
+
+.coa-import-dialog::backdrop {
+  background: rgba(12, 28, 46, 0.56);
+}
+
+/* ============================================================ */
+/* MODAL HEADER */
+/* ============================================================ */
+
+.coa-import-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 23px 26px;
+  border-bottom: 1px solid #e8edf2;
+}
+
+.coa-import-title-group {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.coa-import-header h2 {
+  margin: 0 0 6px;
+  font-size: 18px;
+  font-weight: 750;
+  color: #203149;
+}
+
+.coa-import-header p {
+  margin: 0;
+  color: #7b8a9e;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.coa-import-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: #718196;
+  cursor: pointer;
+}
+
+.coa-import-close:hover:not(:disabled) {
+  background: #f0f4f7;
+}
+
+.coa-import-close:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ============================================================ */
+/* CONTENT AND SECTIONS */
+/* ============================================================ */
+
+.coa-import-content {
+  padding: 24px 26px;
+}
+
+.coa-import-section {
+  margin-bottom: 25px;
+}
+
+.coa-import-section h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 750;
+  color: #23364f;
+}
+
+.coa-import-section > p {
+  margin: 0 0 16px;
+  color: #8190a3;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* ============================================================ */
+/* FILE PICKER */
+/* ============================================================ */
+
+.coa-import-file-picker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 120px;
+  padding: 18px;
+  box-sizing: border-box;
+  border: 1px dashed #b8cbd3;
+  border-radius: 10px;
+  background: #f9fbfc;
+  color: #496478;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.coa-import-file-picker:hover {
+  border-color: #198f79;
+  background: #f3faf8;
+}
+
+.coa-import-file-picker:focus-within {
+  outline: 2px solid #35aa94;
+  outline-offset: 2px;
+}
+
+/**
+ * Visually hide the native file input while
+ * keeping it accessible through its label.
+ */
+.coa-import-file-picker input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  opacity: 0;
+}
+
+/* ============================================================ */
+/* BUTTONS */
+/* ============================================================ */
+
+.coa-import-primary-button,
+.coa-import-secondary-button {
+  min-height: 38px;
+  padding: 9px 16px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.coa-import-primary-button {
+  border: 1px solid #188a76;
+  background: #198f79;
+  color: white;
+}
+
+.coa-import-primary-button:hover:not(:disabled) {
+  background: #147b68;
+}
+
+.coa-import-secondary-button {
+  border: 1px solid #dce5ec;
+  background: white;
+  color: #38546a;
+}
+
+.coa-import-secondary-button:hover:not(:disabled) {
+  background: #f3f7fa;
+}
+
+.coa-import-primary-button:disabled,
+.coa-import-secondary-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.coa-import-file-picker + .coa-import-secondary-button {
+  margin-top: 14px;
+}
+
+/* ============================================================ */
+/* PREVIEW SUMMARY */
+/* ============================================================ */
+
+.coa-import-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 17px 0;
+}
+
+.coa-import-summary > div {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 17px;
+  border: 1px solid #e5ebf0;
+  border-radius: 9px;
+  background: #fafcfd;
+}
+
+.coa-import-summary span {
+  color: #8291a4;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.coa-import-summary strong {
+  color: #20334a;
+  font-size: 22px;
+  font-weight: 750;
+}
+
+/* ============================================================ */
+/* VALIDATION NOTICES */
+/* ============================================================ */
+
+.coa-import-valid-notice,
+.coa-import-error-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 13px 15px;
+  margin: 16px 0;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.coa-import-valid-notice {
+  border: 1px solid #c9e6da;
+  background: #f0faf5;
+  color: #267859;
+}
+
+.coa-import-error-notice {
+  border: 1px solid #f0cece;
+  background: #fff6f5;
+  color: #a34747;
+}
+
+.coa-import-file-errors,
+.coa-import-row-errors {
+  padding-left: 17px;
+  color: #aa4545;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.coa-import-row-errors {
+  margin: 7px 0 0;
+}
+
+/* ============================================================ */
+/* PREVIEW TABLE */
+/* ============================================================ */
+
+.coa-import-table-scroll {
+  width: 100%;
+  margin-top: 18px;
+  overflow-x: auto;
+  border: 1px solid #e6ebf1;
+  border-radius: 10px;
+}
+
+.coa-import-table {
+  width: 100%;
+  min-width: 860px;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.coa-import-table thead {
+  background: #f7f9fb;
+}
+
+.coa-import-table th {
+  padding: 13px 14px;
+  border-bottom: 1px solid #e6ebf1;
+  color: #8190a3;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.coa-import-table td {
+  padding: 14px;
+  border-bottom: 1px solid #edf1f5;
+  color: #51647a;
+  font-size: 11px;
+  vertical-align: top;
+}
+
+.coa-import-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.coa-import-table tbody tr:hover {
+  background: #fbfcfd;
+}
+
+.coa-import-code {
+  color: #247e73 !important;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-weight: 700;
+}
+
+/* ============================================================ */
+/* ROW VALIDATION STATUS */
+/* ============================================================ */
+
+.coa-import-row-valid,
+.coa-import-row-invalid {
+  display: inline-block;
+  padding: 5px 9px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.coa-import-row-valid {
+  background: #e8f8f1;
+  color: #218666;
+}
+
+.coa-import-row-invalid {
+  background: #fff0ef;
+  color: #b24d4d;
+}
+
+/* ============================================================ */
+/* MODAL FOOTER */
+/* ============================================================ */
+
+.coa-import-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 18px 26px;
+  border-top: 1px solid #e8edf2;
+  background: #ffffff;
+}
+
+/* ============================================================ */
+/* KEYBOARD FOCUS */
+/* ============================================================ */
+
+.coa-import-dialog button:focus-visible,
+.coa-import-file-picker:focus-within {
+  outline: 2px solid #35aa94;
+  outline-offset: 2px;
+}
+
+/* ============================================================ */
+/* RESPONSIVE LAYOUT */
+/* ============================================================ */
+
+@media (max-width: 640px) {
+  .coa-import-header,
+  .coa-import-content,
+  .coa-import-footer {
+    padding: 18px;
+  }
+
+  .coa-import-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .coa-import-footer {
+    flex-wrap: wrap;
+  }
+}

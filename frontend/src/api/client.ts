@@ -204,3 +204,154 @@ export async function patchNoContent(
   // HTTP 204 is a successful response without JSON.
   await ensureSuccessfulResponse(response)
 }
+
+ // ============================================================
+ // HTTP MULTIPART POST
+ // ============================================================
+
+ /**
+  * Upload multipart/form-data to the Spring Boot backend.
+  *
+  * Unlike postJson(), this helper sends FormData.
+  *
+  * Used for:
+  *
+  * - CSV account import preview
+  * - XLSX account import preview
+  * - Confirmed account imports
+  *
+  * IMPORTANT:
+  *
+  * Do not manually set the Content-Type header.
+  *
+  * The browser automatically adds the correct
+  * multipart/form-data boundary.
+  *
+  * Manually setting Content-Type would prevent
+  * Spring Boot from correctly parsing the upload.
+  *
+  * Reuse the existing shared JSON response and
+  * HTTP error handling functions.
+  */
+ export async function postMultipart<TResponse>(
+   path: string,
+   formData: FormData,
+ ): Promise<TResponse> {
+
+   // ==========================================================
+   // SEND MULTIPART REQUEST
+   // ==========================================================
+
+   const response = await fetch(path, {
+
+     method: 'POST',
+
+     headers: {
+       Accept: 'application/json',
+     },
+
+     body: formData,
+
+   })
+
+   // ==========================================================
+   // VALIDATE RESPONSE AND PARSE JSON
+   // ==========================================================
+
+   return parseJsonResponse<TResponse>(response)
+ }
+
+ // ============================================================
+ // HTTP FILE DOWNLOAD
+ // ============================================================
+
+ /**
+  * Download a binary file from Spring Boot.
+  *
+  * Supports:
+  * - CSV files
+  * - XLSX Excel spreadsheets
+  *
+  * Unlike getJson(), this function expects a Blob
+  * rather than a JSON response.
+  *
+  * We reuse our existing HTTP error handler to
+  * handle unsuccessful backend requests.
+  */
+ export async function downloadFile(
+   path: string,
+   fallbackFilename: string,
+ ): Promise<void> {
+
+   // ==========================================================
+   // STEP 1 — REQUEST FILE FROM BACKEND
+   // ==========================================================
+
+   const response = await fetch(path, {
+     method: 'GET',
+   })
+
+   // ==========================================================
+   // STEP 2 — CHECK HTTP RESPONSE
+   // ==========================================================
+
+   await ensureSuccessfulResponse(response)
+
+   // ==========================================================
+   // STEP 3 — READ BINARY RESPONSE
+   // ==========================================================
+
+   const blob = await response.blob()
+
+   // ==========================================================
+   // STEP 4 — RESOLVE DOWNLOAD FILENAME
+   // ==========================================================
+
+   /**
+    * Prefer the filename supplied by Spring Boot
+    * through the Content-Disposition header.
+    *
+    * Use a predictable fallback when no filename
+    * is provided.
+    */
+   const disposition = response.headers.get(
+     'Content-Disposition',
+   )
+
+   const filenameMatch = disposition?.match(
+     /filename="?([^";]+)"?/i,
+   )
+
+   const filename = (
+     filenameMatch?.[1] ?? fallbackFilename
+   ).split(/[\\/]/).pop() || fallbackFilename
+
+   // ==========================================================
+   // STEP 5 — CREATE TEMPORARY DOWNLOAD URL
+   // ==========================================================
+
+   const objectUrl = URL.createObjectURL(blob)
+
+   const link = document.createElement('a')
+
+   link.href = objectUrl
+   link.download = filename
+
+   // ==========================================================
+   // STEP 6 — START BROWSER DOWNLOAD
+   // ==========================================================
+
+   try {
+
+     document.body.appendChild(link)
+
+     link.click()
+
+   } finally {
+
+     // Remove temporary DOM element and file URL.
+     link.remove()
+     URL.revokeObjectURL(objectUrl)
+
+   }
+ }
