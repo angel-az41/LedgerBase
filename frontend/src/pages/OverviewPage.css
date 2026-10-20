@@ -186,3 +186,448 @@
   }
 
 }
+
+/* ============================================================ */
+/* JOURNAL ACTIVITY */
+/* ============================================================ */
+
+/**
+ * Display transaction activity below the existing
+ * financial dashboard.
+ *
+ * Financial metrics remain in their original layout.
+ */
+
+.overview-activity {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* ============================================================ */
+/* ACTIVITY SECTION HEADING */
+/* ============================================================ */
+
+.overview-activity-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.overview-activity-heading h2 {
+  margin: 0 0 6px;
+  color: #24364b;
+  font-size: 16px;
+  font-weight: 750;
+}
+
+.overview-activity-heading p {
+  margin: 0;
+  color: #8290a1;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.overview-activity-link {
+  border: none;
+  background: transparent;
+  color: #168c78;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.overview-activity-link:hover {
+  text-decoration: underline;
+}
+
+/* ============================================================ */
+/* JOURNAL METRIC GRID */
+/* ============================================================ */
+
+.overview-activity-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.overview-activity-card {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+
+  min-height: 120px;
+  padding: 21px;
+
+  border: 1px solid #e6ebf1;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.overview-activity-card p {
+  margin: 0;
+  color: #76879e;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.overview-activity-card strong {
+  color: #1e3047;
+  font-size: 26px;
+  line-height: 1.2;
+}
+
+.overview-activity-card span {
+  color: #96a3b4;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+/* ============================================================ */
+/* RECENT JOURNALS CARD */
+/* ============================================================ */
+
+.overview-recent-journals {
+  overflow: hidden;
+  border: 1px solid #e6ebf1;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.overview-recent-heading {
+  padding: 22px 24px;
+}
+
+.overview-recent-heading h3 {
+  margin: 0 0 6px;
+  color: #24364b;
+  font-size: 15px;
+  font-weight: 750;
+}
+
+.overview-recent-heading p {
+  margin: 0;
+  color: #8290a1;
+  font-size: 12px;
+}
+
+/* ============================================================ */
+/* RECENT JOURNAL TABLE */
+/* ============================================================ */
+
+.overview-recent-table-scroll {
+  overflow-x: auto;
+}
+
+.overview-recent-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.overview-recent-table th {
+  padding: 14px 24px;
+  border-top: 1px solid #e6ebf1;
+  border-bottom: 1px solid #e6ebf1;
+
+  background: #f7f9fb;
+  color: #8090a4;
+
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.overview-recent-table td {
+  padding: 16px 24px;
+  border-bottom: 1px solid #edf1f5;
+
+  color: #40536a;
+  font-size: 12px;
+}
+
+.overview-recent-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.overview-journal-reference {
+  color: #148b76 !important;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+/* ============================================================ */
+/* JOURNAL STATUS BADGES */
+/* ============================================================ */
+
+.overview-journal-status {
+  display: inline-flex;
+  align-items: center;
+
+  padding: 5px 9px;
+  border-radius: 6px;
+
+  background: #eef2f6;
+  color: #687a8e;
+
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.overview-journal-status.is-posted {
+  background: #e8f7f0;
+  color: #178765;
+}
+
+.overview-journal-status.is-draft {
+  background: #fff5e5;
+  color: #a77424;
+}
+
+/* ============================================================ */
+/* ACTIVITY LOADING AND EMPTY STATES */
+/* ============================================================ */
+
+.overview-activity-message {
+  margin: 0;
+  padding: 24px;
+  color: #8290a1;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+/* ============================================================ */
+/* RESPONSIVE ACTIVITY LAYOUT */
+/* ============================================================ */
+
+@media (max-width: 760px) {
+
+  .overview-activity-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .overview-recent-table {
+    min-width: 650px;
+  }
+
+}
+
+/* ============================================================ */
+/* ACCOUNTING HEALTH */
+/* ============================================================ */
+
+/**
+ * Display existing backend financial-reporting checks
+ * in a compact section.
+ *
+ * The section complements the existing warnings.
+ * It does not replace them or modify financial data.
+ */
+
+.overview-health {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ============================================================ */
+/* ACCOUNTING HEALTH HEADING */
+/* ============================================================ */
+
+.overview-health-heading h2 {
+  margin: 0 0 6px;
+  color: #24364b;
+  font-size: 16px;
+  font-weight: 750;
+}
+
+.overview-health-heading p {
+  margin: 0;
+  color: #8290a1;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* ============================================================ */
+/* ACCOUNTING HEALTH GRID */
+/* ============================================================ */
+
+.overview-health-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+
+/* ============================================================ */
+/* ACCOUNTING HEALTH CARD */
+/* ============================================================ */
+
+.overview-health-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+
+  min-width: 0;
+  padding: 18px;
+
+  border: 1px solid #e6ebf1;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+/* ============================================================ */
+/* ACCOUNTING HEALTH DESCRIPTION */
+/* ============================================================ */
+
+.overview-health-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+
+.overview-health-copy strong {
+  color: #24364b;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.overview-health-copy > span {
+  color: #8290a1;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+/* ============================================================ */
+/* ACCOUNTING HEALTH STATUS */
+/* ============================================================ */
+
+.overview-health-status {
+  flex-shrink: 0;
+
+  padding: 6px 9px;
+  border-radius: 6px;
+
+  font-size: 10px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+/* Successful backend check. */
+.overview-health-status.is-healthy {
+  background: #e8f7f0;
+  color: #178765;
+}
+
+/* A backend check requires attention. */
+.overview-health-status.is-warning {
+  background: #fff4e4;
+  color: #a77424;
+}
+
+/* Check cannot be evaluated for the reporting date. */
+.overview-health-status.is-unavailable {
+  background: #eef2f6;
+  color: #687a8e;
+}
+
+/* ============================================================ */
+/* RESPONSIVE ACCOUNTING HEALTH */
+/* ============================================================ */
+
+@media (max-width: 1100px) {
+
+  .overview-health-grid {
+    grid-template-columns: 1fr;
+  }
+
+}
+
+/* ============================================================ */
+/* COMPACT WELCOME PANEL */
+/* ============================================================ */
+
+/**
+ * Override the original welcome styles in App.css.
+ *
+ * Reduce unused vertical space while preserving:
+ *
+ * - The existing white card
+ * - Subtle border and rounded corners
+ * - Navy typography
+ * - Restrained teal accents
+ *
+ * Scope these changes to OverviewPage only.
+ */
+
+.overview-page .welcome-panel {
+  padding: 22px 28px;
+  border-radius: 12px;
+}
+
+/* ============================================================ */
+/* COMPACT EYEBROW */
+/* ============================================================ */
+
+.overview-page .welcome-eyebrow {
+  margin: 0 0 8px;
+
+  color: #168c78;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1.2px;
+}
+
+/* ============================================================ */
+/* COMPACT TITLE */
+/* ============================================================ */
+
+.overview-page .welcome-panel h2 {
+  margin: 0 0 7px;
+
+  color: #1e3047;
+  font-size: 20px;
+  font-weight: 750;
+  letter-spacing: -0.5px;
+  line-height: 1.3;
+}
+
+/* ============================================================ */
+/* COMPACT DESCRIPTION */
+/* ============================================================ */
+
+/**
+ * Allow text to wrap naturally on smaller screens.
+ *
+ * This overrides the original nowrap behavior
+ * in App.css.
+ */
+
+.overview-page .welcome-panel > p:last-child {
+  max-width: none;
+  margin: 0;
+
+  color: #74869d;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: normal;
+}
+
+/* ============================================================ */
+/* RESPONSIVE WELCOME PANEL */
+/* ============================================================ */
+
+@media (max-width: 760px) {
+
+  .overview-page .welcome-panel {
+    padding: 20px;
+  }
+
+  .overview-page .welcome-panel h2 {
+    font-size: 18px;
+  }
+
+}

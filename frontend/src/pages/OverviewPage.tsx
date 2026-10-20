@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react'
 
 import {
+  getDashboardActivity,
+  type DashboardActivity,
+} from '../api/dashboardActivity'
+
+import {
   getDashboardMetrics,
   type DashboardMetrics,
 } from '../api/dashboard'
@@ -191,6 +196,38 @@ function OverviewPage({
    */
   const [refreshVersion, setRefreshVersion] =
     useState(0)
+  
+  // ==========================================================
+  // JOURNAL ACTIVITY STATE
+  // ==========================================================
+
+  /**
+   * Store the operational journal metrics retrieved
+   * from the existing Transactions API.
+   *
+   * null means that activity data is unavailable.
+   *
+   * This is different from having zero transactions.
+   */
+  const [activity, setActivity] =
+    useState<DashboardActivity | null>(null)
+
+  /**
+   * Loading journal activity is independent of
+   * loading financial metrics.
+   *
+   * A transaction API problem must not prevent
+   * the financial dashboard from rendering.
+   */
+  const [activityLoading, setActivityLoading] =
+    useState(true)
+
+  /**
+   * Store errors from journal activity requests
+   * separately from financial reporting errors.
+   */
+  const [activityError, setActivityError] =
+    useState('')
 
   // ==========================================================
   // LOAD DASHBOARD METRICS
@@ -264,6 +301,100 @@ function OverviewPage({
      * Cleanup prevents an outdated request from
      * overwriting the results of a newer request.
      */
+    return () => {
+      cancelled = true
+    }
+
+  }, [businessId, refreshVersion])
+
+  // ==========================================================
+  // LOAD JOURNAL ACTIVITY
+  // ==========================================================
+
+  /**
+   * Retrieve recent journal information when:
+   *
+   * 1. The Overview page first loads.
+   * 2. The selected business changes.
+   * 3. The user clicks Refresh.
+   *
+   * This effect runs independently from the
+   * financial reporting request.
+   *
+   * It uses the same refreshVersion mechanism
+   * to keep the dashboard synchronized.
+   */
+  useEffect(() => {
+
+    // ========================================================
+    // TRACK OUTDATED REQUESTS
+    // ========================================================
+
+    let cancelled = false
+
+    // ========================================================
+    // ASYNCHRONOUS ACTIVITY LOADER
+    // ========================================================
+
+    async function loadActivity(): Promise<void> {
+
+      setActivityLoading(true)
+      setActivityError('')
+      setActivity(null)
+
+      try {
+
+        // ====================================================
+        // RETRIEVE REAL JOURNAL ACTIVITY
+        // ====================================================
+
+        const result = await getDashboardActivity(
+          businessId,
+        )
+
+        // ====================================================
+        // UPDATE REACT STATE
+        // ====================================================
+
+        if (!cancelled) {
+          setActivity(result)
+        }
+
+      } catch (error: unknown) {
+
+        // ====================================================
+        // HANDLE ACTIVITY ERRORS INDEPENDENTLY
+        // ====================================================
+
+        if (!cancelled) {
+
+          setActivityError(
+            error instanceof Error
+              ? error.message
+              : 'Unable to retrieve journal activity.',
+          )
+
+        }
+
+      } finally {
+
+        // ====================================================
+        // FINISH LOADING
+        // ====================================================
+
+        if (!cancelled) {
+          setActivityLoading(false)
+        }
+
+      }
+    }
+
+    void loadActivity()
+
+    // ========================================================
+    // CLEAN UP OUTDATED REQUESTS
+    // ========================================================
+
     return () => {
       cancelled = true
     }
@@ -349,12 +480,13 @@ function OverviewPage({
           FINANCIAL WORKSPACE
         </p>
 
-        <h2>Welcome to LedgerBase</h2>
+        <h2>
+          Your accounting workspace
+        </h2>
 
         <p>
-          Manage your general ledger, organize accounts,
-          and build reliable accounting records
-          in one workspace.
+          Review financial performance, accounting health,
+          and journal activity in one place.
         </p>
 
       </section>
@@ -591,6 +723,452 @@ function OverviewPage({
 
       )}
 
+      {/* ====================================================== */}
+      {/* ACCOUNTING HEALTH */}
+      {/* ====================================================== */}
+
+      {/*
+        Display accounting quality checks already returned
+        by the LedgerBase financial reporting APIs.
+
+        These indicators come directly from Spring Boot.
+
+        We do not independently recalculate:
+        - The accounting equation
+        - Reporting classification completeness
+        - Financial statement balances
+
+        When metrics are unavailable, the section is hidden
+        rather than displaying misleading success statuses.
+      */}
+
+      {metrics && (
+
+        <section
+          className="overview-health"
+          aria-label="Accounting health"
+        >
+
+          {/* ================================================== */}
+          {/* SECTION HEADING */}
+          {/* ================================================== */}
+
+          <div className="overview-health-heading">
+
+            <h2>Accounting Health</h2>
+
+            <p>
+              Financial reporting checks as of{' '}
+              {formatDate(metrics.asOfDate)}.
+            </p>
+
+          </div>
+
+          {/* ================================================== */}
+          {/* HEALTH CHECK GRID */}
+          {/* ================================================== */}
+
+          <div className="overview-health-grid">
+
+            {/* ================================================ */}
+            {/* BALANCE SHEET RECONCILIATION */}
+            {/* ================================================ */}
+
+            <div className="overview-health-item">
+
+              <div className="overview-health-copy">
+
+                <strong>
+                  Balance Sheet Reconciliation
+                </strong>
+
+                <span>
+                  Assets = Liabilities + Equity
+                </span>
+
+              </div>
+
+              <span
+                className={
+                  metrics.balanceSheetBalanced
+                    ? 'overview-health-status is-healthy'
+                    : 'overview-health-status is-warning'
+                }
+              >
+                {metrics.balanceSheetBalanced
+                  ? 'Balanced'
+                  : 'Needs Review'}
+              </span>
+
+            </div>
+
+            {/* ================================================ */}
+            {/* BALANCE SHEET CLASSIFICATION */}
+            {/* ================================================ */}
+
+            <div className="overview-health-item">
+
+              <div className="overview-health-copy">
+
+                <strong>
+                  Balance Sheet Classification
+                </strong>
+
+                <span>
+                  Posted accounts assigned reporting groups
+                </span>
+
+              </div>
+
+              <span
+                className={
+                  metrics.balanceSheetClassificationComplete
+                    ? 'overview-health-status is-healthy'
+                    : 'overview-health-status is-warning'
+                }
+              >
+                {metrics.balanceSheetClassificationComplete
+                  ? 'Complete'
+                  : 'Needs Review'}
+              </span>
+
+            </div>
+
+            {/* ================================================ */}
+            {/* INCOME STATEMENT CLASSIFICATION */}
+            {/* ================================================ */}
+
+            <div className="overview-health-item">
+
+              <div className="overview-health-copy">
+
+                <strong>
+                  Income Statement Classification
+                </strong>
+
+                <span>
+                  {metrics.fiscalYearLabel
+                    ?? 'No fiscal year configured'}
+                </span>
+
+              </div>
+
+              <span
+                className={
+                  metrics.incomeStatementClassificationComplete === null
+                    ? 'overview-health-status is-unavailable'
+                    : metrics.incomeStatementClassificationComplete
+                      ? 'overview-health-status is-healthy'
+                      : 'overview-health-status is-warning'
+                }
+              >
+                {metrics.incomeStatementClassificationComplete === null
+                  ? 'Unavailable'
+                  : metrics.incomeStatementClassificationComplete
+                    ? 'Complete'
+                    : 'Needs Review'}
+              </span>
+
+            </div>
+
+          </div>
+
+        </section>
+
+      )}
+
+      {/* ====================================================== */}
+      {/* JOURNAL ACTIVITY */}
+      {/* ====================================================== */}
+
+      <section
+        className="overview-activity"
+        aria-label="Journal activity"
+        aria-busy={activityLoading}
+      >
+
+        {/* ==================================================== */}
+        {/* SECTION HEADING */}
+        {/* ==================================================== */}
+
+        <div className="overview-activity-heading">
+
+          <div>
+
+            <h2>Journal Activity</h2>
+
+            <p>
+              Monitor recent journal entries and posting
+              activity for the selected business.
+            </p>
+
+          </div>
+
+          <button
+            type="button"
+            className="overview-activity-link"
+            onClick={() => onNavigate('transactions')}
+          >
+            View all transactions →
+          </button>
+
+        </div>
+
+        {/* ==================================================== */}
+        {/* JOURNAL STATISTICS */}
+        {/* ==================================================== */}
+
+        <div className="overview-activity-metrics">
+
+          {/* ================================================== */}
+          {/* TOTAL JOURNALS */}
+          {/* ================================================== */}
+
+          <article className="overview-activity-card">
+
+            <p>Total Journals</p>
+
+            <strong>
+              {activityLoading
+                ? 'Loading...'
+                : activity
+                  ? activity.totalTransactions
+                  : '—'}
+            </strong>
+
+            <span>
+              All journal records
+            </span>
+
+          </article>
+
+          {/* ================================================== */}
+          {/* POSTED JOURNALS */}
+          {/* ================================================== */}
+
+          <article className="overview-activity-card">
+
+            <p>Posted Journals</p>
+
+            <strong>
+              {activityLoading
+                ? 'Loading...'
+                : activity
+                  ? activity.postedTransactions
+                  : '—'}
+            </strong>
+
+            <span>
+              Finalized accounting entries
+            </span>
+
+          </article>
+
+          {/* ================================================== */}
+          {/* DRAFT JOURNALS */}
+          {/* ================================================== */}
+
+          <article className="overview-activity-card">
+
+            <p>Draft Journals</p>
+
+            <strong>
+              {activityLoading
+                ? 'Loading...'
+                : activity
+                  ? activity.draftTransactions
+                  : '—'}
+            </strong>
+
+            <span>
+              Awaiting posting
+            </span>
+
+          </article>
+
+        </div>
+
+        {/* ==================================================== */}
+        {/* ACTIVITY ERROR STATE */}
+        {/* ==================================================== */}
+
+        {!activityLoading && activityError && (
+
+          <div
+            className="overview-notice overview-notice-error"
+            role="alert"
+          >
+
+            <strong>
+              Journal activity unavailable
+            </strong>
+
+            <p>{activityError}</p>
+
+            <button
+              type="button"
+              onClick={handleRefresh}
+            >
+              Try Again
+            </button>
+
+          </div>
+
+        )}
+
+        {/* ==================================================== */}
+        {/* RECENT JOURNALS CONTAINER */}
+        {/* ==================================================== */}
+
+        <div className="overview-recent-journals">
+
+          <div className="overview-recent-heading">
+
+            <h3>Recent Journal Entries</h3>
+
+            <p>
+              The five most recently created journals.
+            </p>
+
+          </div>
+
+          {/* ================================================== */}
+          {/* LOADING STATE */}
+          {/* ================================================== */}
+
+          {activityLoading && (
+
+            <p
+              className="overview-activity-message"
+              role="status"
+            >
+              Loading recent journal activity...
+            </p>
+
+          )}
+
+          {/* ================================================== */}
+          {/* EMPTY STATE */}
+          {/* ================================================== */}
+
+          {!activityLoading &&
+            activity &&
+            activity.recentTransactions.length === 0 && (
+
+              <p className="overview-activity-message">
+                No journal entries have been created yet.
+              </p>
+
+            )}
+
+          {/* ================================================== */}
+          {/* RECENT JOURNAL TABLE */}
+          {/* ================================================== */}
+
+          {!activityLoading &&
+            activity &&
+            activity.recentTransactions.length > 0 && (
+
+              <div className="overview-recent-table-scroll">
+
+                <table className="overview-recent-table">
+
+                  <thead>
+
+                    <tr>
+                      <th scope="col">
+                        Journal
+                      </th>
+
+                      <th scope="col">
+                        Description
+                      </th>
+
+                      <th scope="col">
+                        Accounting Date
+                      </th>
+
+                      <th scope="col">
+                        Status
+                      </th>
+                    </tr>
+
+                  </thead>
+
+                  <tbody>
+
+                    {activity.recentTransactions.map(
+                      (transaction) => (
+
+                        <tr key={transaction.id}>
+
+                          {/* ================================ */}
+                          {/* JOURNAL REFERENCE */}
+                          {/* ================================ */}
+
+                          <td className="overview-journal-reference">
+
+                            {transaction.journalReference
+                              ?? 'Reference unavailable'}
+
+                          </td>
+
+                          {/* ================================ */}
+                          {/* JOURNAL DESCRIPTION */}
+                          {/* ================================ */}
+
+                          <td>
+                            {transaction.description}
+                          </td>
+
+                          {/* ================================ */}
+                          {/* ACCOUNTING DATE */}
+                          {/* ================================ */}
+
+                          <td>
+                            {formatDate(
+                              transaction.transactionDate,
+                            )}
+                          </td>
+
+                          {/* ================================ */}
+                          {/* POSTING STATUS */}
+                          {/* ================================ */}
+
+                          <td>
+
+                            <span
+                              className={
+                                transaction.status === 'POSTED'
+                                  ? 'overview-journal-status is-posted'
+                                  : transaction.status === 'DRAFT'
+                                    ? 'overview-journal-status is-draft'
+                                    : 'overview-journal-status'
+                              }
+                            >
+
+                              {transaction.status}
+
+                            </span>
+
+                          </td>
+
+                        </tr>
+
+                      ),
+                    )}
+
+                  </tbody>
+
+                </table>
+
+              </div>
+
+            )}
+
+        </div>
+
+      </section>
 
       {/* ====================================================== */}
       {/* QUICK ACCESS */}
