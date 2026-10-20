@@ -346,7 +346,7 @@ function ImportAccountsDialog({
         onClick={handleOpen}
       >
         <Upload size={15} strokeWidth={1.8} />
-        Import Accounts
+        Import
       </button>
 
       {/* ==================================================== */}

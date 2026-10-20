@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 
-import { Download } from 'lucide-react'
+import { ChevronDown, Download } from 'lucide-react'
 
 import {
   getAccounts,
@@ -354,15 +354,6 @@ function AccountsPage({
   // ==========================================================
   // ACCOUNT EXPORT STATE
   // ==========================================================
-
-  /**
-   * The user can download account data in CSV or Excel.
-   *
-   * CSV is selected by default because it is compatible
-   * with spreadsheets and other accounting systems.
-   */
-  const [exportFormat, setExportFormat] =
-    useState<AccountExportFormat>('csv')
 
   /**
    * Prevent duplicate export requests while a
@@ -739,55 +730,47 @@ function AccountsPage({
       (previousVersion) => previousVersion + 1,
     )
   }
-
+  
   // ==========================================================
   // EXPORT CHART OF ACCOUNTS
   // ==========================================================
 
   /**
-   * Ask Spring Boot to generate the current business's
-   * account export.
+   * Export the current business's Chart of Accounts.
    *
-   * The frontend never creates financial records
-   * or recalculates balances for this download.
+   * The selected format is passed directly from the
+   * Export dropdown menu.
    *
-   * Supported file types:
-   *
+   * Supported formats:
    * - CSV
    * - XLSX
    *
-   * The export filename comes from the API response,
-   * with a fallback in accountExports.ts.
+   * Prevent duplicate requests and display errors
+   * without affecting the account table.
    */
-  async function handleExportAccounts(): Promise<void> {
-
-    // ========================================================
-    // PREVENT DUPLICATE EXPORT REQUESTS
-    // ========================================================
+  async function handleExportAccounts(
+    format: AccountExportFormat,
+  ): Promise<void> {
 
     if (isExporting) {
       return
     }
 
     setIsExporting(true)
-
     setExportError('')
 
     try {
 
       // ======================================================
-      // REQUEST EXPORT FROM SPRING BOOT
+      // REQUEST THE SELECTED FILE FORMAT
       // ======================================================
 
-      await exportAccounts(
-        businessId,
-        exportFormat,
-      )
+      await exportAccounts(businessId, format)
 
     } catch (error: unknown) {
 
       // ======================================================
-      // DISPLAY DOWNLOAD ERROR
+      // DISPLAY DOWNLOAD ERRORS
       // ======================================================
 
       setExportError(
@@ -943,85 +926,16 @@ function AccountsPage({
             </p>
 
           </div>
-
-          {/* ================================================ */}
-          {/* TABLE ACTION BUTTONS */}
-          {/* ================================================ */}
+          
+          {/* ================================================== */}
+          {/* CHART OF ACCOUNTS — ACTION TOOLBAR */}
+          {/* ================================================== */}
 
           <div className="coa-table-actions">
 
-            {/* ============================================== */}
-            {/* IMPORT CHART OF ACCOUNTS */}
-            {/* ============================================== */}
-
-            <ImportAccountsDialog
-              businessId={businessId}
-              onImported={handleAccountsImported}
-            />
-
-            {/* ============================================== */}
-            {/* EXPORT CHART OF ACCOUNTS */}
-            {/* ============================================== */}
-
-            <div className="coa-export-actions">
-
-              {/* ============================================ */}
-              {/* EXPORT FORMAT SELECTOR */}
-              {/* ============================================ */}
-
-              <label
-                htmlFor="coa-export-format"
-                className="coa-visually-hidden"
-              >
-                Export file format
-              </label>
-
-              <select
-                id="coa-export-format"
-                className="coa-export-select"
-                value={exportFormat}
-                disabled={isExporting}
-                onChange={(event) =>
-                  setExportFormat(
-                    event.target.value as AccountExportFormat,
-                  )
-                }
-              >
-                <option value="csv">
-                  CSV
-                </option>
-
-                <option value="xlsx">
-                  Excel (.xlsx)
-                </option>
-              </select>
-
-              {/* ============================================ */}
-              {/* EXPORT BUTTON */}
-              {/* ============================================ */}
-
-              <button
-                type="button"
-                className="coa-refresh-button coa-export-button"
-                disabled={isLoading || isExporting}
-                onClick={() => void handleExportAccounts()}
-              >
-                <Download
-                  size={15}
-                  strokeWidth={1.8}
-                />
-
-                {isExporting
-                  ? 'Exporting...'
-                  : 'Export'
-                }
-              </button>
-
-            </div>
-
-            {/* ============================================== */}
-            {/* CREATE ACCOUNT BUTTON */}
-            {/* ============================================== */}
+            {/* ================================================ */}
+            {/* PRIMARY ACTION — CREATE NEW ACCOUNT */}
+            {/* ================================================ */}
 
             {!isCreateFormOpen && (
 
@@ -1036,9 +950,117 @@ function AccountsPage({
 
             )}
 
-            {/* ============================================== */}
-            {/* REFRESH ACCOUNTS BUTTON */}
-            {/* ============================================== */}
+            {/* ================================================ */}
+            {/* VISUAL SEPARATOR */}
+            {/* ================================================ */}
+
+            <span
+              className="coa-action-separator"
+              aria-hidden="true"
+            />
+
+            {/* ================================================ */}
+            {/* IMPORT AND EXPORT ACTIONS */}
+            {/* ================================================ */}
+
+            <div className="coa-import-export-actions">
+
+              {/* ============================================== */}
+              {/* IMPORT ACCOUNTS */}
+              {/* ============================================== */}
+
+              <ImportAccountsDialog
+                businessId={businessId}
+                onImported={handleAccountsImported}
+              />
+
+              {/* ============================================== */}
+              {/* EXPORT FORMAT DROPDOWN */}
+              {/* ============================================== */}
+
+              {/*
+                Display a single Export control.
+
+                Users choose CSV or Excel from the native
+                dropdown instead of using a separate
+                format selector.
+
+                The dropdown resets after every selection,
+                allowing the same format to be exported
+                repeatedly.
+              */}
+
+              <div className="coa-export-picker">
+
+                <Download
+                  size={15}
+                  strokeWidth={1.8}
+                  className="coa-export-picker-icon"
+                  aria-hidden="true"
+                />
+
+                <label
+                  htmlFor="coa-export-action"
+                  className="coa-visually-hidden"
+                >
+                  Export Chart of Accounts
+                </label>
+
+                <select
+                  id="coa-export-action"
+                  className="coa-export-format-picker"
+                  defaultValue=""
+                  disabled={isLoading || isExporting}
+                  onChange={(event) => {
+
+                    const format =
+                      event.currentTarget.value as AccountExportFormat
+
+                    // Reset to the default Export label.
+                    event.currentTarget.value = ''
+
+                    void handleExportAccounts(format)
+
+                  }}
+                >
+
+                  <option value="" disabled>
+                    {isExporting ? 'Exporting...' : 'Export'}
+                  </option>
+
+                  <option value="csv">
+                    CSV
+                  </option>
+
+                  <option value="xlsx">
+                    Excel (.xlsx)
+                  </option>
+
+                </select>
+
+                <ChevronDown
+                  size={14}
+                  strokeWidth={1.8}
+                  className="coa-export-picker-chevron"
+                  aria-hidden="true"
+                />
+
+              </div>
+
+            </div>
+
+            {/* ================================================ */}
+            {/* VISUAL SEPARATOR */}
+            {/* ================================================ */}
+
+            <span
+              className="coa-action-separator"
+              aria-hidden="true"
+            />
+
+            {/* ================================================ */}
+            {/* SECONDARY ACTION — REFRESH */}
+            {/* ================================================ */}
 
             <button
               type="button"

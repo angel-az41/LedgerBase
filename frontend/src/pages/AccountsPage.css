@@ -756,27 +756,6 @@
 }
 
 /* ============================================================ */
-/* EXPORT FORMAT SELECTOR */
-/* ============================================================ */
-
-.coa-export-select {
-  min-height: 38px;
-  padding: 0 11px;
-  border: 1px solid #dce5ec;
-  border-radius: 8px;
-  background: #ffffff;
-  color: #38546a;
-  font-size: 12px;
-  font-weight: 650;
-  cursor: pointer;
-}
-
-.coa-export-select:focus-visible {
-  outline: 2px solid #35aa94;
-  outline-offset: 2px;
-}
-
-/* ============================================================ */
 /* EXPORT BUTTON */
 /* ============================================================ */
 
@@ -803,11 +782,179 @@
 }
 
 /* ============================================================ */
-/* RESPONSIVE EXPORT CONTROLS */
+/* LEDGERBASE — REFINED ACCOUNT ACTION TOOLBAR */
+/* ============================================================ */
+
+/**
+ * Allow buttons to wrap on narrower screens.
+ *
+ * The primary New Account action appears first.
+ * Import and Export are grouped together.
+ * Refresh remains a separate secondary action.
+ */
+
+.coa-table-heading {
+  flex-wrap: wrap;
+}
+
+.coa-table-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+/* ============================================================ */
+/* IMPORT AND EXPORT ACTION GROUP */
+/* ============================================================ */
+
+.coa-import-export-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ============================================================ */
+/* TOOLBAR SEPARATORS */
+/* ============================================================ */
+
+.coa-action-separator {
+  width: 1px;
+  height: 24px;
+  flex: 0 0 1px;
+  background: #e5ebf1;
+  margin: 0 2px;
+}
+
+/* ============================================================ */
+/* EXPORT DROPDOWN CONTAINER */
+/* ============================================================ */
+
+/**
+ * Style a native select as a toolbar button.
+ *
+ * This keeps keyboard navigation and native
+ * browser dropdown behavior without requiring
+ * a custom menu component.
+ */
+
+.coa-export-picker {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* ============================================================ */
+/* EXPORT DROPDOWN */
+/* ============================================================ */
+
+.coa-export-format-picker {
+  appearance: none;
+  -webkit-appearance: none;
+
+  width: 124px;
+  min-width: 0;
+  min-height: 38px;
+  box-sizing: border-box;
+
+  padding: 10px 28px 10px 35px;
+
+  border: 1px solid #dce5ec;
+  border-radius: 8px;
+
+  background: #ffffff;
+  color: #38546a;
+
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 650;
+
+  cursor: pointer;
+  white-space: nowrap;
+
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease;
+}
+
+.coa-export-format-picker:hover:not(:disabled) {
+  background: #f3f7fa;
+  border-color: #c6d4df;
+}
+
+.coa-export-format-picker:focus-visible {
+  outline: 2px solid #35aa94;
+  outline-offset: 2px;
+}
+
+.coa-export-format-picker:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ============================================================ */
+/* EXPORT BUTTON ICONS */
+/* ============================================================ */
+
+.coa-export-picker-icon {
+  position: absolute;
+  left: 13px;
+  pointer-events: none;
+  color: #38546a;
+}
+
+.coa-export-picker-chevron {
+  position: absolute;
+  right: 10px;
+  pointer-events: none;
+  color: #71849a;
+}
+
+/* ============================================================ */
+/* RESPONSIVE TOOLBAR */
 /* ============================================================ */
 
 @media (max-width: 760px) {
-  .coa-export-actions {
+
+  .coa-table-actions {
+    justify-content: flex-start;
+  }
+
+  .coa-action-separator {
+    display: none;
+  }
+
+  .coa-import-export-actions {
     flex-wrap: wrap;
   }
+
+}
+
+/* ============================================================ */
+/* LEDGERBASE — MATCH IMPORT AND EXPORT BUTTON WIDTHS */
+/* ============================================================ */
+
+/**
+ * Give Import and Export identical widths.
+ *
+ * Both buttons retain their existing icons,
+ * labels, borders, and hover effects.
+ */
+
+.coa-import-export-actions .coa-import-trigger,
+.coa-export-format-picker {
+  width: 105px;
+  min-width: 105px;
+  box-sizing: border-box;
+}
+
+/**
+ * Center the Import button's icon and label.
+ */
+.coa-import-export-actions .coa-import-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
 }
