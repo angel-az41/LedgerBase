@@ -3,6 +3,8 @@ package com.ledgerbase.backend.integration;
 import com.ledgerbase.backend.mapper.AuthSessionMapper;
 import com.ledgerbase.backend.model.AuthRefreshToken;
 import com.ledgerbase.backend.model.AuthSession;
+import com.ledgerbase.backend.service.AuthSessionService;
+import com.ledgerbase.backend.service.RefreshTokenCodec;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -78,6 +80,17 @@ class AuthSessionMapperIntegrationTest {
 
     private static final String SECOND_TOKEN_HASH =
         "b".repeat(64);
+
+
+    // ========================================================
+    // AUTHENTICATION SESSION SERVICE DEPENDENCIES
+    // ========================================================
+
+    @Autowired
+    private AuthSessionService authSessionService;
+
+    @Autowired
+    private RefreshTokenCodec refreshTokenCodec;
 
 
     // ========================================================
@@ -471,6 +484,98 @@ class AuthSessionMapperIntegrationTest {
             authSessionMapper.findRefreshTokenByHash(
                 FIRST_TOKEN_HASH
             )
+        );
+    }
+
+
+    // ========================================================
+    // TEST — CREATE PERSISTENT LOGIN SESSION
+    // ========================================================
+
+    /**
+     * Verify that AuthSessionService creates:
+     *
+     * - One authentication session.
+     * - One initial refresh-token record.
+     * - A valid association with the authenticated user.
+     *
+     * Only the refresh-token hash is stored.
+     *
+     * The test transaction is rolled back afterward.
+     */
+    @Test
+    void shouldCreatePersistentAuthenticationSession() {
+
+        // ----------------------------------------------------
+        // CREATE SESSION THROUGH SPRING SERVICE
+        // ----------------------------------------------------
+
+        AuthSessionService.CreatedSession created =
+            authSessionService.createSession(
+                testUserId
+            );
+
+
+        // ----------------------------------------------------
+        // VERIFY STORED SESSION
+        // ----------------------------------------------------
+
+        AuthSession session =
+            authSessionMapper.lockSession(
+                created.sessionId()
+            );
+
+        assertNotNull(session);
+
+        assertEquals(
+            testUserId,
+            session.userId()
+        );
+
+        assertNull(session.revokedAt());
+
+
+        // ----------------------------------------------------
+        // CALCULATE STORED TOKEN HASH
+        // ----------------------------------------------------
+
+        String expectedHash =
+            refreshTokenCodec.hashToken(
+                created.refreshToken()
+            );
+
+
+        // ----------------------------------------------------
+        // VERIFY DATABASE TOKEN RECORD
+        // ----------------------------------------------------
+
+        AuthRefreshToken storedToken =
+            authSessionMapper.findRefreshTokenByHash(
+                expectedHash
+            );
+
+        assertNotNull(storedToken);
+
+        assertEquals(
+            created.sessionId(),
+            storedToken.sessionId()
+        );
+
+        assertEquals(
+            expectedHash,
+            storedToken.tokenHash()
+        );
+
+        assertNull(storedToken.consumedAt());
+
+
+        // ----------------------------------------------------
+        // VERIFY RAW TOKEN IS NOT STORED
+        // ----------------------------------------------------
+
+        assertNotEquals(
+            created.refreshToken(),
+            storedToken.tokenHash()
         );
     }
 }
