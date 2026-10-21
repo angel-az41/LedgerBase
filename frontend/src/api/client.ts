@@ -104,19 +104,25 @@ async function parseJsonResponse<T>(
 // ============================================================
 
 /**
- * Retrieve JSON data from Spring Boot.
+ * Retrieve typed JSON data from Spring Boot.
  *
- * GET requests should only retrieve information,
- * not modify financial records.
+ * Optional request headers allow authenticated
+ * endpoints to provide an Authorization header.
+ *
+ * Existing accounting API calls remain compatible
+ * because the second argument is optional.
  */
 export async function getJson<T>(
   path: string,
+  requestHeaders: Record<string, string> = {},
 ): Promise<T> {
 
   const response = await fetch(path, {
     method: 'GET',
+
     headers: {
       Accept: 'application/json',
+      ...requestHeaders,
     },
   })
 

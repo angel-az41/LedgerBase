@@ -275,56 +275,131 @@ function FiscalYearsPage({
   }, [businessId])
 
   // ==========================================================
+  // HANDLE FISCAL YEAR SELECTION
+  // ==========================================================
+
+  /**
+   * Update the selected fiscal year and clear action
+   * state belonging to the previously selected year.
+   *
+   * WHY CLEAR THESE STATES?
+   *
+   * A pending Close/Reopen confirmation, error, or
+   * success message belongs to a specific fiscal year.
+   *
+   * When the user switches years, that information
+   * must not appear in the newly selected workspace.
+   *
+   * The accounting-period loading effect will run
+   * automatically when selectedFiscalYearId changes.
+   *
+   * Keeping these updates in an event handler avoids
+   * synchronous React state updates inside useEffect.
+   */
+  function handleFiscalYearSelection(
+    fiscalYearId: number,
+  ): void {
+
+    // --------------------------------------------------------
+    // CLEAR PREVIOUS PERIOD ACTION STATE
+    // --------------------------------------------------------
+
+    setPendingPeriodAction(null)
+
+    setPeriodActionError(null)
+
+    setPeriodActionSuccess(null)
+
+
+    // --------------------------------------------------------
+    // SELECT THE NEW FISCAL YEAR
+    // --------------------------------------------------------
+
+    setSelectedFiscalYearId(fiscalYearId)
+  }
+
+  // ==========================================================
   // LOAD ACCOUNTING PERIODS
   // ==========================================================
 
   /**
-   * Retrieve accounting periods when a fiscal year
-   * is selected.
+   * Retrieve the accounting periods for the selected
+   * fiscal year.
    *
-   * The backend returns the actual 12 periods
+   * The backend returns the actual accounting periods
    * ordered by period number.
    *
-   * Changing fiscal years also clears any pending
-   * Close/Reopen confirmation.
+   * React automatically reruns this effect when:
+   *
+   * - The selected fiscal year changes.
+   * - The active business changes.
+   *
+   * Pending action state is cleared by the selection
+   * handler rather than synchronously in this effect.
+   *
+   * The cancelled flag prevents outdated requests
+   * from updating state after a selection change.
    */
   useEffect(() => {
 
-    let cancelled = false
+    // --------------------------------------------------------
+    // REQUIRE A SELECTED FISCAL YEAR
+    // --------------------------------------------------------
 
-    const fiscalYearId = selectedFiscalYearId
-
-    setPendingPeriodAction(null)
-    setPeriodActionError(null)
-    setPeriodActionSuccess(null)
-
-    if (fiscalYearId === null) {
-
-      setPeriods([])
-      setPeriodsError(null)
-      setIsPeriodsLoading(false)
-
+    /**
+     * When no fiscal year is selected, do not issue
+     * an accounting-period request.
+     *
+     * Initial state and the fiscal-year loading workflow
+     * already clear the previous period data.
+     */
+    if (selectedFiscalYearId === null) {
       return
     }
 
-    const validFiscalYearId: number = fiscalYearId
+    const fiscalYearId = selectedFiscalYearId
+
+    let cancelled = false
+
+
+    // --------------------------------------------------------
+    // LOAD ACCOUNTING PERIODS FROM SPRING BOOT
+    // --------------------------------------------------------
 
     async function loadPeriods() {
 
       setIsPeriodsLoading(true)
+
       setPeriodsError(null)
+
       setPeriods([])
 
       try {
 
+        // ----------------------------------------------------
+        // REQUEST DATABASE RECORDS
+        // ----------------------------------------------------
+
         const result = await getAccountingPeriods(
           businessId,
-          validFiscalYearId,
+          fiscalYearId,
         )
 
-        if (!cancelled) {
-          setPeriods(result)
+
+        // ----------------------------------------------------
+        // IGNORE OUTDATED REQUESTS
+        // ----------------------------------------------------
+
+        if (cancelled) {
+          return
         }
+
+
+        // ----------------------------------------------------
+        // UPDATE THE PERIOD TABLE
+        // ----------------------------------------------------
+
+        setPeriods(result)
 
       } catch (error) {
 
@@ -346,7 +421,17 @@ function FiscalYearsPage({
       }
     }
 
+
+    // --------------------------------------------------------
+    // START ASYNCHRONOUS DATA LOADING
+    // --------------------------------------------------------
+
     void loadPeriods()
+
+
+    // --------------------------------------------------------
+    // CLEAN UP OUTDATED REQUESTS
+    // --------------------------------------------------------
 
     return () => {
       cancelled = true
@@ -475,11 +560,12 @@ function FiscalYearsPage({
         )
       })
 
-      /**
-       * The accounting-period loading effect
-       * runs when this selection changes.
-       */
-      setSelectedFiscalYearId(createdYear.id)
+      // Select the newly created fiscal year.
+      //
+      // This also clears any confirmation or action messages
+      // associated with the previously selected fiscal year.
+
+      handleFiscalYearSelection(createdYear.id)
 
       setYearsError(null)
       setShowCreateForm(false)
@@ -925,9 +1011,9 @@ function FiscalYearsPage({
                   disabled={isSavingPeriod}
                   onChange={event => {
 
-                    setSelectedFiscalYearId(
-                      Number(event.target.value),
-                    )
+                    const fiscalYearId = Number(event.target.value)
+
+                    handleFiscalYearSelection(fiscalYearId)
 
                   }}
                 >
