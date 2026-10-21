@@ -6,7 +6,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtClaimNames;
+import org.springframework.security.oauth2.jwt.JwtClaimValidator;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.jwt.JwtValidators;
@@ -174,30 +178,32 @@ public class JwtConfig {
 
 
     // ========================================================
-    // 3. JWT DECODER
+    // 3. JWT DECODER AND TOKEN VALIDATION
     // ========================================================
 
     /**
-     * Create the decoder used for JWT verification.
+     * Create the JWT decoder used by Spring Security.
      *
-     * Signature verification must succeed before
-     * any JWT claims can be trusted.
+     * VALIDATION:
      *
-     * Standard validators check token timestamps
-     * and the expected issuer.
+     * - Verify the HS256 signature.
+     * - Validate standard token timestamps.
+     * - Validate the configured issuer.
+     * - Require the expected LedgerBase API audience.
      *
-     * JwtTokenService additionally checks the
-     * audience, expiration, and numeric user ID.
-     *
-     * @param jwtSigningKey trusted signing key
-     * @param issuer expected JWT issuer
-     * @return validated JWT decoder
+     * The audience must be checked in the decoder
+     * because Spring Security calls this bean directly
+     * when processing Bearer tokens.
      */
     @Bean
     public JwtDecoder jwtDecoder(
         SecretKey jwtSigningKey,
+
         @Value("${ledgerbase.jwt.issuer}")
-        String issuer
+        String issuer,
+
+        @Value("${ledgerbase.jwt.audience}")
+        String audience
     ) {
 
         NimbusJwtDecoder decoder =
@@ -208,14 +214,35 @@ public class JwtConfig {
 
 
         // ====================================================
-        // CONFIGURE STANDARD JWT VALIDATORS
+        // REQUIRE THE EXPECTED AUDIENCE
         // ====================================================
 
-        decoder.setJwtValidator(
-            JwtValidators.createDefaultWithIssuer(
-                issuer
-            )
-        );
+        JwtClaimValidator<java.util.List<String>>
+            audienceValidator = new JwtClaimValidator<>(
+                JwtClaimNames.AUD,
+                audiences -> audiences != null
+                    && audiences.contains(audience)
+            );
+
+
+        // ====================================================
+        // COMBINE JWT VALIDATORS
+        // ====================================================
+
+        var validator =
+            new DelegatingOAuth2TokenValidator<Jwt>(
+                JwtValidators.createDefaultWithIssuer(
+                    issuer
+                ),
+                audienceValidator
+            );
+
+
+        // ====================================================
+        // APPLY VALIDATORS TO THE DECODER
+        // ====================================================
+
+        decoder.setJwtValidator(validator);
 
         return decoder;
     }

@@ -210,6 +210,30 @@
         </dependency>
 
         <!-- ==================================
+             HTTP AUTHENTICATION
+             ================================== -->
+
+        <!--
+            Spring Security OAuth2 Resource Server:
+
+            Integrates JWT Bearer authentication
+            with Spring Security's HTTP filter chain.
+
+            The resource server will use our existing
+            JwtDecoder bean to verify incoming tokens.
+
+            This starter also includes the core
+            Spring Security infrastructure.
+
+            Version management is provided by
+            the Spring Boot parent.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security-oauth2-resource-server</artifactId>
+        </dependency>
+
+        <!-- ==================================
              EXCEL IMPORT AND EXPORT
              ================================== -->
 
