@@ -109,6 +109,34 @@
             <artifactId>spring-security-crypto</artifactId>
         </dependency>
 
+        <!-- ==================================
+             JWT SUPPORT
+             ================================== -->
+
+        <!--
+            Spring Security OAuth2 JOSE:
+            Provides JWT signing, decoding, and validation.
+
+            NimbusJwtEncoder:
+            Creates cryptographically signed JWTs.
+
+            NimbusJwtDecoder:
+            Verifies JWT signatures and token claims.
+
+            We are deliberately not adding the full
+            Spring Security web starter yet.
+
+            This lets us test token functionality
+            independently of HTTP authorization.
+
+            Dependency version is managed by the
+            Spring Boot parent.
+        -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-oauth2-jose</artifactId>
+        </dependency>
+
         <!--
             Spring Boot Actuator:
             Expose application health and monitoring data.
