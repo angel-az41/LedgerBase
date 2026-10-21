@@ -707,4 +707,175 @@ class AuthSessionRotationIntegrationTest {
             );
         }
     }
+
+    // ========================================================
+    // TEST — LOGOUT REVOCATION IS COMMITTED
+    // ========================================================
+
+    /**
+     * Verify that logout permanently revokes an
+     * authentication session in PostgreSQL.
+     *
+     * WORKFLOW:
+     *
+     * 1. Start with an active authentication session.
+     * 2. Revoke it using its refresh token.
+     * 3. Verify the revocation was committed.
+     * 4. Confirm a second logout is harmless.
+     * 5. Confirm the original token cannot refresh.
+     *
+     * The test does not use a test-managed transaction.
+     * Therefore, it observes the committed database state.
+     */
+    @Test
+    void shouldCommitLogoutRevocation()
+            throws Exception {
+
+        // ----------------------------------------------------
+        // CONFIGURE EXISTING REFRESH TOKEN
+        // ----------------------------------------------------
+
+        when(
+            refreshTokenCodec.hashToken(OLD_TOKEN)
+        ).thenReturn(OLD_HASH);
+
+
+        // ----------------------------------------------------
+        // VERIFY SESSION IS INITIALLY ACTIVE
+        // ----------------------------------------------------
+
+        assertFalse(isSessionRevoked());
+
+
+        // ----------------------------------------------------
+        // REVOKE THROUGH THE REAL SERVICE
+        // ----------------------------------------------------
+
+        boolean revoked =
+            authSessionService.revokeSessionByRefreshToken(
+                OLD_TOKEN
+            );
+
+        assertTrue(revoked);
+
+
+        // ----------------------------------------------------
+        // VERIFY DATABASE REVOCATION
+        // ----------------------------------------------------
+
+        assertTrue(isSessionRevoked());
+
+
+        // ----------------------------------------------------
+        // VERIFY REPEATED LOGOUT IS HARMLESS
+        // ----------------------------------------------------
+
+        boolean revokedAgain =
+            authSessionService.revokeSessionByRefreshToken(
+                OLD_TOKEN
+            );
+
+        assertFalse(revokedAgain);
+
+
+        // ----------------------------------------------------
+        // VERIFY REFRESH TOKEN IS NO LONGER ACCEPTED
+        // ----------------------------------------------------
+
+        Optional<AuthSessionService.RefreshedSession> result =
+            authSessionService.refreshSession(
+                OLD_TOKEN
+            );
+
+        assertTrue(result.isEmpty());
+
+
+        // ----------------------------------------------------
+        // VERIFY SESSION REMAINS REVOKED
+        // ----------------------------------------------------
+
+        assertTrue(isSessionRevoked());
+    }
+
+    // ========================================================
+    // TEST — LOGOUT USING A CONSUMED TOKEN
+    // ========================================================
+
+    /**
+     * Verify that an already-consumed refresh token
+     * can identify its session for revocation.
+     *
+     * SCENARIO:
+     *
+     * 1. Token A is exchanged for token B.
+     * 2. Token A becomes consumed.
+     * 3. Logout is requested using token A.
+     * 4. The original session is revoked.
+     * 5. Token B can no longer refresh the session.
+     *
+     * This checks session-wide revocation rather
+     * than invalidating only one refresh token.
+     */
+    @Test
+    void shouldRevokeSessionUsingConsumedToken()
+            throws Exception {
+
+        // ----------------------------------------------------
+        // CONFIGURE TOKEN A AND TOKEN B
+        // ----------------------------------------------------
+
+        configureTokenRotation();
+
+
+        // ----------------------------------------------------
+        // ROTATE TOKEN A INTO TOKEN B
+        // ----------------------------------------------------
+
+        Optional<AuthSessionService.RefreshedSession> refreshed =
+            authSessionService.refreshSession(
+                OLD_TOKEN
+            );
+
+        assertTrue(refreshed.isPresent());
+
+
+        // ----------------------------------------------------
+        // VERIFY TOKEN A WAS CONSUMED
+        // ----------------------------------------------------
+
+        assertTrue(isTokenConsumed(OLD_HASH));
+
+        assertFalse(isSessionRevoked());
+
+
+        // ----------------------------------------------------
+        // REVOKE SESSION USING PREVIOUS TOKEN
+        // ----------------------------------------------------
+
+        boolean revoked =
+            authSessionService.revokeSessionByRefreshToken(
+                OLD_TOKEN
+            );
+
+        assertTrue(revoked);
+
+
+        // ----------------------------------------------------
+        // VERIFY COMMITTED SESSION REVOCATION
+        // ----------------------------------------------------
+
+        assertTrue(isSessionRevoked());
+
+
+        // ----------------------------------------------------
+        // VERIFY TOKEN B CANNOT REFRESH
+        // ----------------------------------------------------
+
+        Optional<AuthSessionService.RefreshedSession> result =
+            authSessionService.refreshSession(
+                NEW_TOKEN
+            );
+
+        assertTrue(result.isEmpty());
+    }
 }

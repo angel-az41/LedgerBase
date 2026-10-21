@@ -961,4 +961,170 @@ public class AuthSessionService {
             )
         );
     }
+
+
+    // ========================================================
+    // REVOKE SESSION USING REFRESH TOKEN
+    // ========================================================
+
+    /**
+     * Revoke the authentication session associated with
+     * a presented refresh token.
+     *
+     * PURPOSE:
+     *
+     * This method will support the HTTP logout endpoint.
+     *
+     * The browser will eventually send its refresh token
+     * through an HttpOnly cookie.
+     *
+     * WORKFLOW:
+     *
+     * 1. Validate and hash the presented token.
+     * 2. Find the associated session identifier.
+     * 3. Lock the session row using SELECT FOR UPDATE.
+     * 4. Confirm the token belongs to that session.
+     * 5. Check whether the session is already revoked.
+     * 6. Revoke the session in PostgreSQL.
+     *
+     * SECURITY:
+     *
+     * - The raw token is never stored.
+     * - Unknown tokens cannot identify a session.
+     * - Repeated revocation does not create new records.
+     * - The method does not expose user identity data.
+     *
+     * A recognized consumed token may also be used
+     * to revoke its session. It can never be used
+     * to obtain new authentication credentials.
+     *
+     * TRANSACTION:
+     *
+     * The session row lock and revocation update execute
+     * within one Spring-managed database transaction.
+     *
+     * @param rawToken presented refresh token
+     * @return true if the session was newly revoked
+     */
+    @Transactional
+    public boolean revokeSessionByRefreshToken(
+        String rawToken
+    ) {
+
+        // ====================================================
+        // VALIDATE AND HASH THE CREDENTIAL
+        // ====================================================
+
+        String tokenHash;
+
+        try {
+
+            tokenHash =
+                refreshTokenCodec.hashToken(rawToken);
+
+        } catch (IllegalArgumentException exception) {
+
+            // Invalid credentials do not reach the database.
+
+            return false;
+        }
+
+
+        // ====================================================
+        // LOCATE ASSOCIATED SESSION
+        // ====================================================
+
+        UUID sessionId =
+            authSessionMapper.findSessionIdByTokenHash(
+                tokenHash
+            );
+
+        if (sessionId == null) {
+
+            // No session corresponds to this token.
+
+            return false;
+        }
+
+
+        // ====================================================
+        // ACQUIRE SESSION ROW LOCK
+        // ====================================================
+
+        /**
+         * Coordinate logout and token rotation.
+         *
+         * Both operations must lock the same session row
+         * before inspecting or changing its state.
+         */
+        AuthSession session =
+            authSessionMapper.lockSession(sessionId);
+
+        if (session == null) {
+
+            return false;
+        }
+
+
+        // ====================================================
+        // VERIFY TOKEN OWNERSHIP AFTER LOCKING
+        // ====================================================
+
+        /**
+         * Re-read the token association after the lock
+         * to avoid trusting the initial lookup alone.
+         */
+        AuthRefreshToken storedToken =
+            authSessionMapper.findRefreshTokenByHash(
+                tokenHash
+            );
+
+        if (
+            storedToken == null ||
+            !sessionId.equals(storedToken.sessionId())
+        ) {
+
+            return false;
+        }
+
+
+        // ====================================================
+        // CHECK EXISTING REVOCATION
+        // ====================================================
+
+        /**
+         * Logout is idempotent.
+         *
+         * If the session is already revoked, there is
+         * no need to update the database again.
+         */
+        if (session.revokedAt() != null) {
+
+            return false;
+        }
+
+
+        // ====================================================
+        // REVOKE THE AUTHENTICATION SESSION
+        // ====================================================
+
+        int updatedRows =
+            authSessionMapper.revokeSession(sessionId);
+
+
+        // ====================================================
+        // RETURN REVOCATION RESULT
+        // ====================================================
+
+        /**
+         * One updated row means the session was revoked.
+         *
+         * The future HTTP endpoint will return the same
+         * external logout response regardless of whether
+         * the cookie was valid, missing, or already used.
+         *
+         * This avoids revealing session details to clients.
+         */
+        return updatedRows == 1;
+    }
 }
