@@ -20,47 +20,49 @@ import java.util.List;
 /**
  * MyBatis database operations for LedgerBase businesses.
  *
- * DATABASE TABLE:
+ * DATABASE TABLES:
  *
- * businesses
+ * - businesses
+ * - business_memberships
  *
- * This mapper supports:
+ * RESPONSIBILITIES:
  *
- * 1. Checking whether a business exists.
- * 2. Reading a business's fiscal-year starting month.
- * 3. Listing businesses belonging to an owner.
- * 4. Retrieving a business by its ID and owner ID.
- * 5. Creating a new business.
+ * - Check whether a business exists.
+ * - Retrieve fiscal-year configuration.
+ * - Preserve existing owner-scoped queries.
+ * - Retrieve businesses through membership records.
+ * - Insert new businesses.
+ * - Assign OWNER membership to new business owners.
  *
- * IMPORTANT:
+ * SECURITY:
  *
- * This mapper only handles database access.
+ * Membership-scoped SELECT queries filter results
+ * using the authenticated user's database ID.
  *
- * Business validation belongs in BusinessService.
+ * The HTTP controller must obtain that ID from
+ * Spring Security's validated JWT.
  *
- * HTTP request handling belongs in BusinessController.
- *
- * Authentication and authorization will be integrated
- * separately. For now, ownerId is explicitly provided
- * by the calling service.
+ * The database mapper does not independently
+ * authenticate the caller.
  */
 @Mapper
 public interface BusinessMapper {
 
     // ========================================================
-    // 1. CHECK WHETHER A BUSINESS EXISTS
+    // BUSINESS EXISTENCE
     // ========================================================
 
     /**
-     * Returns true when a business exists with the given ID.
+     * Check whether a business ID exists.
      *
-     * COUNT(*) always returns a result, even when
-     * no matching business exists.
+     * Preserved for existing accounting services.
      *
      * IMPORTANT:
      *
-     * This existing method is preserved because other
-     * LedgerBase services already depend on it.
+     * Existence alone does not authorize access.
+     *
+     * Business-scoped controllers must perform
+     * membership authorization separately.
      */
     @Select("""
         SELECT COUNT(*) > 0
@@ -71,27 +73,19 @@ public interface BusinessMapper {
         @Param("businessId") Long businessId
     );
 
+
     // ========================================================
-    // 2. RETRIEVE FISCAL-YEAR STARTING MONTH
+    // FISCAL-YEAR CONFIGURATION
     // ========================================================
 
     /**
-     * Retrieve the fiscal-year starting month configured
-     * for a particular business.
+     * Return the fiscal-year starting month.
      *
-     * Valid values: 1 through 12.
+     * Preserved for existing fiscal-year services.
      *
-     * Examples:
-     *
-     * 1  = January
-     * 4  = April
-     * 7  = July
-     * 10 = October
-     *
-     * Returns null when the business does not exist.
-     *
-     * This existing method is preserved because
-     * FiscalYearService already uses it.
+     * This query does not enforce business membership.
+     * Authorization belongs at the protected
+     * accounting operation boundary.
      */
     @Select("""
         SELECT fiscal_year_start_month
@@ -102,31 +96,22 @@ public interface BusinessMapper {
         @Param("businessId") Long businessId
     );
 
+
     // ========================================================
-    // 3. LIST BUSINESSES BELONGING TO AN OWNER
+    // EXISTING OWNER-SCOPED BUSINESS LIST
     // ========================================================
 
     /**
-     * Retrieve businesses owned by a specific user.
+     * Retrieve businesses whose canonical owner_id
+     * matches the requested owner.
      *
-     * Example:
+     * This method is preserved for compatibility with
+     * existing tests and internal business operations.
      *
-     * ownerId = 1
+     * User-facing business listing will instead use
+     * findAllByMemberUserId().
      *
-     * Returns:
-     *
-     * - LedgerBase Demo Business
-     * - ABC Consulting LLC
-     *
-     * An owner with no businesses receives an empty list.
-     *
-     * OWNERSHIP FILTER:
-     *
-     * We explicitly filter by owner_id so the mapper
-     * does not retrieve every business in the database.
-     *
-     * Later, BusinessService must obtain the owner
-     * identity from the authenticated security context.
+     * @Results defines the reusable Business mapping.
      */
     @Select("""
         SELECT
@@ -174,32 +159,18 @@ public interface BusinessMapper {
         @Param("ownerId") Long ownerId
     );
 
+
     // ========================================================
-    // 4. RETRIEVE ONE BUSINESS BELONGING TO AN OWNER
+    // EXISTING OWNER-SCOPED BUSINESS LOOKUP
     // ========================================================
 
     /**
-     * Retrieve one business by its ID and owner ID.
+     * Retrieve a business matching both:
      *
-     * Both conditions must match.
+     * - business ID
+     * - canonical owner ID
      *
-     * Example:
-     *
-     * businessId = 2
-     * ownerId    = 1
-     *
-     * Returns the business if it belongs to owner 1.
-     *
-     * Otherwise, MyBatis returns null.
-     *
-     * This owner-scoped query provides a useful
-     * foundation for future authorization checks.
-     *
-     * It is NOT a substitute for authentication:
-     * the calling service must supply a trusted owner ID.
-     *
-     * @ResultMap reuses the mapping defined above,
-     * so we don't need to repeat every @Result.
+     * Preserved for existing service operations.
      */
     @Select("""
         SELECT
@@ -219,35 +190,120 @@ public interface BusinessMapper {
         @Param("ownerId") Long ownerId
     );
 
+
     // ========================================================
-    // 5. CREATE A NEW BUSINESS
+    // LIST BUSINESSES ACCESSIBLE TO A USER
     // ========================================================
 
     /**
-     * Insert a business into PostgreSQL.
+     * Retrieve all businesses that an authenticated
+     * user belongs to.
      *
-     * DATABASE COLUMNS:
+     * Unlike owner-scoped queries, this supports:
      *
-     * owner_id                NOT NULL
-     * name                    VARCHAR(200) NOT NULL
-     * currency                CHAR(3) NOT NULL
-     * fiscal_year_start_month SMALLINT NOT NULL
+     * - OWNER
+     * - ADMIN
+     * - ACCOUNTANT
+     * - VIEWER
      *
-     * DATABASE-GENERATED VALUES:
+     * SQL SECURITY RULE:
      *
-     * id:
-     *   GENERATED ALWAYS AS IDENTITY
+     * The membership must match the requested user ID.
      *
-     * created_at:
-     *   Defaults to NOW()
+     * The composite membership primary key prevents
+     * duplicate rows for the same user and business.
      *
-     * Therefore, neither column needs to be supplied
-     * explicitly in our INSERT statement.
+     * The V9 migration provides an index on:
      *
-     * The BusinessService will validate input before
-     * calling this mapper.
+     * (user_id, business_id)
      *
-     * PostgreSQL also enforces the database constraints.
+     * This makes user-first membership lookups efficient.
+     *
+     * @param userId authenticated user's database ID
+     * @return businesses accessible to the user
+     */
+    @Select("""
+        SELECT
+            b.id,
+            b.owner_id,
+            b.name,
+            TRIM(b.currency) AS currency,
+            b.fiscal_year_start_month,
+            b.created_at
+        FROM businesses AS b
+        INNER JOIN business_memberships AS m
+            ON m.business_id = b.id
+        WHERE m.user_id = #{userId}
+        ORDER BY b.id ASC
+        """)
+    @ResultMap("businessResultMap")
+    List<Business> findAllByMemberUserId(
+        @Param("userId") Long userId
+    );
+
+
+    // ========================================================
+    // RETRIEVE A BUSINESS THROUGH MEMBERSHIP
+    // ========================================================
+
+    /**
+     * Retrieve a specific business only if the
+     * authenticated user has a membership.
+     *
+     * Both conditions are enforced by PostgreSQL:
+     *
+     * - b.id = requested business ID
+     * - m.user_id = authenticated user ID
+     *
+     * An unauthorized user receives null.
+     *
+     * The service converts null into the existing
+     * BusinessNotFoundException.
+     *
+     * This deliberately avoids revealing whether
+     * another user's business exists.
+     *
+     * @param businessId requested business ID
+     * @param userId authenticated user's database ID
+     * @return accessible business or null
+     */
+    @Select("""
+        SELECT
+            b.id,
+            b.owner_id,
+            b.name,
+            TRIM(b.currency) AS currency,
+            b.fiscal_year_start_month,
+            b.created_at
+        FROM businesses AS b
+        INNER JOIN business_memberships AS m
+            ON m.business_id = b.id
+        WHERE b.id = #{businessId}
+          AND m.user_id = #{userId}
+        """)
+    @ResultMap("businessResultMap")
+    Business findByIdAndMemberUserId(
+        @Param("businessId") Long businessId,
+        @Param("userId") Long userId
+    );
+
+
+    // ========================================================
+    // INSERT A NEW BUSINESS
+    // ========================================================
+
+    /**
+     * Create a business belonging to the supplied owner.
+     *
+     * PostgreSQL generates:
+     *
+     * - id
+     * - created_at
+     *
+     * MyBatis stores the generated ID in business.id.
+     *
+     * BusinessService validates inputs and manages
+     * the transaction.
      */
     @Insert("""
         INSERT INTO businesses (
@@ -270,4 +326,51 @@ public interface BusinessMapper {
     )
     int insert(Business business);
 
+
+    // ========================================================
+    // INSERT OWNER MEMBERSHIP
+    // ========================================================
+
+    /**
+     * Assign OWNER membership to the newly created
+     * business's canonical owner.
+     *
+     * The role is a fixed SQL literal.
+     *
+     * The caller cannot choose a different role
+     * when creating the business.
+     *
+     * This statement must execute in the same
+     * Spring transaction as the business INSERT.
+     *
+     * If either INSERT fails, the complete business
+     * creation transaction must roll back.
+     *
+     * DATABASE SAFEGUARDS:
+     *
+     * - Composite membership primary key.
+     * - Foreign keys to businesses and users.
+     * - Valid-role CHECK constraint.
+     * - Partial unique index for OWNER memberships.
+     *
+     * @param businessId newly created business ID
+     * @param ownerId authenticated creator's user ID
+     * @return number of inserted membership rows
+     */
+    @Insert("""
+        INSERT INTO business_memberships (
+            business_id,
+            user_id,
+            role
+        )
+        VALUES (
+            #{businessId},
+            #{ownerId},
+            'OWNER'
+        )
+        """)
+    int insertOwnerMembership(
+        @Param("businessId") Long businessId,
+        @Param("ownerId") Long ownerId
+    );
 }

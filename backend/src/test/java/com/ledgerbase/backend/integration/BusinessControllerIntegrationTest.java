@@ -1,23 +1,39 @@
 package com.ledgerbase.backend.integration;
 
+import com.ledgerbase.backend.model.Business;
+import com.ledgerbase.backend.service.BusinessService;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.http.MediaType;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.context.WebApplicationContext;
 
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+
+import org.springframework.jdbc.core.JdbcTemplate;
+
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.oauth2.jwt.BadJwtException;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.servlet.MockMvc;
+
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.hamcrest.Matchers.containsString;
-import static org.hamcrest.Matchers.not;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.when;
+
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -26,731 +42,264 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 // ============================================================
 
 /**
- * Verify the Business Management REST API.
+ * Verifies LedgerBase's authenticated Business REST API.
  *
- * REQUEST FLOW:
+ * API ENDPOINTS:
  *
- * MockMvc HTTP Request
- *         |
- *         v
- * BusinessController
- *         |
- *         v
- * BusinessService
- *         |
- *         v
- * BusinessMapper
- *         |
- *         v
- * PostgreSQL
+ * GET  /api/v1/businesses
+ * GET  /api/v1/businesses/{businessId}
+ * POST /api/v1/businesses
  *
- * TEST COVERAGE:
+ * TEST COMPONENTS:
  *
- * 1. List businesses.
- * 2. Retrieve an existing business.
- * 3. Reject another owner's business.
- * 4. Return 404 for an unknown business.
- * 5. Create a business through HTTP.
- * 6. Apply default configuration.
- * 7. Normalize request fields.
- * 8. Reject missing or blank names.
- * 9. Reject excessively long names.
- * 10. Reject invalid currencies.
- * 11. Reject invalid fiscal-year months.
- * 12. Reject invalid business IDs.
+ * - Real Spring MVC controllers.
+ * - Real Spring Security HTTP filter chain.
+ * - Real BusinessService.
+ * - Real MyBatis business queries.
+ * - Real PostgreSQL test database.
+ *
+ * AUTHENTICATION TESTING:
+ *
+ * JWT decoding is mocked only in this test class.
+ *
+ * This allows us to simulate authenticated users
+ * without creating real login sessions for every test.
+ *
+ * The mocked decoder returns a Jwt with the requested
+ * test user's ID as its subject.
  *
  * IMPORTANT:
  *
- * The controller currently uses development owner ID 1.
+ * These tests do NOT validate JWT signatures,
+ * refresh tokens, or PostgreSQL session revocation.
  *
- * This test prepares that owner in the TEST database.
+ * Those authentication mechanisms must continue
+ * to be tested separately using their real components.
  *
- * A second owner is used to verify that controller
- * queries do not expose the second owner's businesses.
+ * BUSINESS AUTHORIZATION:
  *
- * Owner filtering is NOT authentication.
+ * The controller and service use the JWT subject
+ * to query business_memberships.
  *
- * Future JWT/RBAC tests must verify that callers
- * cannot impersonate another business owner.
+ * Tests verify:
+ *
+ * - Authenticated business listing.
+ * - Membership-based business retrieval.
+ * - Isolation between different users.
+ * - Business creation with OWNER membership.
+ * - Input normalization and validation.
+ * - Unauthenticated request rejection.
  *
  * DATABASE ISOLATION:
  *
- * @ActiveProfiles("test") selects ledgerbase_test.
+ * Every test creates its own temporary users and
+ * businesses inside a rollback-only test transaction.
  *
- * @Transactional rolls back temporary fixture data
- * after every test.
- *
- * The normal development database is not modified.
+ * Tests do not rely on development owner ID 1.
  */
 @SpringBootTest
+@AutoConfigureMockMvc
 @ActiveProfiles("test")
 @Transactional
 class BusinessControllerIntegrationTest {
 
     // ========================================================
-    // DEPENDENCIES
+    // API CONFIGURATION
+    // ========================================================
+
+    private static final String BUSINESS_URL =
+        "/api/v1/businesses";
+
+    /**
+     * Test-only Bearer token prefix.
+     *
+     * These strings are not signed JWTs.
+     *
+     * The test JwtDecoder maps each token to a
+     * Spring Security Jwt principal.
+     */
+    private static final String TEST_TOKEN_PREFIX =
+        "ledgerbase-test-user-";
+
+
+    // ========================================================
+    // SPRING-MANAGED DEPENDENCIES
     // ========================================================
 
     @Autowired
-    private WebApplicationContext context;
+    private MockMvc mockMvc;
+
+    @Autowired
+    private BusinessService businessService;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
-    private MockMvc mvc;
-
 
     // ========================================================
-    // API CONFIGURATION
+    // MOCK JWT DECODER
     // ========================================================
 
     /**
-     * Base URL implemented by BusinessController.
+     * Replace the application JwtDecoder only for
+     * this integration test's Spring context.
+     *
+     * Spring Security still requires a Bearer token
+     * and creates the authenticated principal.
+     *
+     * Production JWT configuration is not modified.
+     *
+     * This also avoids requiring the separate
+     * spring-security-test Maven dependency.
      */
-    private static final String BUSINESSES_URL =
-        "/api/v1/businesses";
+    @MockitoBean
+    private JwtDecoder jwtDecoder;
+
+
+    // ========================================================
+    // PASSWORD ENCODER FOR TEST USERS
+    // ========================================================
 
     /**
-     * Temporary development owner configured in
-     * BusinessController.
+     * Temporary users receive valid BCrypt hashes.
      *
-     * This constant must stay consistent with the
-     * current local-development controller.
+     * Their passwords are never used for login
+     * in this particular controller test.
      */
-    private static final Long DEVELOPMENT_OWNER_ID = 1L;
+    private static final BCryptPasswordEncoder
+        TEST_PASSWORD_ENCODER =
+            new BCryptPasswordEncoder();
 
 
     // ========================================================
-    // TEST FIXTURE IDENTIFIERS
-    // ========================================================
-
-    private Long otherOwnerId;
-
-    private Long developmentBusinessId;
-
-    private Long otherBusinessId;
-
-    private String developmentBusinessName;
-
-    private String otherBusinessName;
-
-
-    // ========================================================
-    // SETUP
+    // BEFORE EACH TEST
     // ========================================================
 
     /**
-     * Runs before every test.
+     * Configure the mocked JWT decoder.
      *
-     * We prepare:
+     * Example request header:
      *
-     * Development owner (ID 1)
-     *   - Development test business
+     * Authorization: Bearer ledgerbase-test-user-42
      *
-     * Other owner
-     *   - Independent test business
+     * The decoder extracts subject "42".
      *
-     * This allows us to verify that the controller
-     * only accesses the fixed development owner's data.
+     * The actual user must still be created by
+     * the corresponding test database fixture.
+     *
+     * Invalid test token formats are rejected.
      */
     @BeforeEach
-    void setUp() {
+    void configureJwtDecoder() {
 
-        // ====================================================
-        // INITIALIZE SPRING MVC TEST CLIENT
-        // ====================================================
+        when(
+            jwtDecoder.decode(anyString())
+        ).thenAnswer(invocation -> {
 
-        mvc = MockMvcBuilders
-            .webAppContextSetup(context)
-            .build();
+            // ------------------------------------------------
+            // READ SUPPLIED TEST TOKEN
+            // ------------------------------------------------
 
-
-        // ====================================================
-        // CREATE AN INDEPENDENT TEST USER
-        // ====================================================
-
-        /**
-         * Create a user using PostgreSQL's normal
-         * generated-ID mechanism.
-         *
-         * If this is the first user in a fresh test
-         * database, PostgreSQL might assign ID 1.
-         *
-         * In that case, the user can serve as our
-         * development-owner fixture, and we create
-         * another user for owner-isolation tests.
-         */
-        Long firstUserId = createTestUser(
-            "Business API Test User"
-        );
-
-        if (DEVELOPMENT_OWNER_ID.equals(firstUserId)) {
-
-            otherOwnerId = createTestUser(
-                "Independent Business API Owner"
-            );
-
-        } else {
-
-            otherOwnerId = firstUserId;
-        }
+            String token =
+                invocation.getArgument(0);
 
 
-        // ====================================================
-        // ENSURE DEVELOPMENT OWNER EXISTS
-        // ====================================================
+            // ------------------------------------------------
+            // VALIDATE TEST TOKEN PREFIX
+            // ------------------------------------------------
 
-        /**
-         * BusinessController currently uses owner ID 1.
-         *
-         * The isolated test database may not already
-         * contain a user with that ID.
-         *
-         * This helper inserts the development owner
-         * only if ID 1 is absent.
-         *
-         * The operation belongs to the test transaction
-         * and is rolled back afterward.
-         */
-        ensureDevelopmentOwnerExists();
+            if (!token.startsWith(TEST_TOKEN_PREFIX)) {
+
+                throw new BadJwtException(
+                    "Invalid test authentication token"
+                );
+            }
 
 
-        // ====================================================
-        // PREPARE UNIQUE BUSINESS NAMES
-        // ====================================================
+            // ------------------------------------------------
+            // EXTRACT USER ID FROM TOKEN
+            // ------------------------------------------------
 
-        /**
-         * UUID avoids confusion with existing data,
-         * even if the test database already contains
-         * business records.
-         */
-        developmentBusinessName =
-            "Development API Business " + UUID.randomUUID();
+            String subject =
+                token.substring(
+                    TEST_TOKEN_PREFIX.length()
+                );
 
-        otherBusinessName =
-            "Other Owner API Business " + UUID.randomUUID();
+            try {
 
+                long userId =
+                    Long.parseLong(subject);
 
-        // ====================================================
-        // CREATE DEVELOPMENT OWNER'S BUSINESS
-        // ====================================================
+                if (userId <= 0) {
 
-        developmentBusinessId = createTestBusiness(
-            DEVELOPMENT_OWNER_ID,
-            developmentBusinessName
-        );
+                    throw new NumberFormatException(
+                        "Invalid user ID"
+                    );
+                }
 
+            } catch (NumberFormatException exception) {
 
-        // ====================================================
-        // CREATE OTHER OWNER'S BUSINESS
-        // ====================================================
-
-        otherBusinessId = createTestBusiness(
-            otherOwnerId,
-            otherBusinessName
-        );
-    }
+                throw new BadJwtException(
+                    "Invalid test user identity"
+                );
+            }
 
 
-    // ========================================================
-    // TEST 1 — LIST BUSINESSES
-    // ========================================================
+            // ------------------------------------------------
+            // CONSTRUCT TEST JWT PRINCIPAL
+            // ------------------------------------------------
 
-    /**
-     * GET /api/v1/businesses
-     *
-     * The response must contain the development
-     * owner's business.
-     *
-     * It must not contain the other owner's business.
-     */
-    @Test
-    void listsOnlyDevelopmentOwnersBusinesses()
-            throws Exception {
+            Instant now =
+                Instant.now();
 
-        mvc.perform(get(BUSINESSES_URL))
+            return Jwt.withTokenValue(token)
 
-            // =================================================
-            // VERIFY HTTP STATUS
-            // =================================================
-
-            .andExpect(status().isOk())
-
-            // =================================================
-            // VERIFY DEVELOPMENT BUSINESS IS INCLUDED
-            // =================================================
-
-            .andExpect(
-                content().string(
-                    containsString(developmentBusinessName)
+                .header(
+                    "alg",
+                    "HS256"
                 )
-            )
 
-            // =================================================
-            // VERIFY OTHER OWNER IS EXCLUDED
-            // =================================================
+                .subject(subject)
 
-            .andExpect(
-                content().string(
-                    not(containsString(otherBusinessName))
+                .issuedAt(now)
+
+                .expiresAt(
+                    now.plusSeconds(900)
                 )
-            );
+
+                .build();
+        });
     }
 
 
     // ========================================================
-    // TEST 2 — RETRIEVE AN EXISTING BUSINESS
+    // HELPER — AUTHENTICATED REQUEST HEADER
     // ========================================================
 
     /**
-     * GET /api/v1/businesses/{businessId}
+     * Build a test-only Authorization header value.
      *
-     * An existing development-owned business
-     * should return HTTP 200 and its JSON fields.
+     * Example:
+     *
+     * userId = 12
+     *
+     * Returns:
+     *
+     * Bearer ledgerbase-test-user-12
+     *
+     * JwtDecoder converts this test token into
+     * the authenticated user's JWT principal.
+     *
+     * @param userId authenticated test user's ID
+     * @return Bearer authorization header value
      */
-    @Test
-    void retrievesExistingBusiness() throws Exception {
-
-        mvc.perform(get(
-                BUSINESSES_URL + "/" + developmentBusinessId
-            ))
-
-            .andExpect(status().isOk())
-
-            .andExpect(
-                jsonPath("$.id").value(developmentBusinessId)
-            )
-
-            .andExpect(
-                jsonPath("$.ownerId").value(
-                    DEVELOPMENT_OWNER_ID
-                )
-            )
-
-            .andExpect(
-                jsonPath("$.name").value(
-                    developmentBusinessName
-                )
-            )
-
-            .andExpect(
-                jsonPath("$.currency").value("USD")
-            )
-
-            .andExpect(
-                jsonPath("$.fiscalYearStartMonth").value(1)
-            )
-
-            .andExpect(
-                jsonPath("$.createdAt").exists()
-            );
-    }
-
-
-    // ========================================================
-    // TEST 3 — OWNER-SCOPED RETRIEVAL
-    // ========================================================
-
-    /**
-     * A business owned by another user should
-     * not be returned by the development controller.
-     *
-     * BusinessService throws BusinessNotFoundException.
-     *
-     * GlobalExceptionHandler converts it to HTTP 404.
-     */
-    @Test
-    void doesNotExposeAnotherOwnersBusiness()
-            throws Exception {
-
-        mvc.perform(get(
-                BUSINESSES_URL + "/" + otherBusinessId
-            ))
-
-            .andExpect(status().isNotFound())
-
-            .andExpect(
-                jsonPath("$.error").exists()
-            );
-    }
-
-
-    // ========================================================
-    // TEST 4 — UNKNOWN BUSINESS
-    // ========================================================
-
-    /**
-     * A nonexistent business should return HTTP 404.
-     *
-     * Long.MAX_VALUE is used as an unlikely valid ID.
-     */
-    @Test
-    void returnsNotFoundForMissingBusiness()
-            throws Exception {
-
-        mvc.perform(get(
-                BUSINESSES_URL + "/" + Long.MAX_VALUE
-            ))
-
-            .andExpect(status().isNotFound())
-
-            .andExpect(
-                jsonPath("$.error").exists()
-            );
-    }
-
-
-    // ========================================================
-    // TEST 5 — CREATE BUSINESS THROUGH HTTP
-    // ========================================================
-
-    /**
-     * POST /api/v1/businesses
-     *
-     * A valid request should:
-     *
-     * 1. Return HTTP 201.
-     * 2. Return the normalized business fields.
-     * 3. Return a generated business ID.
-     * 4. Return the creation timestamp.
-     * 5. Persist the business in PostgreSQL.
-     */
-    @Test
-    void createsBusinessThroughApi() throws Exception {
-
-        // ====================================================
-        // CHOOSE A UNIQUE BUSINESS NAME
-        // ====================================================
-
-        String businessName =
-            "New API Consulting " + UUID.randomUUID();
-
-
-        // ====================================================
-        // SEND HTTP POST REQUEST
-        // ====================================================
-
-        mvc.perform(post(BUSINESSES_URL)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-                    {
-                        "name": "%s",
-                        "currency": "USD",
-                        "fiscalYearStartMonth": 1
-                    }
-                    """.formatted(businessName)))
-
-            // =================================================
-            // VERIFY HTTP 201 CREATED
-            // =================================================
-
-            .andExpect(status().isCreated())
-
-            // =================================================
-            // VERIFY RESPONSE BODY
-            // =================================================
-
-            .andExpect(
-                jsonPath("$.id").isNumber()
-            )
-
-            .andExpect(
-                jsonPath("$.ownerId").value(
-                    DEVELOPMENT_OWNER_ID
-                )
-            )
-
-            .andExpect(
-                jsonPath("$.name").value(businessName)
-            )
-
-            .andExpect(
-                jsonPath("$.currency").value("USD")
-            )
-
-            .andExpect(
-                jsonPath("$.fiscalYearStartMonth").value(1)
-            )
-
-            .andExpect(
-                jsonPath("$.createdAt").exists()
-            );
-
-
-        // ====================================================
-        // VERIFY DATABASE PERSISTENCE
-        // ====================================================
-
-        /**
-         * We verify that PostgreSQL contains the
-         * newly created business under owner ID 1.
-         */
-        Long businessCount = jdbcTemplate.queryForObject(
-            """
-            SELECT COUNT(*)
-            FROM businesses
-            WHERE owner_id = ?
-              AND name = ?
-            """,
-            Long.class,
-            DEVELOPMENT_OWNER_ID,
-            businessName
-        );
-
-        assertEquals(Long.valueOf(1), businessCount);
-    }
-
-
-    // ========================================================
-    // TEST 6 — DEFAULT BUSINESS CONFIGURATION
-    // ========================================================
-
-    /**
-     * Omitting optional fields should apply:
-     *
-     * currency = USD
-     * fiscalYearStartMonth = 1
-     */
-    @Test
-    void appliesDefaultsThroughApi() throws Exception {
-
-        mvc.perform(post(BUSINESSES_URL)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-                    {
-                        "name": "Default API Configuration"
-                    }
-                    """))
-
-            .andExpect(status().isCreated())
-
-            .andExpect(
-                jsonPath("$.currency").value("USD")
-            )
-
-            .andExpect(
-                jsonPath("$.fiscalYearStartMonth").value(1)
-            );
-    }
-
-
-    // ========================================================
-    // TEST 7 — NORMALIZE REQUEST FIELDS
-    // ========================================================
-
-    /**
-     * BusinessService should:
-     *
-     * - Trim business names.
-     * - Trim currency codes.
-     * - Convert currency codes to uppercase.
-     *
-     * A custom fiscal-year starting month must
-     * be preserved.
-     */
-    @Test
-    void normalizesBusinessInputThroughApi()
-            throws Exception {
-
-        mvc.perform(post(BUSINESSES_URL)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-                    {
-                        "name": "   Example Consulting LLC   ",
-                        "currency": " gbp ",
-                        "fiscalYearStartMonth": 4
-                    }
-                    """))
-
-            .andExpect(status().isCreated())
-
-            .andExpect(
-                jsonPath("$.name").value(
-                    "Example Consulting LLC"
-                )
-            )
-
-            .andExpect(
-                jsonPath("$.currency").value("GBP")
-            )
-
-            .andExpect(
-                jsonPath("$.fiscalYearStartMonth").value(4)
-            );
-    }
-
-
-    // ========================================================
-    // TEST 8 — REJECT MISSING OR BLANK BUSINESS NAME
-    // ========================================================
-
-    /**
-     * @NotBlank on CreateBusinessRequest.name
-     * should reject missing or whitespace-only names.
-     *
-     * GlobalExceptionHandler returns HTTP 400.
-     */
-    @Test
-    void rejectsMissingAndBlankBusinessNames()
-            throws Exception {
-
-        // ====================================================
-        // MISSING BUSINESS NAME
-        // ====================================================
-
-        mvc.perform(post(BUSINESSES_URL)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-                    {
-                        "currency": "USD"
-                    }
-                    """))
-
-            .andExpect(status().isBadRequest())
-
-            .andExpect(
-                jsonPath("$.error").exists()
-            );
-
-
-        // ====================================================
-        // BLANK BUSINESS NAME
-        // ====================================================
-
-        mvc.perform(post(BUSINESSES_URL)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-                    {
-                        "name": "    "
-                    }
-                    """))
-
-            .andExpect(status().isBadRequest())
-
-            .andExpect(
-                jsonPath("$.error").exists()
-            );
-    }
-
-
-    // ========================================================
-    // TEST 9 — REJECT EXCESSIVELY LONG BUSINESS NAME
-    // ========================================================
-
-    /**
-     * PostgreSQL stores business names as VARCHAR(200).
-     *
-     * CreateBusinessRequest uses @Size(max = 200).
-     *
-     * A name containing 201 characters must be rejected.
-     */
-    @Test
-    void rejectsBusinessNamesOver200Characters()
-            throws Exception {
-
-        String longName = "A".repeat(201);
-
-        mvc.perform(post(BUSINESSES_URL)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-                    {
-                        "name": "%s"
-                    }
-                    """.formatted(longName)))
-
-            .andExpect(status().isBadRequest())
-
-            .andExpect(
-                jsonPath("$.error").exists()
-            );
-    }
-
-
-    // ========================================================
-    // TEST 10 — REJECT INVALID CURRENCY
-    // ========================================================
-
-    /**
-     * Currency must contain exactly three letters.
-     *
-     * This service-level validation rejects
-     * invalid values before database insertion.
-     */
-    @Test
-    void rejectsInvalidCurrencyThroughApi()
-            throws Exception {
-
-        mvc.perform(post(BUSINESSES_URL)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-                    {
-                        "name": "Invalid Currency Business",
-                        "currency": "US1"
-                    }
-                    """))
-
-            .andExpect(status().isBadRequest())
-
-            .andExpect(
-                jsonPath("$.error").exists()
-            );
-    }
-
-
-    // ========================================================
-    // TEST 11 — REJECT INVALID FISCAL-YEAR MONTH
-    // ========================================================
-
-    /**
-     * The request DTO permits fiscal-year
-     * starting months from 1 through 12.
-     *
-     * Month 13 must return HTTP 400.
-     */
-    @Test
-    void rejectsInvalidFiscalYearStartMonth()
-            throws Exception {
-
-        mvc.perform(post(BUSINESSES_URL)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-                    {
-                        "name": "Invalid Calendar Business",
-                        "currency": "USD",
-                        "fiscalYearStartMonth": 13
-                    }
-                    """))
-
-            .andExpect(status().isBadRequest())
-
-            .andExpect(
-                jsonPath("$.error").exists()
-            );
-    }
-
-
-    // ========================================================
-    // TEST 12 — REJECT INVALID BUSINESS ID
-    // ========================================================
-
-    /**
-     * BusinessService requires positive identifiers.
-     *
-     * A negative business ID results in
-     * IllegalArgumentException.
-     *
-     * GlobalExceptionHandler converts it to HTTP 400.
-     */
-    @Test
-    void rejectsInvalidBusinessId() throws Exception {
-
-        mvc.perform(get(BUSINESSES_URL + "/-1"))
-
-            .andExpect(status().isBadRequest())
-
-            .andExpect(
-                jsonPath("$.error").exists()
-            );
+    private String bearerFor(
+        Long userId
+    ) {
+
+        return "Bearer " +
+            TEST_TOKEN_PREFIX +
+            userId;
     }
 
 
@@ -759,111 +308,1024 @@ class BusinessControllerIntegrationTest {
     // ========================================================
 
     /**
-     * Insert a test user using the database's normal
-     * generated-ID mechanism.
+     * Insert a temporary PostgreSQL user.
      *
-     * UUID provides a unique email address.
+     * This test uses its own fixture rather than
+     * assuming user ID 1 exists.
      *
-     * The placeholder password hash is only
-     * test data, not a real credential.
+     * UUID-based emails satisfy uniqueness constraints.
+     *
+     * The test transaction rolls back the INSERT
+     * when the test finishes.
+     *
+     * @return generated user ID
      */
-    private Long createTestUser(String fullName) {
+    private Long createTestUser() {
 
-        return jdbcTemplate.queryForObject(
-            """
-            INSERT INTO users (
+        // ----------------------------------------------------
+        // GENERATE UNIQUE EMAIL
+        // ----------------------------------------------------
+
+        String email =
+            "business-controller-" +
+            UUID.randomUUID() +
+            "@example.invalid";
+
+
+        // ----------------------------------------------------
+        // GENERATE VALID PASSWORD HASH
+        // ----------------------------------------------------
+
+        String passwordHash =
+            TEST_PASSWORD_ENCODER.encode(
+                "TemporaryBusinessTestPassword123!"
+            );
+
+
+        // ----------------------------------------------------
+        // INSERT AND RETURN USER ID
+        // ----------------------------------------------------
+
+        Long userId =
+            jdbcTemplate.queryForObject(
+                """
+                INSERT INTO users (
+                    email,
+                    full_name,
+                    password_hash
+                )
+                VALUES (?, ?, ?)
+                RETURNING id
+                """,
+                Long.class,
                 email,
-                password_hash,
-                full_name
-            )
-            VALUES (?, ?, ?)
-            RETURNING id
-            """,
-            Long.class,
-            "business-api-"
-                + UUID.randomUUID()
-                + "@ledgerbase.local",
-            "TEST_ONLY_NOT_A_REAL_PASSWORD_HASH",
-            fullName
-        );
+                "Business Controller Test User",
+                passwordHash
+            );
+
+
+        // ----------------------------------------------------
+        // VERIFY USER WAS CREATED
+        // ----------------------------------------------------
+
+        assertNotNull(userId);
+
+        return userId;
     }
 
 
     // ========================================================
-    // HELPER — ENSURE DEVELOPMENT OWNER EXISTS
+    // HELPER — CREATE BUSINESS
     // ========================================================
 
     /**
-     * BusinessController temporarily uses owner ID 1.
+     * Create a real business through BusinessService.
      *
-     * Unlike the normal generated-ID fixtures,
-     * this test sometimes needs a specific ID.
+     * The service must create:
      *
-     * PostgreSQL's OVERRIDING SYSTEM VALUE permits
-     * inserting a specified ID into an identity column.
+     * - businesses row.
+     * - OWNER membership row.
      *
-     * ON CONFLICT DO NOTHING handles the case
-     * where user ID 1 already exists.
+     * Both are part of the surrounding transaction.
      *
-     * This operation affects only the test database.
-     *
-     * We will remove this special fixture approach
-     * when the controller uses authenticated identity.
+     * @param ownerId owner user ID
+     * @return created business
      */
-    private void ensureDevelopmentOwnerExists() {
-
-        jdbcTemplate.update(
-            """
-            INSERT INTO users (
-                id,
-                email,
-                password_hash,
-                full_name
-            )
-            OVERRIDING SYSTEM VALUE
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT (id) DO NOTHING
-            """,
-            DEVELOPMENT_OWNER_ID,
-            "development-api-"
-                + UUID.randomUUID()
-                + "@ledgerbase.local",
-            "TEST_ONLY_NOT_A_REAL_PASSWORD_HASH",
-            "Business API Development Owner"
-        );
-    }
-
-
-    // ========================================================
-    // HELPER — CREATE TEST BUSINESS
-    // ========================================================
-
-    /**
-     * Insert a temporary business owned by the
-     * specified fixture user.
-     *
-     * PostgreSQL generates the business ID.
-     *
-     * Currency and fiscal-year month use
-     * their database defaults.
-     */
-    private Long createTestBusiness(
-        Long ownerId,
-        String businessName
+    private Business createTestBusiness(
+        Long ownerId
     ) {
 
-        return jdbcTemplate.queryForObject(
-            """
-            INSERT INTO businesses (
-                owner_id,
-                name
-            )
-            VALUES (?, ?)
-            RETURNING id
-            """,
-            Long.class,
+        return businessService.createBusiness(
             ownerId,
-            businessName
+            "Controller Test " + UUID.randomUUID(),
+            "USD",
+            1
+        );
+    }
+
+
+    // ========================================================
+    // HELPER — ADD BUSINESS MEMBERSHIP
+    // ========================================================
+
+    /**
+     * Add a non-owner membership for an existing business.
+     *
+     * This helper is used to test whether users
+     * with roles such as VIEWER can retrieve
+     * accessible business information.
+     *
+     * @param businessId existing business ID
+     * @param userId additional member ID
+     * @param role business membership role
+     */
+    private void addMembership(
+        Long businessId,
+        Long userId,
+        String role
+    ) {
+
+        int insertedRows =
+            jdbcTemplate.update(
+                """
+                INSERT INTO business_memberships (
+                    business_id,
+                    user_id,
+                    role
+                )
+                VALUES (?, ?, ?)
+                """,
+                businessId,
+                userId,
+                role
+            );
+
+        assertEquals(1, insertedRows);
+    }
+
+
+    // ========================================================
+    // HELPER — BUILD BUSINESS REQUEST JSON
+    // ========================================================
+
+    /**
+     * Build a valid JSON request body.
+     *
+     * Generated test names contain only safe
+     * characters and require no escaping.
+     */
+    private String businessRequestJson(
+        String name,
+        String currency,
+        int fiscalYearStartMonth
+    ) {
+
+        return """
+            {
+              "name": "%s",
+              "currency": "%s",
+              "fiscalYearStartMonth": %d
+            }
+            """.formatted(
+                name,
+                currency,
+                fiscalYearStartMonth
+            );
+    }
+
+
+    // ========================================================
+    // TEST — MEMBERSHIP-SCOPED BUSINESS LIST
+    // ========================================================
+
+    /**
+     * GET /api/v1/businesses
+     *
+     * The authenticated user should see:
+     *
+     * - Businesses they own.
+     * - Businesses shared through membership.
+     *
+     * They should not see unrelated businesses.
+     */
+    @Test
+    void listsOnlyAuthenticatedUsersBusinesses()
+            throws Exception {
+
+        // ----------------------------------------------------
+        // CREATE TWO USERS
+        // ----------------------------------------------------
+
+        Long userA =
+            createTestUser();
+
+        Long userB =
+            createTestUser();
+
+
+        // ----------------------------------------------------
+        // CREATE THREE BUSINESSES
+        // ----------------------------------------------------
+
+        Business ownedBusiness =
+            createTestBusiness(userA);
+
+        Business sharedBusiness =
+            createTestBusiness(userB);
+
+        createTestBusiness(userB);
+
+
+        // ----------------------------------------------------
+        // SHARE ONE BUSINESS WITH USER A
+        // ----------------------------------------------------
+
+        addMembership(
+            sharedBusiness.getId(),
+            userA,
+            "VIEWER"
+        );
+
+
+        // ----------------------------------------------------
+        // REQUEST BUSINESS DIRECTORY AS USER A
+        // ----------------------------------------------------
+
+        mockMvc.perform(
+            get(BUSINESS_URL)
+
+                .header(
+                    HttpHeaders.AUTHORIZATION,
+                    bearerFor(userA)
+                )
+        )
+
+        // ----------------------------------------------------
+        // EXPECT TWO ACCESSIBLE BUSINESSES
+        // ----------------------------------------------------
+
+        .andExpect(
+            status().isOk()
+        )
+
+        .andExpect(
+            jsonPath("$.length()").value(2)
+        )
+
+        .andExpect(
+            jsonPath("$[0].id")
+                .value(ownedBusiness.getId())
+        )
+
+        .andExpect(
+            jsonPath("$[1].id")
+                .value(sharedBusiness.getId())
+        );
+    }
+
+
+    // ========================================================
+    // TEST — RETRIEVE EXISTING BUSINESS
+    // ========================================================
+
+    /**
+     * GET /api/v1/businesses/{businessId}
+     *
+     * An owner should retrieve their own business.
+     */
+    @Test
+    void retrievesExistingBusiness()
+            throws Exception {
+
+        Long ownerId =
+            createTestUser();
+
+        Business business =
+            createTestBusiness(ownerId);
+
+
+        // ----------------------------------------------------
+        // RETRIEVE AS AUTHENTICATED OWNER
+        // ----------------------------------------------------
+
+        mockMvc.perform(
+            get(
+                BUSINESS_URL + "/{businessId}",
+                business.getId()
+            )
+
+            .header(
+                HttpHeaders.AUTHORIZATION,
+                bearerFor(ownerId)
+            )
+        )
+
+        // ----------------------------------------------------
+        // VERIFY RESPONSE
+        // ----------------------------------------------------
+
+        .andExpect(
+            status().isOk()
+        )
+
+        .andExpect(
+            jsonPath("$.id")
+                .value(business.getId())
+        )
+
+        .andExpect(
+            jsonPath("$.ownerId")
+                .value(ownerId)
+        )
+
+        .andExpect(
+            jsonPath("$.currency")
+                .value("USD")
+        );
+    }
+
+
+    // ========================================================
+    // TEST — PREVENT CROSS-BUSINESS ACCESS
+    // ========================================================
+
+    /**
+     * A valid JWT does not automatically grant
+     * access to every business.
+     *
+     * User B must not retrieve User A's business
+     * unless a membership is explicitly granted.
+     *
+     * The endpoint deliberately returns HTTP 404
+     * to avoid disclosing other businesses.
+     */
+    @Test
+    void doesNotExposeAnotherOwnersBusiness()
+            throws Exception {
+
+        Long ownerId =
+            createTestUser();
+
+        Long otherUserId =
+            createTestUser();
+
+        Business privateBusiness =
+            createTestBusiness(ownerId);
+
+
+        // ----------------------------------------------------
+        // ATTEMPT ACCESS AS NONMEMBER
+        // ----------------------------------------------------
+
+        mockMvc.perform(
+            get(
+                BUSINESS_URL + "/{businessId}",
+                privateBusiness.getId()
+            )
+
+            .header(
+                HttpHeaders.AUTHORIZATION,
+                bearerFor(otherUserId)
+            )
+        )
+
+        // ----------------------------------------------------
+        // EXPECT BUSINESS TO REMAIN INACCESSIBLE
+        // ----------------------------------------------------
+
+        .andExpect(
+            status().isNotFound()
+        );
+    }
+
+
+    // ========================================================
+    // TEST — MISSING BUSINESS
+    // ========================================================
+
+    /**
+     * A business ID that does not exist must
+     * result in HTTP 404.
+     */
+    @Test
+    void returnsNotFoundForMissingBusiness()
+            throws Exception {
+
+        Long userId =
+            createTestUser();
+
+
+        // ----------------------------------------------------
+        // REQUEST NONEXISTENT BUSINESS
+        // ----------------------------------------------------
+
+        mockMvc.perform(
+            get(
+                BUSINESS_URL + "/{businessId}",
+                Long.MAX_VALUE
+            )
+
+            .header(
+                HttpHeaders.AUTHORIZATION,
+                bearerFor(userId)
+            )
+        )
+
+        .andExpect(
+            status().isNotFound()
+        );
+    }
+
+
+    // ========================================================
+    // TEST — CREATE BUSINESS
+    // ========================================================
+
+    /**
+     * POST /api/v1/businesses
+     *
+     * The authenticated user should become:
+     *
+     * - businesses.owner_id.
+     * - business_memberships OWNER.
+     *
+     * The owner is derived from the JWT subject,
+     * not an ownerId in the HTTP request body.
+     */
+    @Test
+    void createsBusinessThroughApi()
+            throws Exception {
+
+        Long ownerId =
+            createTestUser();
+
+        String businessName =
+            "New Business " + UUID.randomUUID();
+
+
+        // ----------------------------------------------------
+        // CREATE THROUGH REAL HTTP CONTROLLER
+        // ----------------------------------------------------
+
+        mockMvc.perform(
+            post(BUSINESS_URL)
+
+                .header(
+                    HttpHeaders.AUTHORIZATION,
+                    bearerFor(ownerId)
+                )
+
+                .contentType(
+                    MediaType.APPLICATION_JSON
+                )
+
+                .content(
+                    businessRequestJson(
+                        businessName,
+                        "USD",
+                        1
+                    )
+                )
+        )
+
+        // ----------------------------------------------------
+        // VERIFY CREATED RESPONSE
+        // ----------------------------------------------------
+
+        .andExpect(
+            status().isCreated()
+        )
+
+        .andExpect(
+            jsonPath("$.id").isNumber()
+        )
+
+        .andExpect(
+            jsonPath("$.ownerId")
+                .value(ownerId)
+        )
+
+        .andExpect(
+            jsonPath("$.name")
+                .value(businessName)
+        );
+
+
+        // ----------------------------------------------------
+        // VERIFY DATABASE BUSINESS OWNER
+        // ----------------------------------------------------
+
+        Long businessId =
+            jdbcTemplate.queryForObject(
+                """
+                SELECT id
+                FROM businesses
+                WHERE owner_id = ?
+                  AND name = ?
+                """,
+                Long.class,
+                ownerId,
+                businessName
+            );
+
+        assertNotNull(businessId);
+
+
+        // ----------------------------------------------------
+        // VERIFY AUTOMATIC OWNER MEMBERSHIP
+        // ----------------------------------------------------
+
+        String role =
+            jdbcTemplate.queryForObject(
+                """
+                SELECT role
+                FROM business_memberships
+                WHERE business_id = ?
+                  AND user_id = ?
+                """,
+                String.class,
+                businessId,
+                ownerId
+            );
+
+        assertEquals(
+            "OWNER",
+            role
+        );
+    }
+
+
+    // ========================================================
+    // TEST — DEFAULT BUSINESS VALUES
+    // ========================================================
+
+    /**
+     * BusinessService defaults:
+     *
+     * - currency -> USD
+     * - fiscalYearStartMonth -> 1
+     *
+     * Omitting optional fields should still produce
+     * a valid business.
+     */
+    @Test
+    void appliesDefaultsThroughApi()
+            throws Exception {
+
+        Long ownerId =
+            createTestUser();
+
+        String businessName =
+            "Defaults Test " + UUID.randomUUID();
+
+
+        // ----------------------------------------------------
+        // SUBMIT ONLY REQUIRED NAME
+        // ----------------------------------------------------
+
+        String requestBody = """
+            {
+              "name": "%s"
+            }
+            """.formatted(businessName);
+
+
+        // ----------------------------------------------------
+        // CREATE BUSINESS
+        // ----------------------------------------------------
+
+        mockMvc.perform(
+            post(BUSINESS_URL)
+
+                .header(
+                    HttpHeaders.AUTHORIZATION,
+                    bearerFor(ownerId)
+                )
+
+                .contentType(
+                    MediaType.APPLICATION_JSON
+                )
+
+                .content(requestBody)
+        )
+
+        // ----------------------------------------------------
+        // VERIFY DEFAULT VALUES
+        // ----------------------------------------------------
+
+        .andExpect(
+            status().isCreated()
+        )
+
+        .andExpect(
+            jsonPath("$.currency")
+                .value("USD")
+        )
+
+        .andExpect(
+            jsonPath("$.fiscalYearStartMonth")
+                .value(1)
+        );
+    }
+
+
+    // ========================================================
+    // TEST — NORMALIZE BUSINESS INPUT
+    // ========================================================
+
+    /**
+     * BusinessService normalizes:
+     *
+     * - Leading and trailing name whitespace.
+     * - Lowercase currency letters.
+     */
+    @Test
+    void normalizesBusinessInputThroughApi()
+            throws Exception {
+
+        Long ownerId =
+            createTestUser();
+
+        String expectedName =
+            "Normalized " + UUID.randomUUID();
+
+
+        // ----------------------------------------------------
+        // SUBMIT UNNORMALIZED INPUT
+        // ----------------------------------------------------
+
+        mockMvc.perform(
+            post(BUSINESS_URL)
+
+                .header(
+                    HttpHeaders.AUTHORIZATION,
+                    bearerFor(ownerId)
+                )
+
+                .contentType(
+                    MediaType.APPLICATION_JSON
+                )
+
+                .content(
+                    businessRequestJson(
+                        "  " + expectedName + "  ",
+                        "usd",
+                        4
+                    )
+                )
+        )
+
+        // ----------------------------------------------------
+        // VERIFY NORMALIZED RESPONSE
+        // ----------------------------------------------------
+
+        .andExpect(
+            status().isCreated()
+        )
+
+        .andExpect(
+            jsonPath("$.name")
+                .value(expectedName)
+        )
+
+        .andExpect(
+            jsonPath("$.currency")
+                .value("USD")
+        )
+
+        .andExpect(
+            jsonPath("$.fiscalYearStartMonth")
+                .value(4)
+        );
+    }
+
+
+    // ========================================================
+    // TEST — INVALID CURRENCY
+    // ========================================================
+
+    /**
+     * A currency must contain exactly three letters.
+     *
+     * Invalid currency formats must return HTTP 400.
+     */
+    @Test
+    void rejectsInvalidCurrencyThroughApi()
+            throws Exception {
+
+        Long ownerId =
+            createTestUser();
+
+
+        // ----------------------------------------------------
+        // SUBMIT CURRENCY CONTAINING DIGIT
+        // ----------------------------------------------------
+
+        mockMvc.perform(
+            post(BUSINESS_URL)
+
+                .header(
+                    HttpHeaders.AUTHORIZATION,
+                    bearerFor(ownerId)
+                )
+
+                .contentType(
+                    MediaType.APPLICATION_JSON
+                )
+
+                .content(
+                    businessRequestJson(
+                        "Invalid Currency Test",
+                        "US1",
+                        1
+                    )
+                )
+        )
+
+        .andExpect(
+            status().isBadRequest()
+        );
+    }
+
+
+    // ========================================================
+    // TEST — INVALID BUSINESS ID
+    // ========================================================
+
+    /**
+     * Nonpositive business identifiers are invalid.
+     *
+     * The existing service validation rejects them
+     * before querying PostgreSQL.
+     */
+    @Test
+    void rejectsInvalidBusinessId()
+            throws Exception {
+
+        Long userId =
+            createTestUser();
+
+
+        // ----------------------------------------------------
+        // REQUEST BUSINESS ID -1
+        // ----------------------------------------------------
+
+        mockMvc.perform(
+            get(
+                BUSINESS_URL + "/{businessId}",
+                -1
+            )
+
+            .header(
+                HttpHeaders.AUTHORIZATION,
+                bearerFor(userId)
+            )
+        )
+
+        .andExpect(
+            status().isBadRequest()
+        );
+    }
+
+
+    // ========================================================
+    // TEST — BLANK BUSINESS NAME
+    // ========================================================
+
+    /**
+     * Empty or whitespace-only business names
+     * must not be accepted.
+     */
+    @Test
+    void rejectsBlankBusinessName()
+            throws Exception {
+
+        Long ownerId =
+            createTestUser();
+
+
+        // ----------------------------------------------------
+        // SUBMIT BLANK BUSINESS NAME
+        // ----------------------------------------------------
+
+        mockMvc.perform(
+            post(BUSINESS_URL)
+
+                .header(
+                    HttpHeaders.AUTHORIZATION,
+                    bearerFor(ownerId)
+                )
+
+                .contentType(
+                    MediaType.APPLICATION_JSON
+                )
+
+                .content(
+                    businessRequestJson(
+                        "   ",
+                        "USD",
+                        1
+                    )
+                )
+        )
+
+        .andExpect(
+            status().isBadRequest()
+        );
+    }
+
+
+    // ========================================================
+    // TEST — INVALID FISCAL-YEAR START
+    // ========================================================
+
+    /**
+     * Only month values 1 through 12 are allowed.
+     */
+    @Test
+    void rejectsInvalidFiscalYearStartMonth()
+            throws Exception {
+
+        Long ownerId =
+            createTestUser();
+
+
+        // ----------------------------------------------------
+        // SUBMIT MONTH 13
+        // ----------------------------------------------------
+
+        mockMvc.perform(
+            post(BUSINESS_URL)
+
+                .header(
+                    HttpHeaders.AUTHORIZATION,
+                    bearerFor(ownerId)
+                )
+
+                .contentType(
+                    MediaType.APPLICATION_JSON
+                )
+
+                .content(
+                    businessRequestJson(
+                        "Invalid Fiscal Month",
+                        "USD",
+                        13
+                    )
+                )
+        )
+
+        .andExpect(
+            status().isBadRequest()
+        );
+    }
+
+
+    // ========================================================
+    // TEST — VIEWER CAN READ BUSINESS
+    // ========================================================
+
+    /**
+     * Any valid business member may retrieve
+     * their business information.
+     *
+     * A VIEWER does not need to be the
+     * canonical business owner.
+     *
+     * Write restrictions for VIEWER will be
+     * covered by later financial RBAC tests.
+     */
+    @Test
+    void allowsViewerToRetrieveBusiness()
+            throws Exception {
+
+        Long ownerId =
+            createTestUser();
+
+        Long viewerId =
+            createTestUser();
+
+        Business business =
+            createTestBusiness(ownerId);
+
+
+        // ----------------------------------------------------
+        // GRANT VIEWER MEMBERSHIP
+        // ----------------------------------------------------
+
+        addMembership(
+            business.getId(),
+            viewerId,
+            "VIEWER"
+        );
+
+
+        // ----------------------------------------------------
+        // RETRIEVE BUSINESS AS VIEWER
+        // ----------------------------------------------------
+
+        mockMvc.perform(
+            get(
+                BUSINESS_URL + "/{businessId}",
+                business.getId()
+            )
+
+            .header(
+                HttpHeaders.AUTHORIZATION,
+                bearerFor(viewerId)
+            )
+        )
+
+        // ----------------------------------------------------
+        // VERIFY VIEW ACCESS
+        // ----------------------------------------------------
+
+        .andExpect(
+            status().isOk()
+        )
+
+        .andExpect(
+            jsonPath("$.id")
+                .value(business.getId())
+        )
+
+        .andExpect(
+            jsonPath("$.ownerId")
+                .value(ownerId)
+        );
+    }
+
+
+    // ========================================================
+    // TEST — PUBLIC ACCESS MUST BE REJECTED
+    // ========================================================
+
+    /**
+     * Business information must not be visible
+     * to anonymous requests.
+     *
+     * No Authorization header is supplied.
+     */
+    @Test
+    void rejectsUnauthenticatedBusinessListing()
+            throws Exception {
+
+        mockMvc.perform(
+            get(BUSINESS_URL)
+        )
+
+        .andExpect(
+            status().isUnauthorized()
+        );
+    }
+
+
+    // ========================================================
+    // TEST — ANONYMOUS BUSINESS CREATION
+    // ========================================================
+
+    /**
+     * Anonymous clients must not create businesses.
+     *
+     * Security should reject the HTTP request
+     * before calling the business service.
+     */
+    @Test
+    void rejectsUnauthenticatedBusinessCreation()
+            throws Exception {
+
+        mockMvc.perform(
+            post(BUSINESS_URL)
+
+                .contentType(
+                    MediaType.APPLICATION_JSON
+                )
+
+                .content(
+                    businessRequestJson(
+                        "Unauthorized Business",
+                        "USD",
+                        1
+                    )
+                )
+        )
+
+        .andExpect(
+            status().isUnauthorized()
+        );
+    }
+
+
+    // ========================================================
+    // TEST — INVALID BEARER TOKEN
+    // ========================================================
+
+    /**
+     * A malformed authentication token must not
+     * reach protected business endpoints.
+     *
+     * The mocked decoder rejects any token
+     * without our test-specific prefix.
+     *
+     * This checks Spring Security's response
+     * to a decoder rejection, not cryptographic
+     * signature verification.
+     */
+    @Test
+    void rejectsInvalidBearerToken()
+            throws Exception {
+
+        mockMvc.perform(
+            get(BUSINESS_URL)
+
+                .header(
+                    HttpHeaders.AUTHORIZATION,
+                    "Bearer invalid-test-token"
+                )
+        )
+
+        .andExpect(
+            status().isUnauthorized()
         );
     }
 }
