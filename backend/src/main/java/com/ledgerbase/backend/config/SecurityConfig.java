@@ -5,6 +5,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplicat
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import org.springframework.http.HttpMethod;
+
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -16,39 +18,48 @@ import org.springframework.security.web.SecurityFilterChain;
 // ============================================================
 
 /**
- * Configures HTTP authentication for LedgerBase.
+ * Configures Spring Security for LedgerBase's REST APIs.
  *
- * This configuration is activated only when the
- * application runs as a servlet web application.
+ * AUTHENTICATION ARCHITECTURE:
  *
- * Non-web integration tests can load JWT signing
- * and validation components without requiring
- * HttpSecurity or a servlet filter chain.
+ * - Stateless HTTP requests.
+ * - JWT Bearer access tokens.
+ * - PostgreSQL-backed authentication sessions.
+ * - HttpOnly refresh cookies.
  *
- * AUTHENTICATION:
+ * PUBLIC ENDPOINTS:
  *
- * - Stateless Spring Security authentication.
- * - JWT Bearer authentication for protected routes.
- * - Cookie-based refresh-session restoration.
+ * - POST /api/v1/auth/login
+ * - POST /api/v1/auth/refresh
+ * - POST /api/v1/auth/logout
+ * - GET  /api/v1/health/**
  *
- * PUBLIC AUTHENTICATION ROUTES:
+ * PROTECTED ENDPOINTS:
  *
- * POST /api/v1/auth/login
- * POST /api/v1/auth/refresh
+ * - GET /api/v1/auth/me
+ * - All accounting and financial APIs.
+ * - All other endpoints not explicitly made public.
  *
- * PROTECTED IDENTITY ROUTE:
+ * JWT VALIDATION:
  *
- * GET /api/v1/auth/me
+ * The configured JwtDecoder validates:
  *
- * IMPORTANT:
+ * - JWT cryptographic signature.
+ * - Token expiration.
+ * - Issuer and audience.
+ * - Session identifier.
+ * - Active PostgreSQL authentication session.
  *
- * Accounting APIs are temporarily accessible
- * without authentication during development.
+ * AUTHORIZATION:
  *
- * That compatibility rule must be removed after
- * adding frontend Bearer-token propagation,
- * database-backed session validation, and
- * business-scoped authorization.
+ * This configuration establishes the requirement
+ * that API callers must be authenticated.
+ *
+ * Business membership and role-specific permissions
+ * must be enforced separately.
+ *
+ * Being authenticated does not automatically mean
+ * the user may access every business.
  */
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnWebApplication(
@@ -61,7 +72,7 @@ public class SecurityConfig {
     // ========================================================
 
     /**
-     * Register Spring Security HTTP authentication rules.
+     * Register the application HTTP security rules.
      *
      * @param http Spring Security HTTP configuration
      * @return configured security filter chain
@@ -74,15 +85,15 @@ public class SecurityConfig {
         http
 
             // =================================================
-            // STATELESS HTTP AUTHENTICATION
+            // STATELESS AUTHENTICATION
             // =================================================
 
             /**
-             * Spring Security does not create an HTTP
-             * session to store the authenticated user.
+             * Spring Security does not create or use
+             * servlet HTTP sessions for authentication.
              *
-             * Persistent login state is tracked by
-             * AuthSessionService in PostgreSQL.
+             * Authentication-session records are instead
+             * managed by LedgerBase in PostgreSQL.
              */
             .sessionManagement(session ->
                 session.sessionCreationPolicy(
@@ -96,12 +107,19 @@ public class SecurityConfig {
             // =================================================
 
             /**
-             * LedgerBase uses REST authentication
-             * rather than server-rendered login forms.
+             * LedgerBase has its own JSON-based
+             * authentication endpoints.
+             *
+             * Browser form login and HTTP Basic
+             * authentication are unnecessary.
              */
-            .formLogin(AbstractHttpConfigurer::disable)
+            .formLogin(
+                AbstractHttpConfigurer::disable
+            )
 
-            .httpBasic(AbstractHttpConfigurer::disable)
+            .httpBasic(
+                AbstractHttpConfigurer::disable
+            )
 
 
             // =================================================
@@ -109,46 +127,59 @@ public class SecurityConfig {
             // =================================================
 
             /**
-             * CSRF is temporarily disabled globally.
+             * CSRF is currently disabled globally.
              *
-             * Cookie-authenticated login and refresh
-             * endpoints explicitly validate the Origin
-             * header before performing session operations.
+             * LedgerBase's cookie-authenticated login,
+             * refresh, and logout operations explicitly
+             * validate the request Origin header.
              *
-             * Do not add further cookie-authenticated
-             * mutations without appropriate protection.
+             * Financial API requests use Bearer JWTs
+             * rather than cookie authentication.
              *
-             * A complete Spring Security CSRF strategy
-             * must be reviewed before production use.
+             * The complete CSRF strategy must be
+             * reviewed before production deployment.
              */
-            .csrf(AbstractHttpConfigurer::disable)
+            .csrf(
+                AbstractHttpConfigurer::disable
+            )
 
 
             // =================================================
             // HTTP AUTHORIZATION RULES
             // =================================================
 
+            /**
+             * Spring Security evaluates these rules
+             * in the order in which they are declared.
+             *
+             * More specific public endpoints must
+             * appear before the authenticated fallback.
+             */
             .authorizeHttpRequests(authorize -> authorize
 
                 // ---------------------------------------------
-                // PUBLIC AUTHENTICATION ENDPOINTS
+                // PUBLIC AUTHENTICATION OPERATIONS
                 // ---------------------------------------------
 
                 /**
-                 * Login verifies a password.
+                 * Login, refresh, and logout are
+                 * deliberately accessible without
+                 * an existing access JWT.
                  *
-                 * Refresh uses the HttpOnly refresh cookie.
+                 * Login uses credentials.
                  *
-                 * Logout revokes the authentication session
-                 * identified by the refresh cookie.
+                 * Refresh and logout use the
+                 * HttpOnly refresh cookie.
                  *
-                 * These operations cannot require an existing
-                 * access JWT because it may have expired.
+                 * All three operations validate
+                 * trusted request origins in the
+                 * authentication controller.
                  *
-                 * The controller validates trusted origins
-                 * before performing cookie-based operations.
+                 * Restrict public access to POST
+                 * rather than every HTTP method.
                  */
                 .requestMatchers(
+                    HttpMethod.POST,
                     "/api/v1/auth/login",
                     "/api/v1/auth/refresh",
                     "/api/v1/auth/logout"
@@ -156,14 +187,39 @@ public class SecurityConfig {
 
 
                 // ---------------------------------------------
-                // AUTHENTICATED USER ENDPOINT
+                // PUBLIC DATABASE HEALTH ENDPOINTS
                 // ---------------------------------------------
 
                 /**
-                 * /auth/me requires a valid Bearer JWT.
+                 * Health checks must remain accessible
+                 * before a user has authenticated.
                  *
-                 * Database-backed session revocation
-                 * validation will be added separately.
+                 * Existing development endpoint:
+                 *
+                 * GET /api/v1/health/database
+                 *
+                 * Only GET requests are allowed through
+                 * this public authentication exception.
+                 *
+                 * Health responses should not expose
+                 * database credentials or sensitive
+                 * infrastructure configuration.
+                 */
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/api/v1/health",
+                    "/api/v1/health/**"
+                ).permitAll()
+
+
+                // ---------------------------------------------
+                // AUTHENTICATED CURRENT USER
+                // ---------------------------------------------
+
+                /**
+                 * Spring Security must verify a valid
+                 * Bearer JWT before allowing access
+                 * to the authenticated user's identity.
                  */
                 .requestMatchers(
                     "/api/v1/auth/me"
@@ -171,40 +227,57 @@ public class SecurityConfig {
 
 
                 // ---------------------------------------------
-                // TEMPORARY ACCOUNTING API COMPATIBILITY
+                // PROTECT ALL REMAINING API ENDPOINTS
                 // ---------------------------------------------
 
                 /**
-                 * Preserve existing frontend operations
-                 * while JWT propagation and business RBAC
-                 * are being implemented.
+                 * Every other API request requires
+                 * an authenticated principal.
                  *
-                 * WARNING:
+                 * This covers:
                  *
-                 * These routes are not yet protected.
+                 * - Businesses.
+                 * - Chart of Accounts.
+                 * - Account import/export.
+                 * - Transactions.
+                 * - Fiscal years.
+                 * - Accounting periods.
+                 * - Trial Balance.
+                 * - Income Statement.
+                 * - Balance Sheet.
                  *
-                 * Replace this rule before considering
-                 * the application secure for deployment.
+                 * It also protects newly added APIs
+                 * by default.
+                 *
+                 * Authentication establishes identity.
+                 *
+                 * Business-scoped authorization is
+                 * the next security implementation.
                  */
-                .anyRequest().permitAll()
+                .anyRequest().authenticated()
             )
 
 
             // =================================================
-            // JWT BEARER AUTHENTICATION
+            // JWT BEARER RESOURCE SERVER
             // =================================================
 
             /**
-             * Validate incoming Bearer JWTs using
-             * the configured JwtDecoder.
+             * Configure Spring Security to read:
              *
-             * This verifies the JWT cryptographically.
+             * Authorization: Bearer <JWT>
              *
-             * Server-side revocation and membership
-             * authorization must still be enforced.
+             * The application's JwtDecoder validates
+             * cryptographic claims and checks the
+             * PostgreSQL authentication-session state.
+             *
+             * An invalid, expired, or revoked session
+             * must not authenticate successfully.
              */
             .oauth2ResourceServer(oauth2 ->
-                oauth2.jwt(Customizer.withDefaults())
+                oauth2.jwt(
+                    Customizer.withDefaults()
+                )
             );
 
         return http.build();
