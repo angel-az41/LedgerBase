@@ -15,17 +15,40 @@ import org.springframework.security.web.SecurityFilterChain;
 // LEDGERBASE — HTTP SECURITY CONFIGURATION
 // ============================================================
 
-
 /**
- * Configures HTTP authentication only when LedgerBase
- * runs as a servlet-based web application.
+ * Configures HTTP authentication for LedgerBase.
  *
- * Non-web integration tests can still load JWT signing
+ * This configuration is activated only when the
+ * application runs as a servlet web application.
+ *
+ * Non-web integration tests can load JWT signing
  * and validation components without requiring
- * HttpSecurity or a servlet security filter chain.
+ * HttpSecurity or a servlet filter chain.
  *
- * The HTTP security rules remain active when the
- * application runs normally as a Spring Boot REST API.
+ * AUTHENTICATION:
+ *
+ * - Stateless Spring Security authentication.
+ * - JWT Bearer authentication for protected routes.
+ * - Cookie-based refresh-session restoration.
+ *
+ * PUBLIC AUTHENTICATION ROUTES:
+ *
+ * POST /api/v1/auth/login
+ * POST /api/v1/auth/refresh
+ *
+ * PROTECTED IDENTITY ROUTE:
+ *
+ * GET /api/v1/auth/me
+ *
+ * IMPORTANT:
+ *
+ * Accounting APIs are temporarily accessible
+ * without authentication during development.
+ *
+ * That compatibility rule must be removed after
+ * adding frontend Bearer-token propagation,
+ * database-backed session validation, and
+ * business-scoped authorization.
  */
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnWebApplication(
@@ -38,10 +61,10 @@ public class SecurityConfig {
     // ========================================================
 
     /**
-     * Register the security rules applied to requests.
+     * Register Spring Security HTTP authentication rules.
      *
      * @param http Spring Security HTTP configuration
-     * @return configured filter chain
+     * @return configured security filter chain
      */
     @Bean
     public SecurityFilterChain securityFilterChain(
@@ -51,22 +74,31 @@ public class SecurityConfig {
         http
 
             // =================================================
-            // STATELESS AUTHENTICATION
+            // STATELESS HTTP AUTHENTICATION
             // =================================================
 
+            /**
+             * Spring Security does not create an HTTP
+             * session to store the authenticated user.
+             *
+             * Persistent login state is tracked by
+             * AuthSessionService in PostgreSQL.
+             */
             .sessionManagement(session ->
                 session.sessionCreationPolicy(
                     SessionCreationPolicy.STATELESS
                 )
             )
 
+
             // =================================================
             // DISABLE UNUSED LOGIN MECHANISMS
             // =================================================
 
-            // Authentication will use JWT Bearer headers,
-            // not server-side HTML login forms or HTTP Basic.
-
+            /**
+             * LedgerBase uses REST authentication
+             * rather than server-rendered login forms.
+             */
             .formLogin(AbstractHttpConfigurer::disable)
 
             .httpBasic(AbstractHttpConfigurer::disable)
@@ -76,13 +108,19 @@ public class SecurityConfig {
             // CSRF CONFIGURATION
             // =================================================
 
-            // The planned API authentication mechanism uses
-            // explicit Bearer headers rather than browser
-            // cookies that are sent automatically.
-            //
-            // Revisit this configuration if cookie-based
-            // authentication is introduced.
-
+            /**
+             * CSRF is temporarily disabled globally.
+             *
+             * Cookie-authenticated login and refresh
+             * endpoints explicitly validate the Origin
+             * header before performing session operations.
+             *
+             * Do not add further cookie-authenticated
+             * mutations without appropriate protection.
+             *
+             * A complete Spring Security CSRF strategy
+             * must be reviewed before production use.
+             */
             .csrf(AbstractHttpConfigurer::disable)
 
 
@@ -92,25 +130,62 @@ public class SecurityConfig {
 
             .authorizeHttpRequests(authorize -> authorize
 
-                // Login must be accessible without a JWT.
+                // ---------------------------------------------
+                // PUBLIC AUTHENTICATION ENDPOINTS
+                // ---------------------------------------------
+
+                /**
+                 * Login verifies a password.
+                 *
+                 * Refresh uses the HttpOnly refresh cookie.
+                 *
+                 * Logout revokes the authentication session
+                 * identified by the refresh cookie.
+                 *
+                 * These operations cannot require an existing
+                 * access JWT because it may have expired.
+                 *
+                 * The controller validates trusted origins
+                 * before performing cookie-based operations.
+                 */
                 .requestMatchers(
-                    "/api/v1/auth/login"
+                    "/api/v1/auth/login",
+                    "/api/v1/auth/refresh",
+                    "/api/v1/auth/logout"
                 ).permitAll()
 
-                // The identity verification endpoint
-                // will require a valid JWT.
-                //
-                // We'll implement this endpoint next.
+
+                // ---------------------------------------------
+                // AUTHENTICATED USER ENDPOINT
+                // ---------------------------------------------
+
+                /**
+                 * /auth/me requires a valid Bearer JWT.
+                 *
+                 * Database-backed session revocation
+                 * validation will be added separately.
+                 */
                 .requestMatchers(
                     "/api/v1/auth/me"
                 ).authenticated()
 
-                // TEMPORARY COMPATIBILITY RULE:
-                //
-                // Keep existing accounting requests working
-                // while frontend JWT support is developed.
-                //
-                // This does not provide business authorization.
+
+                // ---------------------------------------------
+                // TEMPORARY ACCOUNTING API COMPATIBILITY
+                // ---------------------------------------------
+
+                /**
+                 * Preserve existing frontend operations
+                 * while JWT propagation and business RBAC
+                 * are being implemented.
+                 *
+                 * WARNING:
+                 *
+                 * These routes are not yet protected.
+                 *
+                 * Replace this rule before considering
+                 * the application secure for deployment.
+                 */
                 .anyRequest().permitAll()
             )
 
@@ -119,9 +194,15 @@ public class SecurityConfig {
             // JWT BEARER AUTHENTICATION
             // =================================================
 
-            // Uses the application's JwtDecoder bean
-            // to verify signatures and JWT claims.
-
+            /**
+             * Validate incoming Bearer JWTs using
+             * the configured JwtDecoder.
+             *
+             * This verifies the JWT cryptographically.
+             *
+             * Server-side revocation and membership
+             * authorization must still be enforced.
+             */
             .oauth2ResourceServer(oauth2 ->
                 oauth2.jwt(Customizer.withDefaults())
             );

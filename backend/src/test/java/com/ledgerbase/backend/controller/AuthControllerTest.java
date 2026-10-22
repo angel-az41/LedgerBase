@@ -2,8 +2,12 @@ package com.ledgerbase.backend.controller;
 
 import com.ledgerbase.backend.dto.AuthenticatedUser;
 import com.ledgerbase.backend.exception.InvalidCredentialsException;
+
 import com.ledgerbase.backend.service.AuthenticationService;
+import com.ledgerbase.backend.service.AuthSessionService;
+import com.ledgerbase.backend.service.AuthRequestOriginValidator;
 import com.ledgerbase.backend.service.JwtTokenService;
+import com.ledgerbase.backend.service.RefreshCookieService;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -13,7 +17,10 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.validation.beanvalidation.LocalValidatorFactoryBean;
 
-import static org.junit.jupiter.api.Assertions.*;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.util.UUID;
+
 import static org.mockito.Mockito.*;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -39,7 +46,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  *    |
  *    +---- Mock AuthenticationService
  *    |
+ *    +---- Mock AuthSessionService
+ *    |
  *    +---- Mock JwtTokenService
+ *    |
+ *    +---- Mock RefreshCookieService
+ *    |
+ *    +---- Real AuthRequestOriginValidator
  *
  * These are focused controller tests.
  *
@@ -48,13 +61,19 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * - Request body validation.
  * - HTTP response codes.
  * - Successful login response structure.
+ * - Persistent session creation.
+ * - Session-aware JWT generation.
+ * - Refresh-cookie service invocation.
  * - Authentication failure handling.
- * - JWT service invocation.
+ * - Request-origin validation.
  * - Protection against returning credentials.
  *
  * No PostgreSQL connection is required.
  * No Spring Boot application context is started.
  * No real passwords or JWT signing secrets are used.
+ *
+ * PostgreSQL persistence, cryptographic signing,
+ * and cookie attributes are tested separately.
  */
 class AuthControllerTest {
 
@@ -65,18 +84,30 @@ class AuthControllerTest {
     private static final String LOGIN_URL =
         "/api/v1/auth/login";
 
+    private static final String TRUSTED_ORIGIN =
+        "http://localhost:5173";
+
     private static final String TEST_EMAIL =
         "test@example.com";
 
     private static final String TEST_PASSWORD =
         "ExampleOnly@Test123!";
 
-    // Test-only token placeholder.
-    //
-    // This is not a valid signed JWT.
-
+    /**
+     * Test-only access token placeholder.
+     *
+     * This is not a valid signed JWT.
+     */
     private static final String TEST_ACCESS_TOKEN =
         "test.header.signature";
+
+    /**
+     * Test-only refresh token placeholder.
+     *
+     * This is not a real authentication credential.
+     */
+    private static final String TEST_REFRESH_TOKEN =
+        "A".repeat(43);
 
 
     // ========================================================
@@ -85,7 +116,31 @@ class AuthControllerTest {
 
     private AuthenticationService authenticationService;
 
+    private AuthSessionService authSessionService;
+
     private JwtTokenService jwtTokenService;
+
+    private RefreshCookieService refreshCookieService;
+
+
+    // ========================================================
+    // REAL ORIGIN VALIDATOR
+    // ========================================================
+
+    /**
+     * Use the real validator rather than mocking
+     * trusted-origin decisions.
+     *
+     * This lets the controller tests verify that
+     * trusted and untrusted origins are handled
+     * correctly.
+     */
+    private AuthRequestOriginValidator originValidator;
+
+
+    // ========================================================
+    // SPRING MVC TEST CLIENT
+    // ========================================================
 
     private MockMvc mockMvc;
 
@@ -95,10 +150,11 @@ class AuthControllerTest {
     // ========================================================
 
     /**
-     * Configure an isolated controller before each test.
+     * Configure an isolated authentication controller
+     * before each test.
      *
-     * Mockito replaces the authentication and JWT
-     * services with controlled test doubles.
+     * Mockito replaces external authentication and
+     * persistence services with controlled test doubles.
      *
      * LocalValidatorFactoryBean enables the Jakarta
      * validation rules declared in LoginRequest.
@@ -110,14 +166,51 @@ class AuthControllerTest {
     void setUp() {
 
         // ----------------------------------------------------
-        // CREATE SERVICE MOCKS
+        // CREATE AUTHENTICATION SERVICE MOCK
         // ----------------------------------------------------
 
         authenticationService =
             mock(AuthenticationService.class);
 
+
+        // ----------------------------------------------------
+        // CREATE SESSION SERVICE MOCK
+        // ----------------------------------------------------
+
+        authSessionService =
+            mock(AuthSessionService.class);
+
+
+        // ----------------------------------------------------
+        // CREATE JWT SERVICE MOCK
+        // ----------------------------------------------------
+
         jwtTokenService =
             mock(JwtTokenService.class);
+
+
+        // ----------------------------------------------------
+        // CREATE REFRESH COOKIE SERVICE MOCK
+        // ----------------------------------------------------
+
+        refreshCookieService =
+            mock(RefreshCookieService.class);
+
+
+        // ----------------------------------------------------
+        // CONFIGURE TRUSTED REQUEST ORIGINS
+        // ----------------------------------------------------
+
+        /**
+         * Match the local React and Spring Boot
+         * development origins.
+         *
+         * Origin checks use exact string matching.
+         */
+        originValidator =
+            new AuthRequestOriginValidator(
+                "http://localhost:5173,http://localhost:8080"
+            );
 
 
         // ----------------------------------------------------
@@ -134,10 +227,19 @@ class AuthControllerTest {
         // CREATE CONTROLLER
         // ----------------------------------------------------
 
+        /**
+         * AuthController now requires five dependencies.
+         *
+         * The constructor must match the updated
+         * production controller.
+         */
         AuthController controller =
             new AuthController(
                 authenticationService,
-                jwtTokenService
+                jwtTokenService,
+                authSessionService,
+                refreshCookieService,
+                originValidator
             );
 
 
@@ -153,11 +255,21 @@ class AuthControllerTest {
 
 
     // ========================================================
-    // TEST 1 — SUCCESSFUL LOGIN
+    // TEST — SUCCESSFUL PERSISTENT LOGIN
     // ========================================================
 
     /**
      * Correct credentials must produce HTTP 200.
+     *
+     * The controller should:
+     *
+     * 1. Accept a trusted request origin.
+     * 2. Authenticate the user.
+     * 3. Create a persistent PostgreSQL session
+     *    through the mocked session service.
+     * 4. Generate a session-aware access JWT.
+     * 5. Delegate refresh-cookie creation.
+     * 6. Return the existing login response.
      *
      * The response should contain:
      *
@@ -166,7 +278,8 @@ class AuthControllerTest {
      * - Token expiration
      * - Authenticated user identity
      *
-     * Passwords and password hashes must not appear.
+     * Passwords, password hashes, and refresh
+     * tokens must not appear in the JSON response.
      */
     @Test
     void shouldReturnAccessTokenForValidCredentials()
@@ -185,7 +298,30 @@ class AuthControllerTest {
 
 
         // ----------------------------------------------------
-        // CONFIGURE SERVICE BEHAVIOR
+        // PREPARE AUTHENTICATION SESSION
+        // ----------------------------------------------------
+
+        /**
+         * Simulate a session that remains valid
+         * for the next eight hours.
+         */
+        UUID sessionId =
+            UUID.randomUUID();
+
+        OffsetDateTime absoluteExpiresAt =
+            OffsetDateTime.now(ZoneOffset.UTC)
+                .plusHours(8);
+
+        AuthSessionService.CreatedSession session =
+            new AuthSessionService.CreatedSession(
+                sessionId,
+                TEST_REFRESH_TOKEN,
+                absoluteExpiresAt
+            );
+
+
+        // ----------------------------------------------------
+        // CONFIGURE PASSWORD AUTHENTICATION
         // ----------------------------------------------------
 
         when(
@@ -195,8 +331,33 @@ class AuthControllerTest {
             )
         ).thenReturn(user);
 
+
+        // ----------------------------------------------------
+        // CONFIGURE PERSISTENT SESSION CREATION
+        // ----------------------------------------------------
+
         when(
-            jwtTokenService.generateAccessToken(user)
+            authSessionService.createSession(
+                user.id()
+            )
+        ).thenReturn(session);
+
+
+        // ----------------------------------------------------
+        // CONFIGURE SESSION-AWARE JWT GENERATION
+        // ----------------------------------------------------
+
+        /**
+         * The new JWT generation method requires
+         * the authenticated user, session UUID,
+         * and absolute session expiration.
+         */
+        when(
+            jwtTokenService.generateAccessToken(
+                user,
+                sessionId,
+                absoluteExpiresAt
+            )
         ).thenReturn(TEST_ACCESS_TOKEN);
 
 
@@ -206,6 +367,7 @@ class AuthControllerTest {
 
         mockMvc.perform(
             post(LOGIN_URL)
+                .header("Origin", TRUSTED_ORIGIN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                     {
@@ -253,7 +415,7 @@ class AuthControllerTest {
 
 
         // ----------------------------------------------------
-        // ENSURE CREDENTIALS ARE NOT RETURNED
+        // VERIFY NO SENSITIVE DATA IN JSON
         // ----------------------------------------------------
 
         .andExpect(
@@ -264,18 +426,25 @@ class AuthControllerTest {
             jsonPath("$.passwordHash").doesNotExist()
         )
 
+        .andExpect(
+            jsonPath("$.refreshToken").doesNotExist()
+        )
+
 
         // ----------------------------------------------------
-        // PREVENT TOKEN RESPONSE CACHING
+        // PREVENT AUTHENTICATION RESPONSE CACHING
         // ----------------------------------------------------
 
         .andExpect(
-            header().string("Cache-Control", "no-store")
+            header().string(
+                "Cache-Control",
+                "no-store"
+            )
         );
 
 
         // ----------------------------------------------------
-        // VERIFY SERVICE CALLS
+        // VERIFY AUTHENTICATION SERVICE INVOCATION
         // ----------------------------------------------------
 
         verify(authenticationService).authenticate(
@@ -283,13 +452,60 @@ class AuthControllerTest {
             TEST_PASSWORD
         );
 
-        verify(jwtTokenService)
+
+        // ----------------------------------------------------
+        // VERIFY SESSION CREATION
+        // ----------------------------------------------------
+
+        verify(authSessionService).createSession(
+            user.id()
+        );
+
+
+        // ----------------------------------------------------
+        // VERIFY SESSION-AWARE JWT GENERATION
+        // ----------------------------------------------------
+
+        verify(jwtTokenService).generateAccessToken(
+            user,
+            sessionId,
+            absoluteExpiresAt
+        );
+
+
+        // ----------------------------------------------------
+        // VERIFY REFRESH COOKIE DELEGATION
+        // ----------------------------------------------------
+
+        /**
+         * The cookie service is mocked here.
+         *
+         * We verify the controller invokes it.
+         * Actual Set-Cookie header attributes are
+         * covered by RefreshCookieServiceTest.
+         */
+        verify(refreshCookieService).writeRefreshCookie(
+            any(),
+            eq(TEST_REFRESH_TOKEN),
+            eq(absoluteExpiresAt)
+        );
+
+
+        // ----------------------------------------------------
+        // VERIFY LEGACY JWT METHOD IS NOT CALLED
+        // ----------------------------------------------------
+
+        /**
+         * New persistent login must use the
+         * session-aware JWT generation method.
+         */
+        verify(jwtTokenService, never())
             .generateAccessToken(user);
     }
 
 
     // ========================================================
-    // TEST 2 — INCORRECT CREDENTIALS
+    // TEST — INCORRECT CREDENTIALS
     // ========================================================
 
     /**
@@ -297,7 +513,8 @@ class AuthControllerTest {
      *
      * The response must use a generic error message.
      *
-     * JWT generation must not be attempted.
+     * No session, access token, or refresh cookie
+     * should be created.
      */
     @Test
     void shouldReturnUnauthorizedForInvalidCredentials()
@@ -323,6 +540,7 @@ class AuthControllerTest {
 
         mockMvc.perform(
             post(LOGIN_URL)
+                .header("Origin", TRUSTED_ORIGIN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                     {
@@ -340,27 +558,35 @@ class AuthControllerTest {
         )
 
         .andExpect(
-            header().string("Cache-Control", "no-store")
+            header().string(
+                "Cache-Control",
+                "no-store"
+            )
         );
 
 
         // ----------------------------------------------------
-        // VERIFY NO TOKEN WAS GENERATED
+        // VERIFY NO SESSION OR TOKENS WERE GENERATED
         // ----------------------------------------------------
 
-        verifyNoInteractions(jwtTokenService);
+        verifyNoInteractions(
+            authSessionService,
+            jwtTokenService,
+            refreshCookieService
+        );
     }
 
 
     // ========================================================
-    // TEST 3 — INVALID EMAIL FORMAT
+    // TEST — INVALID EMAIL FORMAT
     // ========================================================
 
     /**
      * An invalid email address must be rejected
      * by LoginRequest validation.
      *
-     * AuthenticationService must not be invoked.
+     * No authentication or session creation
+     * should be attempted.
      */
     @Test
     void shouldRejectInvalidEmailFormat()
@@ -368,6 +594,7 @@ class AuthControllerTest {
 
         mockMvc.perform(
             post(LOGIN_URL)
+                .header("Origin", TRUSTED_ORIGIN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                     {
@@ -386,13 +613,15 @@ class AuthControllerTest {
 
         verifyNoInteractions(
             authenticationService,
-            jwtTokenService
+            authSessionService,
+            jwtTokenService,
+            refreshCookieService
         );
     }
 
 
     // ========================================================
-    // TEST 4 — BLANK PASSWORD
+    // TEST — BLANK PASSWORD
     // ========================================================
 
     /**
@@ -407,6 +636,7 @@ class AuthControllerTest {
 
         mockMvc.perform(
             post(LOGIN_URL)
+                .header("Origin", TRUSTED_ORIGIN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                     {
@@ -425,13 +655,15 @@ class AuthControllerTest {
 
         verifyNoInteractions(
             authenticationService,
-            jwtTokenService
+            authSessionService,
+            jwtTokenService,
+            refreshCookieService
         );
     }
 
 
     // ========================================================
-    // TEST 5 — MALFORMED JSON
+    // TEST — MALFORMED JSON
     // ========================================================
 
     /**
@@ -446,6 +678,7 @@ class AuthControllerTest {
 
         mockMvc.perform(
             post(LOGIN_URL)
+                .header("Origin", TRUSTED_ORIGIN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                     {
@@ -463,7 +696,105 @@ class AuthControllerTest {
 
         verifyNoInteractions(
             authenticationService,
-            jwtTokenService
+            authSessionService,
+            jwtTokenService,
+            refreshCookieService
+        );
+    }
+
+
+    // ========================================================
+    // TEST — MISSING REQUEST ORIGIN
+    // ========================================================
+
+    /**
+     * Login requests without an Origin header
+     * must be rejected with HTTP 403.
+     *
+     * This prevents requests without a verified
+     * browser origin from creating sessions.
+     */
+    @Test
+    void shouldRejectMissingRequestOrigin()
+            throws Exception {
+
+        // ----------------------------------------------------
+        // EXECUTE LOGIN WITHOUT ORIGIN HEADER
+        // ----------------------------------------------------
+
+        mockMvc.perform(
+            post(LOGIN_URL)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "email": "test@example.com",
+                      "password": "ExampleOnly@Test123!"
+                    }
+                    """)
+        )
+
+        .andExpect(status().isForbidden());
+
+
+        // ----------------------------------------------------
+        // VERIFY NO AUTHENTICATION SIDE EFFECTS
+        // ----------------------------------------------------
+
+        verifyNoInteractions(
+            authenticationService,
+            authSessionService,
+            jwtTokenService,
+            refreshCookieService
+        );
+    }
+
+
+    // ========================================================
+    // TEST — UNTRUSTED REQUEST ORIGIN
+    // ========================================================
+
+    /**
+     * Requests from an untrusted origin must
+     * be rejected before password authentication.
+     *
+     * The controller must not create sessions
+     * or issue access credentials.
+     */
+    @Test
+    void shouldRejectUntrustedRequestOrigin()
+            throws Exception {
+
+        // ----------------------------------------------------
+        // EXECUTE LOGIN FROM AN UNTRUSTED ORIGIN
+        // ----------------------------------------------------
+
+        mockMvc.perform(
+            post(LOGIN_URL)
+                .header(
+                    "Origin",
+                    "https://attacker.example"
+                )
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "email": "test@example.com",
+                      "password": "ExampleOnly@Test123!"
+                    }
+                    """)
+        )
+
+        .andExpect(status().isForbidden());
+
+
+        // ----------------------------------------------------
+        // VERIFY NO SESSION OR TOKEN CREATION
+        // ----------------------------------------------------
+
+        verifyNoInteractions(
+            authenticationService,
+            authSessionService,
+            jwtTokenService,
+            refreshCookieService
         );
     }
 }

@@ -13,6 +13,7 @@ import org.springframework.security.oauth2.jwt.JwsHeader;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -23,32 +24,52 @@ import java.util.UUID;
 /**
  * Generates and verifies signed JWT access tokens.
  *
- * PURPOSE:
+ * RESPONSIBILITIES:
  *
- * 1. Issue an access token after successful login.
- * 2. Verify token signatures and required claims.
- * 3. Extract the authenticated user ID.
+ * - Generate short-lived access tokens.
+ * - Associate access tokens with PostgreSQL sessions.
+ * - Generate new access tokens after session refresh.
+ * - Verify JWT signatures and required claims.
+ * - Extract authenticated user and session identifiers.
+ * - Ensure access tokens do not outlive their sessions.
+ *
+ * JWT CLAIMS:
+ *
+ * iss — trusted token issuer
+ * sub — authenticated PostgreSQL user ID
+ * aud — intended LedgerBase API audience
+ * iat — token issuance timestamp
+ * exp — token expiration timestamp
+ * jti — unique token identifier
+ * sid — authentication session UUID
  *
  * SECURITY:
  *
- * - Uses the HS256 signing algorithm.
- * - Requires a properly configured JWT encoder/decoder.
- * - Validates token issuer and intended audience.
- * - Rejects expired access tokens.
- * - Never stores passwords or financial data in JWTs.
+ * JWTs contain no passwords, password hashes,
+ * refresh tokens, or financial information.
  *
- * IMPORTANT:
+ * A valid JWT signature alone does not prove that
+ * its PostgreSQL authentication session is active.
  *
- * This class is intentionally not annotated with
- * @Service yet.
+ * Session revocation and inactivity validation
+ * must also be enforced by Spring Security before
+ * granting access to protected financial endpoints.
  *
- * We will register it as a Spring bean when we
- * configure the signing secret in the next step.
- *
- * This prevents the existing backend from requiring
- * JWT configuration before it is ready.
+ * This class is registered as a Spring bean through
+ * the existing JWT configuration.
  */
 public class JwtTokenService {
+
+    // ========================================================
+    // JWT CLAIM CONFIGURATION
+    // ========================================================
+
+    /**
+     * Custom claim identifying the PostgreSQL
+     * authentication session associated with a JWT.
+     */
+    public static final String SESSION_ID_CLAIM = "sid";
+
 
     // ========================================================
     // DEPENDENCIES AND CONFIGURATION
@@ -69,6 +90,12 @@ public class JwtTokenService {
     // CONSTRUCTOR
     // ========================================================
 
+    /**
+     * Receive JWT signing, verification, and lifetime
+     * settings from the existing JWT configuration.
+     *
+     * Reject incomplete or invalid configuration.
+     */
     public JwtTokenService(
         JwtEncoder jwtEncoder,
         JwtDecoder jwtDecoder,
@@ -76,8 +103,6 @@ public class JwtTokenService {
         String audience,
         Duration accessTokenLifetime
     ) {
-
-        // Reject incomplete token configuration.
 
         if (
             jwtEncoder == null
@@ -105,34 +130,217 @@ public class JwtTokenService {
 
 
     // ========================================================
-    // 1. GENERATE ACCESS TOKEN
+    // LEGACY ACCESS TOKEN GENERATION
     // ========================================================
 
     /**
-     * Issue a signed access token for a user who has
-     * already passed password authentication.
+     * Generate an access JWT without a session identifier.
      *
-     * The user ID becomes the JWT subject.
+     * TEMPORARY COMPATIBILITY:
      *
-     * We intentionally omit business roles. Future
-     * authorization services will check memberships
-     * against PostgreSQL.
+     * Retained for older JWT tests and callers.
      *
-     * @param user previously authenticated identity
-     * @return signed JWT access token
+     * New authentication code must use a session-aware
+     * method instead.
+     *
+     * This method will be removed after legacy
+     * authentication paths have been migrated.
+     *
+     * @param user authenticated user identity
+     * @return signed legacy access JWT
      */
+    @Deprecated
     public String generateAccessToken(
         AuthenticatedUser user
     ) {
 
         // ====================================================
-        // VALIDATE USER ID
+        // EXTRACT USER ID
+        // ====================================================
+
+        /**
+         * Validation of the extracted user ID is
+         * performed by the shared helper.
+         */
+        Long userId =
+            user == null ? null : user.id();
+
+
+        // ====================================================
+        // GENERATE LEGACY ACCESS TOKEN
+        // ====================================================
+
+        return generateAccessTokenInternal(
+            userId,
+            null,
+            null
+        );
+    }
+
+
+    // ========================================================
+    // ACCESS TOKEN GENERATION AFTER LOGIN
+    // ========================================================
+
+    /**
+     * Generate a session-aware JWT after successful login.
+     *
+     * AuthenticatedUser comes from AuthenticationService
+     * after BCrypt password verification.
+     *
+     * The session ID and expiration come from the
+     * newly created PostgreSQL authentication session.
+     *
+     * @param user verified authenticated identity
+     * @param sessionId PostgreSQL authentication session
+     * @param absoluteExpiresAt session expiration deadline
+     * @return signed session-aware JWT
+     */
+    public String generateAccessToken(
+        AuthenticatedUser user,
+        UUID sessionId,
+        OffsetDateTime absoluteExpiresAt
+    ) {
+
+        // ====================================================
+        // VALIDATE SESSION INFORMATION
         // ====================================================
 
         if (
-            user == null
-            || user.id() == null
-            || user.id() <= 0
+            sessionId == null
+            || absoluteExpiresAt == null
+        ) {
+
+            throw new IllegalArgumentException(
+                "A valid authentication session is required"
+            );
+        }
+
+
+        // ====================================================
+        // EXTRACT AUTHENTICATED USER ID
+        // ====================================================
+
+        Long userId =
+            user == null ? null : user.id();
+
+
+        // ====================================================
+        // GENERATE SESSION-AWARE JWT
+        // ====================================================
+
+        return generateAccessTokenInternal(
+            userId,
+            sessionId,
+            absoluteExpiresAt.toInstant()
+        );
+    }
+
+
+    // ========================================================
+    // ACCESS TOKEN GENERATION AFTER SESSION REFRESH
+    // ========================================================
+
+    /**
+     * Generate a new access JWT after refresh-token
+     * rotation succeeds.
+     *
+     * The user ID is obtained from the PostgreSQL
+     * authentication session.
+     *
+     * The browser cannot select the authenticated
+     * user by supplying its own user ID.
+     *
+     * The existing session UUID is preserved.
+     *
+     * The session's absolute expiration is not
+     * extended when a JWT is renewed.
+     *
+     * @param userId authenticated PostgreSQL user ID
+     * @param sessionId existing session UUID
+     * @param absoluteExpiresAt original session deadline
+     * @return newly signed access JWT
+     */
+    public String generateAccessTokenForSession(
+        Long userId,
+        UUID sessionId,
+        OffsetDateTime absoluteExpiresAt
+    ) {
+
+        // ====================================================
+        // VALIDATE REFRESHED SESSION DETAILS
+        // ====================================================
+
+        if (
+            userId == null
+            || userId <= 0
+            || sessionId == null
+            || absoluteExpiresAt == null
+        ) {
+
+            throw new IllegalArgumentException(
+                "Valid authentication session details are required"
+            );
+        }
+
+
+        // ====================================================
+        // GENERATE SESSION-AWARE JWT
+        // ====================================================
+
+        return generateAccessTokenInternal(
+            userId,
+            sessionId,
+            absoluteExpiresAt.toInstant()
+        );
+    }
+
+
+    // ========================================================
+    // INTERNAL ACCESS TOKEN GENERATION
+    // ========================================================
+
+    /**
+     * Centralized JWT issuance implementation.
+     *
+     * All three public JWT generation methods
+     * delegate to this helper.
+     *
+     * SESSION-AWARE TOKENS:
+     *
+     * - Include the sid claim.
+     * - Expire after the configured JWT lifetime.
+     * - Cannot outlive the session's absolute deadline.
+     *
+     * LEGACY TOKENS:
+     *
+     * - Temporarily omit sid.
+     * - Exist only for backward compatibility.
+     *
+     * @param userId authenticated PostgreSQL user ID
+     * @param sessionId optional session UUID for legacy use
+     * @param sessionExpiresAt optional absolute deadline
+     * @return signed access JWT
+     */
+    private String generateAccessTokenInternal(
+        Long userId,
+        UUID sessionId,
+        Instant sessionExpiresAt
+    ) {
+
+        // ====================================================
+        // VALIDATE AUTHENTICATED USER ID
+        // ====================================================
+
+        /**
+         * This helper receives the numeric user ID,
+         * not an AuthenticatedUser object.
+         *
+         * Validate the Long value directly.
+         */
+        if (
+            userId == null
+            || userId <= 0
         ) {
 
             throw new IllegalArgumentException(
@@ -142,48 +350,111 @@ public class JwtTokenService {
 
 
         // ====================================================
-        // CALCULATE TOKEN LIFETIME
+        // CALCULATE ACCESS TOKEN LIFETIME
         // ====================================================
 
-        Instant issuedAt = Instant.now();
+        Instant issuedAt =
+            Instant.now();
 
-        Instant expiresAt = issuedAt.plus(
-            accessTokenLifetime
-        );
-
-
-        // ====================================================
-        // BUILD JWT CLAIMS
-        // ====================================================
-
-        JwtClaimsSet claims = JwtClaimsSet.builder()
-
-            .issuer(issuer)
-
-            .subject(user.id().toString())
-
-            .audience(List.of(audience))
-
-            .issuedAt(issuedAt)
-
-            .expiresAt(expiresAt)
-
-            .id(UUID.randomUUID().toString())
-
-            .build();
+        Instant expiresAt =
+            issuedAt.plus(accessTokenLifetime);
 
 
         // ====================================================
-        // SPECIFY THE SIGNING ALGORITHM
+        // ENFORCE ABSOLUTE SESSION EXPIRATION
         // ====================================================
 
-        JwsHeader header = JwsHeader
-            .with(MacAlgorithm.HS256)
-            .build();
+        if (sessionExpiresAt != null) {
+
+            // ------------------------------------------------
+            // REJECT AN ALREADY EXPIRED SESSION
+            // ------------------------------------------------
+
+            if (!sessionExpiresAt.isAfter(issuedAt)) {
+
+                throw new IllegalArgumentException(
+                    "Authentication session has expired"
+                );
+            }
+
+
+            // ------------------------------------------------
+            // CAP JWT EXPIRATION AT SESSION DEADLINE
+            // ------------------------------------------------
+
+            /**
+             * A refresh must never extend access beyond
+             * the original session expiration.
+             */
+            if (sessionExpiresAt.isBefore(expiresAt)) {
+
+                expiresAt = sessionExpiresAt;
+            }
+        }
 
 
         // ====================================================
-        // SIGN AND RETURN TOKEN
+        // BUILD STANDARD JWT CLAIMS
+        // ====================================================
+
+        JwtClaimsSet.Builder claimsBuilder =
+            JwtClaimsSet.builder()
+
+                .issuer(issuer)
+
+                .subject(userId.toString())
+
+                .audience(List.of(audience))
+
+                .issuedAt(issuedAt)
+
+                .expiresAt(expiresAt)
+
+                .id(UUID.randomUUID().toString());
+
+
+        // ====================================================
+        // INCLUDE POSTGRESQL SESSION IDENTIFIER
+        // ====================================================
+
+        /**
+         * The sid claim identifies the authentication
+         * session associated with the JWT.
+         *
+         * It is not a refresh credential.
+         *
+         * The security layer must independently
+         * confirm that this session is valid.
+         */
+        if (sessionId != null) {
+
+            claimsBuilder.claim(
+                SESSION_ID_CLAIM,
+                sessionId.toString()
+            );
+        }
+
+
+        // ====================================================
+        // FINALIZE JWT CLAIMS
+        // ====================================================
+
+        JwtClaimsSet claims =
+            claimsBuilder.build();
+
+
+        // ====================================================
+        // SELECT HS256 SIGNING ALGORITHM
+        // ====================================================
+
+        JwsHeader header =
+            JwsHeader
+                .with(MacAlgorithm.HS256)
+                .build();
+
+
+        // ====================================================
+        // SIGN AND RETURN JWT
         // ====================================================
 
         return jwtEncoder.encode(
@@ -196,26 +467,18 @@ public class JwtTokenService {
 
 
     // ========================================================
-    // 2. VERIFY TOKEN AND EXTRACT USER ID
+    // VERIFY JWT AND EXTRACT USER ID
     // ========================================================
 
     /**
-     * Decode and validate a JWT access token.
+     * Verify a signed JWT and retrieve its
+     * authenticated PostgreSQL user ID.
      *
-     * The JwtDecoder must cryptographically verify
-     * the signature using our trusted signing key.
+     * Signature, issuer, audience, and expiration
+     * validation are performed before extracting
+     * the subject.
      *
-     * We additionally require:
-     *
-     * - Expected issuer
-     * - Expected audience
-     * - An unexpired token
-     * - A positive numeric user ID
-     *
-     * The decoder will also be configured with
-     * Spring Security's standard JWT validators.
-     *
-     * @param token raw access token
+     * @param token raw signed JWT
      * @return authenticated database user ID
      */
     public Long verifyAndGetUserId(
@@ -223,84 +486,21 @@ public class JwtTokenService {
     ) {
 
         // ====================================================
-        // REJECT EMPTY TOKEN
+        // VERIFY JWT
         // ====================================================
 
-        if (token == null || token.isBlank()) {
-
-            throw new BadJwtException(
-                "Invalid access token"
-            );
-        }
+        Jwt jwt =
+            decodeAndValidateToken(token);
 
 
         // ====================================================
-        // VERIFY SIGNATURE AND DECODE
-        // ====================================================
-
-        // A signature verification failure causes
-        // JwtDecoder to throw a JwtException.
-
-        Jwt jwt = jwtDecoder.decode(token);
-
-
-        // ====================================================
-        // VALIDATE ISSUER
-        // ====================================================
-
-        if (
-            !issuer.equals(
-                jwt.getClaimAsString("iss")
-            )
-        ) {
-
-            throw new BadJwtException(
-                "Invalid access token issuer"
-            );
-        }
-
-
-        // ====================================================
-        // VALIDATE AUDIENCE
-        // ====================================================
-
-        if (
-            jwt.getAudience() == null
-            || !jwt.getAudience().contains(audience)
-        ) {
-
-            throw new BadJwtException(
-                "Invalid access token audience"
-            );
-        }
-
-
-        // ====================================================
-        // VALIDATE EXPIRATION
-        // ====================================================
-
-        if (
-            jwt.getExpiresAt() == null
-            || !jwt.getExpiresAt().isAfter(
-                Instant.now()
-            )
-        ) {
-
-            throw new BadJwtException(
-                "Access token expired"
-            );
-        }
-
-
-        // ====================================================
-        // EXTRACT TRUSTED USER ID
+        // PARSE DATABASE USER ID
         // ====================================================
 
         try {
 
-            Long userId = Long.parseLong(
-                jwt.getSubject()
-            );
+            Long userId =
+                Long.parseLong(jwt.getSubject());
 
             if (userId <= 0) {
 
@@ -320,5 +520,188 @@ public class JwtTokenService {
                 "Invalid access token subject"
             );
         }
+    }
+
+
+    // ========================================================
+    // VERIFY JWT AND EXTRACT SESSION ID
+    // ========================================================
+
+    /**
+     * Verify a signed JWT and retrieve its
+     * authentication session UUID.
+     *
+     * Tokens missing sid are rejected.
+     *
+     * IMPORTANT:
+     *
+     * This method validates the JWT claim, but
+     * does not query PostgreSQL for session status.
+     *
+     * Server-side revocation checks are required
+     * separately in Spring Security.
+     *
+     * @param token raw signed access JWT
+     * @return authentication session UUID
+     */
+    public UUID verifyAndGetSessionId(
+        String token
+    ) {
+
+        // ====================================================
+        // VERIFY JWT
+        // ====================================================
+
+        Jwt jwt =
+            decodeAndValidateToken(token);
+
+
+        // ====================================================
+        // READ SESSION CLAIM
+        // ====================================================
+
+        String sessionIdValue =
+            jwt.getClaimAsString(
+                SESSION_ID_CLAIM
+            );
+
+
+        // ====================================================
+        // REJECT MISSING SESSION IDENTIFIER
+        // ====================================================
+
+        if (
+            sessionIdValue == null
+            || sessionIdValue.isBlank()
+        ) {
+
+            throw new BadJwtException(
+                "Access token has no session identifier"
+            );
+        }
+
+
+        // ====================================================
+        // PARSE SESSION UUID
+        // ====================================================
+
+        try {
+
+            return UUID.fromString(
+                sessionIdValue
+            );
+
+        } catch (IllegalArgumentException exception) {
+
+            throw new BadJwtException(
+                "Invalid access token session identifier"
+            );
+        }
+    }
+
+
+    // ========================================================
+    // DECODE AND VALIDATE ACCESS TOKEN
+    // ========================================================
+
+    /**
+     * Verify cryptographic JWT signature and
+     * required application claims.
+     *
+     * The configured JwtDecoder validates the
+     * signature and its configured JWT constraints.
+     *
+     * These explicit checks additionally verify:
+     *
+     * - Expected issuer.
+     * - Expected audience.
+     * - Non-expired access token.
+     *
+     * PostgreSQL session revocation and inactivity
+     * checks remain separate responsibilities.
+     *
+     * @param token raw signed access JWT
+     * @return verified decoded JWT
+     */
+    private Jwt decodeAndValidateToken(
+        String token
+    ) {
+
+        // ====================================================
+        // REJECT EMPTY ACCESS TOKEN
+        // ====================================================
+
+        if (
+            token == null
+            || token.isBlank()
+        ) {
+
+            throw new BadJwtException(
+                "Invalid access token"
+            );
+        }
+
+
+        // ====================================================
+        // DECODE AND VERIFY JWT SIGNATURE
+        // ====================================================
+
+        Jwt jwt =
+            jwtDecoder.decode(token);
+
+
+        // ====================================================
+        // VALIDATE TOKEN ISSUER
+        // ====================================================
+
+        if (
+            !issuer.equals(
+                jwt.getClaimAsString("iss")
+            )
+        ) {
+
+            throw new BadJwtException(
+                "Invalid access token issuer"
+            );
+        }
+
+
+        // ====================================================
+        // VALIDATE TOKEN AUDIENCE
+        // ====================================================
+
+        if (
+            jwt.getAudience() == null
+            || !jwt.getAudience().contains(audience)
+        ) {
+
+            throw new BadJwtException(
+                "Invalid access token audience"
+            );
+        }
+
+
+        // ====================================================
+        // VALIDATE TOKEN EXPIRATION
+        // ====================================================
+
+        if (
+            jwt.getExpiresAt() == null
+            || !jwt.getExpiresAt().isAfter(
+                Instant.now()
+            )
+        ) {
+
+            throw new BadJwtException(
+                "Access token expired"
+            );
+        }
+
+
+        // ====================================================
+        // RETURN VERIFIED JWT
+        // ====================================================
+
+        return jwt;
     }
 }
