@@ -13,25 +13,32 @@ import org.junit.jupiter.api.Test;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.oauth2.jwt.BadJwtException;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.context.WebApplicationContext;
 
 import java.math.BigDecimal;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Savepoint;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -46,6 +53,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * - PostgreSQL
  * - Audit logging
  * - Posted-transaction immutability
+ * - Authenticated HTTP access and business membership
+ *
+ * JWT decoding is mocked for these accounting HTTP tests.
+ * The real Spring Security filters and PostgreSQL
+ * membership authorization remain enabled.
+ * JWT cryptography and session revocation are covered
+ * by separate security tests.
  *
  * The "test" profile connects to ledgerbase_test.
  *
@@ -55,6 +69,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * the test data after each test finishes.
  */
 @SpringBootTest
+@AutoConfigureMockMvc
 @ActiveProfiles("test")
 @Transactional
 class TransactionIntegrationTest {
@@ -89,11 +104,24 @@ class TransactionIntegrationTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    // ============================================================
+    // SECURITY-ENABLED HTTP TEST CLIENT
+    // ============================================================
+
     /**
-     * The real Spring web context used by MockMvc.
+     * Inject Spring Boot's configured MockMvc so that the
+     * real Spring Security filter chain runs for HTTP tests.
+     * Never construct MockMvc without attaching its filters.
      */
     @Autowired
-    private WebApplicationContext context;
+    private MockMvc mockMvc;
+
+    /**
+     * Mock JWT signature decoding only in this test context.
+     * Authorization and membership SQL remain real.
+     */
+    @MockitoBean
+    private JwtDecoder jwtDecoder;
 
     // Database-generated IDs for each test.
     private Long testUserId;
@@ -154,6 +182,11 @@ class TransactionIntegrationTest {
             "USD"
         );
 
+        // The test creates businesses directly with JDBC.
+        // V9 backfills memberships only for preexisting rows,
+        // so each new test business needs its OWNER membership.
+        insertOwnerMembership(testBusinessId, testUserId);
+
         fiscalYearService.createFiscalYear(
             testBusinessId,
             2026
@@ -199,8 +232,75 @@ class TransactionIntegrationTest {
     }
 
     // ============================================================
+    // TEST AUTHENTICATION SETUP
+    // ============================================================
+
+    /**
+     * Supply controlled Jwt principals for Bearer headers.
+     * The decoder is the only mocked security dependency;
+     * Spring Security still evaluates the actual membership
+     * authorization manager against PostgreSQL.
+     *
+     * The prefix is restricted to this test's synthetic tokens.
+     */
+    @BeforeEach
+    void configureTestJwtDecoder() {
+
+        when(jwtDecoder.decode(anyString())).thenAnswer(invocation -> {
+            String token = invocation.getArgument(0);
+            String prefix = "transaction-test-user-";
+
+            if (!token.startsWith(prefix)) {
+                throw new BadJwtException("Invalid test Bearer token");
+            }
+
+            String subject = token.substring(prefix.length());
+            try {
+                if (Long.parseLong(subject) <= 0) {
+                    throw new NumberFormatException("Nonpositive user ID");
+                }
+            } catch (NumberFormatException exception) {
+                throw new BadJwtException("Invalid test JWT subject");
+            }
+
+            Instant now = Instant.now();
+            return Jwt.withTokenValue(token)
+                .header("alg", "HS256")
+                .subject(subject)
+                .issuedAt(now)
+                .expiresAt(now.plusSeconds(900))
+                .build();
+        });
+    }
+
+    // ============================================================
     // HELPER METHODS
     // ============================================================
+
+    /**
+     * Form a test-only Bearer header for an existing user.
+     * The identity must be authorized for the target business.
+     */
+    private String bearerFor(Long userId) {
+        return "Bearer transaction-test-user-" + userId;
+    }
+
+    /**
+     * Add the OWNER membership corresponding to a test business.
+     * The caller creates the business in the same test transaction.
+     */
+    private void insertOwnerMembership(Long businessId, Long ownerId) {
+        int inserted = jdbcTemplate.update(
+            """
+            INSERT INTO business_memberships (
+                business_id, user_id, role
+            ) VALUES (?, ?, 'OWNER')
+            """,
+            businessId,
+            ownerId
+        );
+        assertEquals(1, inserted);
+    }
 
     /**
      * Create a transaction request using the test accounts.
@@ -235,15 +335,11 @@ class TransactionIntegrationTest {
     }
 
     /**
-     * Create MockMvc using the real application context.
-     *
-     * MockMvc simulates HTTP requests without starting
-     * a separate web server.
+     * Return the security-filtered MockMvc injected by Spring Boot.
+     * Keep the helper to preserve existing accounting scenarios.
      */
     private MockMvc mvc() {
-        return MockMvcBuilders
-            .webAppContextSetup(context)
-            .build();
+        return mockMvc;
     }
 
     /**
@@ -257,28 +353,31 @@ class TransactionIntegrationTest {
     }
 
     /**
-     * Send a transaction posting request.
+     * Post as the authenticated JWT user, not as a browser ID.
      *
-     * The JSON contains the ID of the user performing
-     * the posting operation.
+     * The legacy JSON body deliberately contains a different
+     * actorId. The controller must ignore that forged value and
+     * record the authenticated user supplied in the Bearer token.
      *
-     * This currently maps to PostTransactionRequest.
+     * The selected actor must hold a writer membership for the
+     * business; OWNER and ACCOUNTANT are used in these tests.
      */
     private ResultActions postAsActor(
             MockMvc mvc,
             String url,
             Long actorId) throws Exception {
 
-        String requestBody = """
+        String forgedRequestBody = """
             {
-              "actorId": %d
+              "actorId": 999999999
             }
-            """.formatted(actorId);
+            """;
 
         return mvc.perform(
             post(url)
+                .header(HttpHeaders.AUTHORIZATION, bearerFor(actorId))
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(requestBody)
+                .content(forgedRequestBody)
         );
     }
 
@@ -382,7 +481,7 @@ class TransactionIntegrationTest {
                 testBusinessId,
                 createRequest("500.00", "500.00")
             );
-        
+
         // ============================================================
         // VERIFY TRANSACTION HEADER
         // ============================================================
@@ -768,6 +867,7 @@ class TransactionIntegrationTest {
         // Send the HTTP request.
         mvc().perform(
                 post(transactionsUrl())
+                    .header(HttpHeaders.AUTHORIZATION, bearerFor(testUserId))
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(requestBody)
             )
@@ -869,7 +969,10 @@ class TransactionIntegrationTest {
             createRequest("500.00", "500.00")
         );
 
-        mvc().perform(get(transactionsUrl()))
+        mvc().perform(
+            get(transactionsUrl())
+                .header(HttpHeaders.AUTHORIZATION, bearerFor(testUserId))
+        )
             .andExpect(status().isOk())
             .andExpect(jsonPath("$").isArray())
             .andExpect(jsonPath("$.length()").value(1))
@@ -906,7 +1009,10 @@ class TransactionIntegrationTest {
         String url = transactionsUrl()
             + "/" + saved.getId();
 
-        mvc().perform(get(url))
+        mvc().perform(
+            get(url)
+                .header(HttpHeaders.AUTHORIZATION, bearerFor(testUserId))
+        )
             .andExpect(status().isOk())
 
             // Verify the transaction header.
@@ -990,12 +1096,20 @@ class TransactionIntegrationTest {
             "USD"
         );
 
+        // The requester is this business's OWNER, so the
+        // service must return 404 for the foreign transaction
+        // rather than denying the business itself with 403.
+        insertOwnerMembership(otherBusinessId, testUserId);
+
         String url = "/api/v1/businesses/"
             + otherBusinessId
             + "/transactions/"
             + saved.getId();
 
-        mvc().perform(get(url))
+        mvc().perform(
+            get(url)
+                .header(HttpHeaders.AUTHORIZATION, bearerFor(testUserId))
+        )
             .andExpect(status().isNotFound())
             .andExpect(
                 jsonPath("$.error").value(
@@ -1005,7 +1119,7 @@ class TransactionIntegrationTest {
             );
     }
 
-    
+
     // ============================================================
     // TEST 8 — POST A VALID TRANSACTION
     // ============================================================
@@ -1048,6 +1162,19 @@ class TransactionIntegrationTest {
             "TEST_ONLY_NOT_A_REAL_PASSWORD_HASH",
             "Posting Test User"
         );
+
+        // User 2 is explicitly allowed to post transactions for
+        // User 1's business. The service records User 2 as actor.
+        int grantedMemberships = jdbcTemplate.update(
+            """
+            INSERT INTO business_memberships (
+                business_id, user_id, role
+            ) VALUES (?, ?, 'ACCOUNTANT')
+            """,
+            testBusinessId,
+            postingActorId
+        );
+        assertEquals(1, grantedMemberships);
 
         String url = transactionsUrl()
             + "/" + draft.getId()
@@ -2414,6 +2541,8 @@ class TransactionIntegrationTest {
             "Consulting Revenue",
             "REVENUE"
         );
+
+        assertNotNull(revenueBId);
 
 
         // ========================================================
