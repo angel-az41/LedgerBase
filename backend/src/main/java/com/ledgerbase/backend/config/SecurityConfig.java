@@ -2,6 +2,8 @@ package com.ledgerbase.backend.config;
 
 import com.ledgerbase.backend.security.BusinessAuthorizationManager;
 
+import jakarta.servlet.DispatcherType;
+
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 
 import org.springframework.context.annotation.Bean;
@@ -21,48 +23,35 @@ import org.springframework.security.web.SecurityFilterChain;
 // ============================================================
 
 /**
- * Configure HTTP authentication and business authorization.
+ * Configure HTTP authentication and authorization.
  *
  * AUTHENTICATION:
  *
- * - Stateless Spring Security.
+ * - Stateless Spring Security filter chain.
  * - Signed JWT Bearer access tokens.
  * - PostgreSQL-backed authentication sessions.
  * - HttpOnly refresh cookies.
  *
- * PUBLIC ENDPOINTS:
+ * AUTHORIZATION:
  *
- * - POST /api/v1/auth/login
- * - POST /api/v1/auth/refresh
- * - POST /api/v1/auth/logout
- * - GET  /api/v1/health/**
+ * - Public authentication endpoints.
+ * - Public application database health checks.
+ * - Authenticated current-user and business directory APIs.
+ * - PostgreSQL-backed business membership and RBAC.
+ * - Explicit deny-by-default fallback.
  *
- * BUSINESS DIRECTORY:
+ * SECURITY DESIGN:
  *
- * GET /api/v1/businesses
- * POST /api/v1/businesses
+ * Requests must match an explicit authorization rule.
  *
- * These require authentication.
+ * Unknown or future endpoints cannot become accessible
+ * merely because the caller has a valid JWT.
  *
- * BusinessController obtains the current user's ID
- * from Spring Security, and BusinessService enforces
- * membership-scoped reads and business ownership.
+ * The BusinessAuthorizationManager independently checks
+ * business memberships on every business-scoped request.
  *
- * BUSINESS-SCOPED FINANCIAL ENDPOINTS:
- *
- * /api/v1/businesses/{businessId}/...
- *
- * BusinessAuthorizationManager verifies the user's
- * current PostgreSQL membership and role.
- *
- * Unauthenticated requests return HTTP 401.
- *
- * Authenticated users without sufficient membership
- * permissions receive HTTP 403.
- *
- * A trusted audit-actor identity and additional
- * endpoint-specific permissions must still be
- * enforced separately.
+ * Accounting audit identities are established by
+ * controllers using the verified JWT subject.
  */
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnWebApplication(
@@ -74,13 +63,6 @@ public class SecurityConfig {
     // SECURITY FILTER CHAIN
     // ========================================================
 
-    /**
-     * Configure authentication and authorization.
-     *
-     * @param http Spring Security HTTP configuration
-     * @param businessAuthorizationManager membership authorization
-     * @return configured filter chain
-     */
     @Bean
     public SecurityFilterChain securityFilterChain(
         HttpSecurity http,
@@ -94,11 +76,11 @@ public class SecurityConfig {
             // =================================================
 
             /**
-             * Do not store authenticated identities
-             * in servlet HTTP sessions.
+             * Do not store authenticated identities in
+             * the servlet HTTP session.
              *
-             * LedgerBase's PostgreSQL auth_sessions
-             * table tracks refreshable login sessions.
+             * LedgerBase manages login sessions separately
+             * through the PostgreSQL auth_sessions table.
              */
             .sessionManagement(session ->
                 session.sessionCreationPolicy(
@@ -112,8 +94,8 @@ public class SecurityConfig {
             // =================================================
 
             /**
-             * LedgerBase authenticates through its
-             * JSON-based /api/v1/auth endpoints.
+             * LedgerBase uses JSON-based authentication
+             * endpoints and JWT Bearer tokens.
              */
             .formLogin(
                 AbstractHttpConfigurer::disable
@@ -129,16 +111,15 @@ public class SecurityConfig {
             // =================================================
 
             /**
-             * CSRF is currently disabled globally.
+             * Financial API requests use Bearer tokens
+             * rather than cookie-based access tokens.
              *
-             * Existing cookie-authenticated login,
-             * refresh, and logout operations validate
-             * trusted Origin headers.
+             * Login, refresh, and logout enforce the
+             * existing Origin checks where relevant.
              *
-             * Financial API requests use Bearer JWTs.
-             *
-             * Review the full CSRF and CORS strategy
-             * before production deployment.
+             * Retain the current implementation while
+             * reviewing deployment-specific CSRF and
+             * CORS requirements separately.
              */
             .csrf(
                 AbstractHttpConfigurer::disable
@@ -146,22 +127,39 @@ public class SecurityConfig {
 
 
             // =================================================
-            // HTTP AUTHORIZATION RULES
+            // HTTP AUTHORIZATION
             // =================================================
 
             .authorizeHttpRequests(authorize -> authorize
+
+                // ---------------------------------------------
+                // FRAMEWORK ERROR DISPATCHES
+                // ---------------------------------------------
+
+                /**
+                 * Permit Spring's internal ERROR dispatches
+                 * so legitimate application error responses
+                 * can be rendered.
+                 *
+                 * This does not grant ordinary HTTP requests
+                 * access to unmatched application endpoints.
+                 */
+                .dispatcherTypeMatchers(
+                    DispatcherType.ERROR
+                ).permitAll()
+
 
                 // ---------------------------------------------
                 // PUBLIC AUTHENTICATION ENDPOINTS
                 // ---------------------------------------------
 
                 /**
-                 * These endpoints do not require
+                 * These endpoints must be reachable without
                  * an existing access JWT.
                  *
-                 * Their authentication and cookie
-                 * security checks remain in the
-                 * existing authentication services.
+                 * Their own controllers and services perform
+                 * the relevant authentication and cookie
+                 * security checks.
                  */
                 .requestMatchers(
                     HttpMethod.POST,
@@ -172,12 +170,13 @@ public class SecurityConfig {
 
 
                 // ---------------------------------------------
-                // PUBLIC DATABASE HEALTH CHECKS
+                // PUBLIC APPLICATION HEALTH CHECKS
                 // ---------------------------------------------
 
                 /**
-                 * Allow existing read-only health
-                 * checks without authentication.
+                 * Preserve the existing application health
+                 * endpoints used to verify backend and
+                 * database connectivity.
                  */
                 .requestMatchers(
                     HttpMethod.GET,
@@ -187,15 +186,75 @@ public class SecurityConfig {
 
 
                 // ---------------------------------------------
-                // AUTHENTICATED USER IDENTITY
+                // AUTHENTICATED ACTUATOR ENDPOINTS
                 // ---------------------------------------------
 
                 /**
-                 * A signed, active JWT is required
-                 * to retrieve the current user.
+                 * Preserve authenticated access to health
+                 * and info without exposing other Actuator
+                 * endpoints through a broad wildcard.
+                 *
+                 * This is separate from the public
+                 * /api/v1/health endpoints.
                  */
                 .requestMatchers(
+                    HttpMethod.GET,
+                    "/actuator/health",
+                    "/actuator/health/**",
+                    "/actuator/info"
+                ).authenticated()
+
+
+                // ---------------------------------------------
+                // AUTHENTICATED CURRENT USER
+                // ---------------------------------------------
+
+                /**
+                 * The current-user endpoint requires a
+                 * valid, active JWT access token.
+                 */
+                .requestMatchers(
+                    HttpMethod.GET,
                     "/api/v1/auth/me"
+                ).authenticated()
+
+
+                // ---------------------------------------------
+                // BUSINESS DIRECTORY — LIST
+                // ---------------------------------------------
+
+                /**
+                 * Authenticated users may retrieve their
+                 * accessible businesses.
+                 *
+                 * BusinessController and BusinessService
+                 * scope results to the current user.
+                 *
+                 * The browser cannot choose another
+                 * user's identity for this query.
+                 */
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/api/v1/businesses"
+                ).authenticated()
+
+
+                // ---------------------------------------------
+                // BUSINESS DIRECTORY — CREATE
+                // ---------------------------------------------
+
+                /**
+                 * Authenticated users may create businesses.
+                 *
+                 * BusinessController obtains the owner
+                 * identity from the verified JWT.
+                 *
+                 * The existing service provisions business
+                 * ownership and related database records.
+                 */
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/api/v1/businesses"
                 ).authenticated()
 
 
@@ -204,19 +263,14 @@ public class SecurityConfig {
                 // ---------------------------------------------
 
                 /**
-                 * BusinessController already performs
-                 * its own membership-scoped lookup.
+                 * Preserve the controller's existing
+                 * membership-scoped business lookup.
                  *
-                 * Preserve its existing behavior:
+                 * Accessible business: HTTP 200.
+                 * Missing or inaccessible: HTTP 404.
                  *
-                 * - Accessible business: HTTP 200.
-                 * - Missing or inaccessible: HTTP 404.
-                 *
-                 * Only the GET endpoint receives this
-                 * specific authentication rule.
-                 *
-                 * Nested accounting APIs use the
-                 * business authorization manager below.
+                 * Nested financial operations are covered
+                 * by the authorization manager below.
                  */
                 .requestMatchers(
                     HttpMethod.GET,
@@ -225,14 +279,14 @@ public class SecurityConfig {
 
 
                 // ---------------------------------------------
-                // BUSINESS-SCOPED FINANCIAL AUTHORIZATION
+                // BUSINESS-SCOPED FINANCIAL ENDPOINTS
                 // ---------------------------------------------
 
                 /**
-                 * Every nested business API request
-                 * must pass the business-level RBAC check.
+                 * All nested business APIs require
+                 * membership and role authorization.
                  *
-                 * This covers existing routes for:
+                 * This includes:
                  *
                  * - Chart of Accounts.
                  * - Account balances.
@@ -245,20 +299,19 @@ public class SecurityConfig {
                  * - Income Statement.
                  * - Balance Sheet.
                  *
-                 * BusinessAuthorizationManager receives:
+                 * READ:
                  *
-                 * - The authenticated JWT principal.
-                 * - businessId from the URL.
-                 * - The HTTP method.
+                 * OWNER, ADMIN, ACCOUNTANT, VIEWER.
                  *
-                 * It checks the user's current
-                 * business_memberships record.
+                 * WRITE:
                  *
-                 * IMPORTANT:
+                 * OWNER, ADMIN, ACCOUNTANT.
                  *
-                 * This is not merely an authentication
-                 * check. It enforces business membership
-                 * and read/write role permissions.
+                 * VIEWER cannot perform mutations.
+                 *
+                 * Every decision uses the authenticated
+                 * JWT subject and current PostgreSQL
+                 * business membership.
                  */
                 .requestMatchers(
                     "/api/v1/businesses/{businessId}/**"
@@ -268,18 +321,23 @@ public class SecurityConfig {
 
 
                 // ---------------------------------------------
-                // AUTHENTICATED DEFAULT
+                // EXPLICIT DENY-BY-DEFAULT
                 // ---------------------------------------------
 
                 /**
-                 * Preserve authentication for all
-                 * other endpoints.
+                 * Any unmatched HTTP request is denied.
                  *
-                 * Future financial routes outside the
-                 * current business URL structure must
-                 * receive explicit authorization rules.
+                 * A newly added controller is not
+                 * automatically accessible to all users
+                 * who happen to possess a valid JWT.
+                 *
+                 * New endpoint groups must receive
+                 * explicit authorization rules.
+                 *
+                 * This prevents accidental exposure
+                 * as LedgerBase grows.
                  */
-                .anyRequest().authenticated()
+                .anyRequest().denyAll()
             )
 
 
@@ -288,15 +346,15 @@ public class SecurityConfig {
             // =================================================
 
             /**
-             * Spring Security extracts Bearer tokens
+             * Spring Security extracts Bearer access tokens
              * from Authorization headers.
              *
-             * The application's JwtDecoder validates
-             * signatures, claims, expiration, and
-             * PostgreSQL-backed session status.
+             * The existing JwtDecoder validates signatures,
+             * token claims, expiration, and authentication
+             * session status.
              *
              * BusinessAuthorizationManager then applies
-             * the business-specific authorization policy.
+             * database-backed business permissions.
              */
             .oauth2ResourceServer(oauth2 ->
                 oauth2.jwt(
