@@ -1,4 +1,9 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 
 import {
   LayoutDashboard,
@@ -8,36 +13,19 @@ import {
   TrendingUp,
   FileSpreadsheet,
   CalendarRange,
+  ChevronUp,
+  LogOut,
 } from 'lucide-react'
 
 import './App.css'
 
-// ============================================================
-// LEDGERBASE — BUSINESS MANAGEMENT API
-// ============================================================
+import { useAuth } from './auth/useAuth'
 
-/**
- * getBusinesses() retrieves businesses from Spring Boot.
- *
- * Business defines the TypeScript structure of a business.
- *
- * The frontend does not hardcode the available businesses.
- */
 import {
   getBusinesses,
   type Business,
 } from './api/businesses'
 
-// ============================================================
-// LEDGERBASE — PAGE COMPONENTS
-// ============================================================
-
-/**
- * Each major LedgerBase screen has its own React component.
- *
- * All financial pages receive the currently selected
- * business ID from this application component.
- */
 import OverviewPage from './pages/OverviewPage'
 import AccountsPage from './pages/AccountsPage'
 import TransactionsPage from './pages/TransactionsPage'
@@ -47,12 +35,33 @@ import IncomeStatementPage from './pages/IncomeStatementPage'
 import BalanceSheetPage from './pages/BalanceSheetPage'
 
 // ============================================================
-// LEDGERBASE — APPLICATION TYPES
+// LEDGERBASE — MAIN APPLICATION
 // ============================================================
 
 /**
- * Union of all supported application pages.
+ * Application shell for the authenticated accounting workspace.
+ *
+ * FEATURES:
+ *
+ * - Business selection.
+ * - Grouped sidebar navigation.
+ * - Accounting and financial reporting pages.
+ * - Authenticated user profile.
+ * - Backend-connected Sign out action.
+ *
+ * SECURITY:
+ *
+ * User information comes from AuthProvider.
+ * It is never hardcoded in the frontend.
+ *
+ * The backend remains responsible for enforcing
+ * business membership and accounting permissions.
  */
+
+// ============================================================
+// APPLICATION PAGE TYPES
+// ============================================================
+
 type Page =
   | 'overview'
   | 'accounts'
@@ -66,18 +75,12 @@ type Page =
 // SIDEBAR NAVIGATION TYPES
 // ============================================================
 
-/**
- * One clickable sidebar navigation item.
- */
 interface NavigationItem {
   id: Page
   label: string
   icon: ReactNode
 }
 
-/**
- * One group of sidebar navigation items.
- */
 interface NavigationGroup {
   heading: string
   accessibleLabel: string
@@ -85,116 +88,79 @@ interface NavigationGroup {
 }
 
 // ============================================================
-// GROUPED SIDEBAR CONFIGURATION
+// SIDEBAR NAVIGATION CONFIGURATION
 // ============================================================
 
 /**
- * Preserve LedgerBase's existing navigation groups,
- * labels, and lucide-react icons.
+ * Keep the existing LedgerBase navigation structure.
+ *
+ * Icons use lucide-react.
+ * Clicking a navigation button changes React page state.
  */
 const navigationGroups: NavigationGroup[] = [
-
-  // ==========================================================
-  // WORKSPACE
-  // ==========================================================
-
   {
     heading: 'WORKSPACE',
     accessibleLabel: 'Workspace',
-
     items: [
       {
         id: 'overview',
         label: 'Overview',
         icon: (
-          <LayoutDashboard
-            size={18}
-            strokeWidth={1.8}
-          />
+          <LayoutDashboard size={18} strokeWidth={1.8} />
         ),
       },
     ],
   },
-
-  // ==========================================================
-  // ACCOUNTING
-  // ==========================================================
-
   {
     heading: 'ACCOUNTING',
     accessibleLabel: 'Accounting',
-
     items: [
       {
         id: 'accounts',
         label: 'Chart of Accounts',
         icon: (
-          <BookOpen
-            size={18}
-            strokeWidth={1.8}
-          />
+          <BookOpen size={18} strokeWidth={1.8} />
         ),
       },
       {
         id: 'transactions',
         label: 'Transactions',
         icon: (
-          <ArrowLeftRight
-            size={18}
-            strokeWidth={1.8}
-          />
+          <ArrowLeftRight size={18} strokeWidth={1.8} />
         ),
       },
       {
         id: 'fiscal-years',
         label: 'Fiscal Years & Periods',
         icon: (
-          <CalendarRange
-            size={18}
-            strokeWidth={1.8}
-          />
+          <CalendarRange size={18} strokeWidth={1.8} />
         ),
       },
     ],
   },
-
-  // ==========================================================
-  // FINANCIAL REPORTS
-  // ==========================================================
-
   {
     heading: 'FINANCIAL REPORTS',
     accessibleLabel: 'Financial Reports',
-
     items: [
       {
         id: 'trial-balance',
         label: 'Trial Balance',
         icon: (
-          <Scale
-            size={18}
-            strokeWidth={1.8}
-          />
+          <Scale size={18} strokeWidth={1.8} />
         ),
       },
       {
         id: 'income-statement',
         label: 'Income Statement',
         icon: (
-          <TrendingUp
-            size={18}
-            strokeWidth={1.8}
-          />
+          <TrendingUp size={18} strokeWidth={1.8} />
         ),
       },
       {
         id: 'balance-sheet',
         label: 'Balance Sheet',
         icon: (
-          <FileSpreadsheet
-            size={18}
-            strokeWidth={1.8}
-          />
+          <FileSpreadsheet size={18} strokeWidth={1.8} />
         ),
       },
     ],
@@ -206,19 +172,50 @@ const navigationGroups: NavigationGroup[] = [
 // ============================================================
 
 /**
- * Browser storage key used to remember which business
- * was selected during the previous session.
+ * Remember the last selected business.
  *
- * This stores only a business ID.
+ * Only the business ID is saved.
  *
- * It is a UI preference, NOT an authentication
+ * This is a UI preference, NOT an authentication
  * credential or authorization mechanism.
  *
- * Any stored ID must also exist in the list
- * returned by the backend.
+ * Saved selections must be validated against
+ * businesses returned by the backend.
  */
 const SELECTED_BUSINESS_STORAGE_KEY =
   'ledgerbase.selectedBusinessId'
+
+// ============================================================
+// USER PROFILE HELPER
+// ============================================================
+
+/**
+ * Generate avatar initials using the real user's name.
+ *
+ * Examples:
+ *
+ * Development User -> DU
+ * Angel Zhou       -> AZ
+ *
+ * This is display-only information.
+ */
+function getUserInitials(fullName: string): string {
+
+  const nameParts = fullName
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+
+  if (nameParts.length === 0) {
+    return '?'
+  }
+
+  return nameParts
+    .slice(0, 2)
+    .map((part) => part.charAt(0))
+    .join('')
+    .toUpperCase()
+}
 
 // ============================================================
 // MAIN LEDGERBASE APPLICATION
@@ -227,11 +224,108 @@ const SELECTED_BUSINESS_STORAGE_KEY =
 function App() {
 
   // ==========================================================
+  // AUTHENTICATED USER
+  // ==========================================================
+
+  /**
+   * Access the verified authentication context.
+   *
+   * currentUser contains the userId, fullName, and email
+   * retrieved from Spring Boot.
+   *
+   * signOut() uses the existing backend logout workflow.
+   */
+  const {
+    currentUser,
+    signOut,
+  } = useAuth()
+
+  // ==========================================================
+  // PROFILE MENU STATE
+  // ==========================================================
+
+  /**
+   * Controls whether the account details panel is open.
+   */
+  const [isProfileMenuOpen, setIsProfileMenuOpen] =
+    useState(false)
+
+  const profileContainerRef =
+    useRef<HTMLDivElement>(null)
+
+  const profileTriggerRef =
+    useRef<HTMLButtonElement>(null)
+
+  // ==========================================================
+  // CLOSE PROFILE MENU ON OUTSIDE CLICK OR ESCAPE
+  // ==========================================================
+
+  /**
+   * Improve keyboard and pointer accessibility.
+   *
+   * - Clicking outside closes the account panel.
+   * - Pressing Escape closes the account panel.
+   * - Escape returns focus to the profile button.
+   */
+  useEffect(() => {
+
+    if (!isProfileMenuOpen) {
+      return
+    }
+
+    function handleOutsidePointerDown(event: PointerEvent) {
+
+      const target = event.target
+
+      if (
+        target instanceof Node &&
+        !profileContainerRef.current?.contains(target)
+      ) {
+        setIsProfileMenuOpen(false)
+      }
+    }
+
+    function handleEscape(event: KeyboardEvent) {
+
+      if (event.key === 'Escape') {
+
+        setIsProfileMenuOpen(false)
+
+        profileTriggerRef.current?.focus()
+      }
+    }
+
+    document.addEventListener(
+      'pointerdown',
+      handleOutsidePointerDown,
+    )
+
+    document.addEventListener(
+      'keydown',
+      handleEscape,
+    )
+
+    return () => {
+
+      document.removeEventListener(
+        'pointerdown',
+        handleOutsidePointerDown,
+      )
+
+      document.removeEventListener(
+        'keydown',
+        handleEscape,
+      )
+    }
+
+  }, [isProfileMenuOpen])
+
+  // ==========================================================
   // SELECTED PAGE STATE
   // ==========================================================
 
   /**
-   * Start on the Overview dashboard.
+   * Start at Overview.
    *
    * Sidebar navigation updates this state.
    */
@@ -239,48 +333,21 @@ function App() {
     useState<Page>('overview')
 
   // ==========================================================
-  // AVAILABLE BUSINESSES
+  // BUSINESS STATE
   // ==========================================================
 
   /**
-   * Businesses retrieved from:
+   * Businesses are loaded from the Spring Boot API.
    *
-   * GET /api/v1/businesses
-   *
-   * Example:
-   *
-   * [
-   *   { id: 1, name: "LedgerBase Demo Business", ... },
-   *   { id: 2, name: "ABC Consulting LLC", ... }
-   * ]
+   * The currently selected ID is passed to financial
+   * pages through the businessId prop.
    */
   const [businesses, setBusinesses] =
     useState<Business[]>([])
 
-  // ==========================================================
-  // SELECTED BUSINESS
-  // ==========================================================
-
-  /**
-   * Previously, LedgerBase always used:
-   *
-   * const businessId = 1
-   *
-   * Now the selected business is stored in React state.
-   *
-   * null means a valid business has not yet been selected.
-   */
   const [selectedBusinessId, setSelectedBusinessId] =
     useState<number | null>(null)
 
-  // ==========================================================
-  // BUSINESS LOADING AND ERROR STATES
-  // ==========================================================
-
-  /**
-   * Avoid rendering accounting pages before we know
-   * which business should be displayed.
-   */
   const [businessesLoading, setBusinessesLoading] =
     useState(true)
 
@@ -288,62 +355,47 @@ function App() {
     useState<string | null>(null)
 
   // ==========================================================
-  // LOAD AVAILABLE BUSINESSES ON STARTUP
+  // LOAD AVAILABLE BUSINESSES
   // ==========================================================
 
   /**
-   * useEffect runs after the application mounts.
+   * Retrieve businesses from:
    *
-   * We retrieve the list of available businesses
-   * from the backend instead of hardcoding business IDs.
+   * GET /api/v1/businesses
    *
    * SELECTION PRIORITY:
    *
-   * 1. Keep a valid existing React selection.
-   * 2. Restore a valid previously saved business.
-   * 3. Fall back to the first available business.
-   * 4. Use null if no businesses are available.
+   * 1. Keep an existing valid selection.
+   * 2. Restore the saved business preference.
+   * 3. Select the first available business.
+   * 4. Use null when no businesses are available.
    *
-   * IMPORTANT:
-   *
-   * A remembered ID is accepted only if it exists
-   * in the business list returned by the API.
+   * The API results determine which saved IDs are valid.
    */
   useEffect(() => {
 
-    // ========================================================
-    // CLEANUP FLAG
-    // ========================================================
-
-    /**
-     * If the component unmounts before the API finishes,
-     * don't update its state afterward.
-     */
     let active = true
 
-    // ========================================================
-    // FETCH BUSINESSES
-    // ========================================================
-
-    async function loadBusinesses() {
+    async function loadBusinesses(): Promise<void> {
 
       try {
 
-        const availableBusinesses = await getBusinesses()
+        // ----------------------------------------------------
+        // RETRIEVE AVAILABLE BUSINESSES
+        // ----------------------------------------------------
+
+        const availableBusinesses =
+          await getBusinesses()
 
         if (!active) {
           return
         }
 
-        // ====================================================
-        // STORE AVAILABLE BUSINESSES
-        // ====================================================
-
         setBusinesses(availableBusinesses)
 
-        // ====================================================
-        // READ PREVIOUS BUSINESS PREFERENCE
-        // ====================================================
+        // ----------------------------------------------------
+        // READ SAVED BUSINESS PREFERENCE
+        // ----------------------------------------------------
 
         let rememberedBusinessId: number | null = null
 
@@ -365,25 +417,19 @@ function App() {
         } catch {
 
           /**
-           * Some browser configurations restrict
-           * access to localStorage.
+           * Browser storage may be restricted.
            *
-           * LedgerBase should still work even if
-           * the preference cannot be read.
+           * Business selection must still work.
            */
           rememberedBusinessId = null
         }
 
-        // ====================================================
+        // ----------------------------------------------------
         // SELECT A VALID BUSINESS
-        // ====================================================
+        // ----------------------------------------------------
 
         setSelectedBusinessId((previousBusinessId) => {
 
-          /**
-           * Preserve the current selection if
-           * it still exists in the API results.
-           */
           const previousBusiness =
             availableBusinesses.find(
               (business) =>
@@ -394,10 +440,6 @@ function App() {
             return previousBusiness.id
           }
 
-          /**
-           * Otherwise, restore the remembered business
-           * if the backend still returns it.
-           */
           const rememberedBusiness =
             availableBusinesses.find(
               (business) =>
@@ -408,11 +450,6 @@ function App() {
             return rememberedBusiness.id
           }
 
-          /**
-           * Otherwise, select the first business.
-           *
-           * An empty list results in null.
-           */
           return availableBusinesses[0]?.id ?? null
         })
 
@@ -423,10 +460,6 @@ function App() {
         if (!active) {
           return
         }
-
-        // ====================================================
-        // DISPLAY A USEFUL ERROR
-        // ====================================================
 
         setBusinessesError(
           error instanceof Error
@@ -442,15 +475,11 @@ function App() {
       }
     }
 
-    // ========================================================
-    // START INITIAL REQUEST
-    // ========================================================
-
     void loadBusinesses()
 
-    // ========================================================
-    // CLEAN UP WHEN COMPONENT UNMOUNTS
-    // ========================================================
+    // --------------------------------------------------------
+    // PREVENT STATE UPDATES AFTER UNMOUNT
+    // --------------------------------------------------------
 
     return () => {
       active = false
@@ -459,53 +488,41 @@ function App() {
   }, [])
 
   // ==========================================================
-  // HANDLE BUSINESS SELECTION
+  // HANDLE BUSINESS SWITCHING
   // ==========================================================
 
   /**
-   * This function runs when the user chooses a business
-   * from the sidebar dropdown.
+   * Change the active business using the sidebar selector.
    *
-   * Example:
+   * The newly selected ID must exist in the API results.
    *
-   * LedgerBase Demo Business -> ABC Consulting LLC
-   *
-   * The new business ID is passed to all accounting pages.
-   *
-   * We also navigate back to Overview so the user
-   * begins in a consistent workspace.
+   * Changing businesses resets navigation to Overview
+   * and updates the browser's saved UI preference.
    */
-  function handleBusinessChange(newBusinessId: number) {
+  function handleBusinessChange(newBusinessId: number): void {
 
-    // ========================================================
-    // ENSURE BUSINESS EXISTS IN THE AVAILABLE LIST
-    // ========================================================
-
-    const selectedBusiness = businesses.find(
-      (business) => business.id === newBusinessId,
-    )
+    const selectedBusiness =
+      businesses.find(
+        (business) =>
+          business.id === newBusinessId,
+      )
 
     if (!selectedBusiness) {
       return
     }
 
-    // ========================================================
-    // UPDATE REACT STATE
-    // ========================================================
+    // --------------------------------------------------------
+    // UPDATE BUSINESS AND PAGE
+    // --------------------------------------------------------
 
     setSelectedBusinessId(selectedBusiness.id)
 
     setActivePage('overview')
 
-    // ========================================================
-    // REMEMBER BUSINESS PREFERENCE
-    // ========================================================
+    // --------------------------------------------------------
+    // SAVE UI PREFERENCE
+    // --------------------------------------------------------
 
-    /**
-     * This affects only the browser's local UI preference.
-     *
-     * Actual business data remains in PostgreSQL.
-     */
     try {
 
       window.localStorage.setItem(
@@ -515,93 +532,76 @@ function App() {
 
     } catch {
 
-      /**
-       * Browser storage is optional.
-       *
-       * Business switching still works without it.
-       */
+      // Local storage is optional.
     }
   }
 
   // ==========================================================
-  // SELECTED BUSINESS ID FOR ACCOUNTING PAGES
+  // CURRENT ACCOUNTING BUSINESS
   // ==========================================================
 
-  /**
-   * All accounting pages continue to receive
-   * the same businessId prop they used previously.
-   *
-   * The difference is that its value is now dynamic.
-   */
   const businessId = selectedBusinessId
 
   // ==========================================================
-  // PAGE INFORMATION
+  // PAGE HEADINGS
   // ==========================================================
 
   /**
-   * Preserve the existing shared page headings.
+   * Preserve the existing titles and descriptions.
    */
   const pageInformation: Record<
     Page,
     { title: string; description: string }
   > = {
-
     overview: {
       title: 'Overview',
       description: 'Your financial workspace at a glance.',
     },
-
     accounts: {
       title: 'Chart of Accounts',
       description: 'Manage the accounts used in your general ledger.',
     },
-
     transactions: {
       title: 'Transactions',
       description: 'Record and manage your accounting transactions.',
     },
-
     'trial-balance': {
       title: 'Trial Balance',
       description: 'Review account balances and verify your general ledger.',
     },
-
     'income-statement': {
       title: 'Income Statement',
       description: 'Review revenue, expenses, and net income for a reporting period.',
     },
-
     'balance-sheet': {
       title: 'Balance Sheet',
       description: 'Review assets, liabilities, and equity as of a reporting date.',
     },
-
     'fiscal-years': {
       title: 'Fiscal Years & Accounting Periods',
       description: 'Manage your accounting calendar and monthly posting periods.',
     },
   }
 
-  const currentPage = pageInformation[activePage]
+  const currentPage =
+    pageInformation[activePage]
 
   // ==========================================================
   // RENDER APPLICATION
   // ==========================================================
 
   return (
-
     <div className="app-shell">
 
-      {/* ====================================================== */}
+      {/* ==================================================== */}
       {/* SIDEBAR */}
-      {/* ====================================================== */}
+      {/* ==================================================== */}
 
       <aside className="sidebar">
 
-        {/* ==================================================== */}
-        {/* APPLICATION BRANDING — UNCHANGED */}
-        {/* ==================================================== */}
+        {/* ================================================== */}
+        {/* LEDGERBASE BRANDING */}
+        {/* ================================================== */}
 
         <div className="sidebar-brand">
 
@@ -613,29 +613,15 @@ function App() {
           />
 
           <div className="brand-copy">
-
             <strong>LedgerBase</strong>
-
             <span>Financial Workspace</span>
-
           </div>
 
         </div>
 
-        {/* ==================================================== */}
-        {/* BUSINESS SELECTOR — NEW */}
-        {/* ==================================================== */}
-
-        {/*
-          The business selector sits beneath the LedgerBase
-          branding and above the existing navigation groups.
-
-          We use a native HTML select element because it
-          supports keyboard navigation and screen readers.
-
-          We'll add matching professional styling in App.css
-          after confirming that the functionality works.
-        */}
+        {/* ================================================== */}
+        {/* BUSINESS SELECTOR */}
+        {/* ================================================== */}
 
         <div className="sidebar-business-selector">
 
@@ -657,9 +643,8 @@ function App() {
             }
             onChange={(event) => {
 
-              const newBusinessId = Number(
-                event.target.value,
-              )
+              const newBusinessId =
+                Number(event.target.value)
 
               handleBusinessChange(newBusinessId)
             }}
@@ -668,24 +653,20 @@ function App() {
             {businesses.length === 0 ? (
 
               <option value="">
-
                 {businessesLoading
                   ? 'Loading businesses...'
                   : 'No businesses available'}
-
               </option>
 
             ) : (
 
               businesses.map((business) => (
-
                 <option
                   key={business.id}
                   value={business.id}
                 >
                   {business.name}
                 </option>
-
               ))
 
             )}
@@ -694,9 +675,9 @@ function App() {
 
         </div>
 
-        {/* ==================================================== */}
-        {/* GROUPED SIDEBAR NAVIGATION — UNCHANGED */}
-        {/* ==================================================== */}
+        {/* ================================================== */}
+        {/* GROUPED NAVIGATION */}
+        {/* ================================================== */}
 
         <nav
           className="sidebar-navigation"
@@ -756,48 +737,167 @@ function App() {
 
         </nav>
 
-        {/* ==================================================== */}
-        {/* SIDEBAR FOOTER — UNCHANGED */}
-        {/* ==================================================== */}
+        {/* ================================================== */}
+        {/* USER PROFILE AND SIGN OUT */}
+        {/* ================================================== */}
 
         <div className="sidebar-footer">
 
-          <div className="environment-status">
+          {currentUser && (
 
-            <span className="environment-dot"></span>
+            <div
+              className="sidebar-user-profile"
+              ref={profileContainerRef}
+            >
 
-            Local Development
+              {/* ============================================ */}
+              {/* EXPANDABLE PROFILE PANEL */}
+              {/* ============================================ */}
+
+              {isProfileMenuOpen && (
+
+                <section
+                  id="sidebar-profile-panel"
+                  className="sidebar-profile-panel"
+                  aria-label="Account details"
+                >
+
+                  <span className="sidebar-profile-panel-label">
+                    SIGNED IN AS
+                  </span>
+
+                  <strong className="sidebar-profile-panel-name">
+                    {currentUser.fullName}
+                  </strong>
+
+                  <span className="sidebar-profile-panel-email">
+                    {currentUser.email}
+                  </span>
+
+                  {/* ======================================== */}
+                  {/* BACKEND-CONNECTED SIGN OUT */}
+                  {/* ======================================== */}
+
+                  <button
+                    type="button"
+                    className="sidebar-signout-button"
+                    onClick={() => {
+
+                      setIsProfileMenuOpen(false)
+
+                      /**
+                       * AuthProvider revokes the backend
+                       * session before clearing React state.
+                       *
+                       * A failed logout is handled there.
+                       */
+                      signOut()
+                    }}
+                  >
+
+                    <LogOut
+                      size={16}
+                      strokeWidth={1.8}
+                      aria-hidden="true"
+                    />
+
+                    <span>Sign out</span>
+
+                  </button>
+
+                </section>
+
+              )}
+
+              {/* ============================================ */}
+              {/* PROFILE MENU TRIGGER */}
+              {/* ============================================ */}
+
+              <button
+                type="button"
+                className="sidebar-profile-trigger"
+                ref={profileTriggerRef}
+                aria-label={
+                  `Account options for ${currentUser.fullName}`
+                }
+                aria-expanded={isProfileMenuOpen}
+                aria-controls={
+                  isProfileMenuOpen
+                    ? 'sidebar-profile-panel'
+                    : undefined
+                }
+                onClick={() => {
+
+                  setIsProfileMenuOpen(
+                    (previous) => !previous,
+                  )
+                }}
+              >
+
+                <span
+                  className="sidebar-profile-avatar"
+                  aria-hidden="true"
+                >
+                  {getUserInitials(currentUser.fullName)}
+                </span>
+
+                <span className="sidebar-profile-identity">
+
+                  <strong>{currentUser.fullName}</strong>
+
+                  <span>{currentUser.email}</span>
+
+                </span>
+
+                <ChevronUp
+                  size={17}
+                  strokeWidth={1.8}
+                  aria-hidden="true"
+                  className={
+                    isProfileMenuOpen
+                      ? 'sidebar-profile-chevron expanded'
+                      : 'sidebar-profile-chevron'
+                  }
+                />
+
+              </button>
+
+            </div>
+
+          )}
+
+          {/* ================================================= */}
+          {/* EXISTING LOCAL DEVELOPMENT STATUS */}
+          {/* ================================================= */}
+
+          <div className="sidebar-environment">
+
+            <div className="environment-status">
+
+              <span className="environment-dot"></span>
+
+              Local Development
+
+            </div>
+
+            <p>LedgerBase MVP</p>
 
           </div>
-
-          <p>LedgerBase MVP</p>
 
         </div>
 
       </aside>
 
-      {/* ====================================================== */}
+      {/* ==================================================== */}
       {/* MAIN CONTENT */}
-      {/* ====================================================== */}
+      {/* ==================================================== */}
 
       {/*
-        The key is important for business switching.
+        The key resets the accounting page subtree when
+        switching businesses.
 
-        When businessId changes, React creates a fresh
-        main-content subtree.
-
-        This resets page-specific state such as:
-        - Previously loaded accounts
-        - Transaction forms and lists
-        - Report date selections
-        - Dashboard metrics
-        - Fiscal-year and period selections
-
-        The new page then loads data for the newly
-        selected business.
-
-        The DOM layout and existing CSS classes
-        remain unchanged.
+        This clears page-specific forms, filters, and report
+        selections belonging to the previous business.
       */}
 
       <main
@@ -805,9 +905,9 @@ function App() {
         className="main-content"
       >
 
-        {/* ==================================================== */}
-        {/* BUSINESS LOADING STATE */}
-        {/* ==================================================== */}
+        {/* ================================================== */}
+        {/* BUSINESS LOADING */}
+        {/* ================================================== */}
 
         {businessesLoading && (
 
@@ -820,9 +920,9 @@ function App() {
 
         )}
 
-        {/* ==================================================== */}
+        {/* ================================================== */}
         {/* BUSINESS LOADING ERROR */}
-        {/* ==================================================== */}
+        {/* ================================================== */}
 
         {!businessesLoading && businessesError && (
 
@@ -843,9 +943,9 @@ function App() {
 
         )}
 
-        {/* ==================================================== */}
+        {/* ================================================== */}
         {/* NO BUSINESSES AVAILABLE */}
-        {/* ==================================================== */}
+        {/* ================================================== */}
 
         {!businessesLoading &&
           !businessesError &&
@@ -863,9 +963,9 @@ function App() {
 
         )}
 
-        {/* ==================================================== */}
-        {/* RENDER THE SELECTED BUSINESS WORKSPACE */}
-        {/* ==================================================== */}
+        {/* ================================================== */}
+        {/* AUTHENTICATED ACCOUNTING WORKSPACE */}
+        {/* ================================================== */}
 
         {businessId !== null &&
           !businessesLoading &&
@@ -873,9 +973,9 @@ function App() {
 
           <>
 
-            {/* ================================================= */}
+            {/* ============================================== */}
             {/* SHARED PAGE HEADER */}
-            {/* ================================================= */}
+            {/* ============================================== */}
 
             {activePage !== 'trial-balance' &&
               activePage !== 'income-statement' &&
@@ -899,20 +999,17 @@ function App() {
                 </div>
 
                 <div className="preview-label">
-
                   <span className="preview-dot"></span>
-
                   UI Preview
-
                 </div>
 
               </header>
 
             )}
 
-            {/* ================================================= */}
-            {/* OVERVIEW — FINANCIAL DASHBOARD */}
-            {/* ================================================= */}
+            {/* ============================================== */}
+            {/* OVERVIEW DASHBOARD */}
+            {/* ============================================== */}
 
             {activePage === 'overview' && (
 
@@ -923,9 +1020,9 @@ function App() {
 
             )}
 
-            {/* ================================================= */}
+            {/* ============================================== */}
             {/* CHART OF ACCOUNTS */}
-            {/* ================================================= */}
+            {/* ============================================== */}
 
             {activePage === 'accounts' && (
 
@@ -933,9 +1030,9 @@ function App() {
 
             )}
 
-            {/* ================================================= */}
+            {/* ============================================== */}
             {/* TRANSACTIONS */}
-            {/* ================================================= */}
+            {/* ============================================== */}
 
             {activePage === 'transactions' && (
 
@@ -943,9 +1040,9 @@ function App() {
 
             )}
 
-            {/* ================================================= */}
+            {/* ============================================== */}
             {/* TRIAL BALANCE */}
-            {/* ================================================= */}
+            {/* ============================================== */}
 
             {activePage === 'trial-balance' && (
 
@@ -953,9 +1050,9 @@ function App() {
 
             )}
 
-            {/* ================================================= */}
+            {/* ============================================== */}
             {/* INCOME STATEMENT */}
-            {/* ================================================= */}
+            {/* ============================================== */}
 
             {activePage === 'income-statement' && (
 
@@ -963,9 +1060,9 @@ function App() {
 
             )}
 
-            {/* ================================================= */}
+            {/* ============================================== */}
             {/* BALANCE SHEET */}
-            {/* ================================================= */}
+            {/* ============================================== */}
 
             {activePage === 'balance-sheet' && (
 
@@ -973,15 +1070,15 @@ function App() {
 
             )}
 
-            {/* ================================================= */}
-            {/* FISCAL YEARS & ACCOUNTING PERIODS */}
-            {/* ================================================= */}
+            {/* ============================================== */}
+            {/* FISCAL YEARS AND ACCOUNTING PERIODS */}
+            {/* ============================================== */}
 
-            {activePage === 'fiscal-years' && (
+            {activePage === 'fiscal-years' && currentUser && (
 
               <FiscalYearsPage
                 businessId={businessId}
-                actorId={1}
+                actorId={currentUser.userId}
               />
 
             )}
@@ -993,7 +1090,6 @@ function App() {
       </main>
 
     </div>
-
   )
 }
 
