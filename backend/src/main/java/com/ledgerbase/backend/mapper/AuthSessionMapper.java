@@ -306,4 +306,60 @@ public interface AuthSessionMapper {
     int revokeSession(
         @Param("sessionId") UUID sessionId
     );
+    
+
+    // ========================================================
+    // CHECK AUTHENTICATION SESSION VALIDITY
+    // ========================================================
+
+    /**
+     * Check whether a JWT belongs to an active
+     * PostgreSQL authentication session.
+     *
+     * VALIDATION:
+     *
+     * - The session ID must exist.
+     * - The session must belong to the JWT subject.
+     * - The session must not have been revoked.
+     * - The absolute expiration must not have passed.
+     * - The inactivity timeout must not have passed.
+     *
+     * PERFORMANCE:
+     *
+     * This is a read-only query.
+     *
+     * It uses the session's primary key and does not
+     * acquire a SELECT FOR UPDATE row lock.
+     *
+     * Normal API requests must not serialize on
+     * the same session row merely to authenticate.
+     *
+     * TIMING:
+     *
+     * PostgreSQL evaluates expiration using its
+     * own database clock.
+     *
+     * The check does not extend the inactivity
+     * deadline or write to the database.
+     *
+     * @param sessionId UUID from the signed JWT sid
+     * @param userId database user ID from JWT sub
+     * @return true only when the session is active
+     */
+    @Select("""
+        SELECT EXISTS (
+            SELECT 1
+            FROM auth_sessions
+            WHERE id = #{sessionId}
+              AND user_id = #{userId}
+              AND revoked_at IS NULL
+              AND absolute_expires_at > CURRENT_TIMESTAMP
+              AND last_activity_at + INTERVAL '30 minutes'
+                  > CURRENT_TIMESTAMP
+        )
+        """)
+    boolean isSessionActiveForUser(
+        @Param("sessionId") UUID sessionId,
+        @Param("userId") Long userId
+    );
 }

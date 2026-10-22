@@ -1,18 +1,21 @@
 package com.ledgerbase.backend.integration;
 
 import com.ledgerbase.backend.dto.AuthenticatedUser;
+import com.ledgerbase.backend.security.AuthSessionJwtValidator;
 import com.ledgerbase.backend.service.JwtTokenService;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.ActiveProfiles;
-
+import org.springframework.security.oauth2.core.OAuth2TokenValidatorResult;
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.security.oauth2.jwt.*;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
@@ -23,6 +26,8 @@ import java.time.Instant;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
 
 // ============================================================
 // LEDGERBASE — JWT CONFIGURATION INTEGRATION TESTS
@@ -82,6 +87,47 @@ class JwtConfigIntegrationTest {
 
     @Value("${ledgerbase.jwt.audience}")
     private String audience;
+
+
+    // ========================================================
+    // ISOLATE CRYPTOGRAPHIC TESTS FROM SESSION STORAGE
+    // ========================================================
+
+    /**
+     * These existing tests focus on:
+     *
+     * - JWT signing.
+     * - JWT verification.
+     * - Issuer and audience validation.
+     * - Claims and token expiration.
+     *
+     * Substitute only the PostgreSQL session validator.
+     *
+     * This is test-only behavior.
+     *
+     * Production JwtDecoder always uses the real
+     * AuthSessionJwtValidator.
+     *
+     * A separate database integration test verifies
+     * the actual session validation requirement.
+     */
+    @MockitoBean
+    private AuthSessionJwtValidator sessionValidator;
+
+
+    // ========================================================
+    // ALLOW SESSION CHECK IN CRYPTOGRAPHIC TESTS
+    // ========================================================
+
+    @BeforeEach
+    void configureCryptographicTestIsolation() {
+
+        when(
+            sessionValidator.validate(any(Jwt.class))
+        ).thenReturn(
+            OAuth2TokenValidatorResult.success()
+        );
+    }
 
 
     // ========================================================

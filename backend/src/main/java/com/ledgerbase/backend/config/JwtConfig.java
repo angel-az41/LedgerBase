@@ -1,5 +1,6 @@
 package com.ledgerbase.backend.config;
 
+import com.ledgerbase.backend.security.AuthSessionJwtValidator;
 import com.ledgerbase.backend.service.JwtTokenService;
 
 import org.springframework.beans.factory.annotation.Value;
@@ -203,7 +204,9 @@ public class JwtConfig {
         String issuer,
 
         @Value("${ledgerbase.jwt.audience}")
-        String audience
+        String audience,
+
+        AuthSessionJwtValidator sessionValidator
     ) {
 
         NimbusJwtDecoder decoder =
@@ -226,20 +229,36 @@ public class JwtConfig {
 
 
         // ====================================================
-        // COMBINE JWT VALIDATORS
+        // COMBINE JWT AUTHENTICATION VALIDATORS
         // ====================================================
 
+        /**
+         * A JWT must satisfy all of these checks:
+         *
+         * 1. Spring Security's timestamp validation.
+         * 2. LedgerBase's configured issuer.
+         * 3. LedgerBase's configured audience.
+         * 4. The active PostgreSQL authentication
+         *    session associated with sub and sid.
+         *
+         * AuthSessionJwtValidator rejects revoked,
+         * expired, inactive, or mismatched sessions.
+         *
+         * The existing Nimbus decoder also verifies
+         * the JWT's HS256 signature.
+         */
         var validator =
             new DelegatingOAuth2TokenValidator<Jwt>(
                 JwtValidators.createDefaultWithIssuer(
                     issuer
                 ),
-                audienceValidator
+                audienceValidator,
+                sessionValidator
             );
 
 
         // ====================================================
-        // APPLY VALIDATORS TO THE DECODER
+        // APPLY ALL VALIDATORS TO THE DECODER
         // ====================================================
 
         decoder.setJwtValidator(validator);
