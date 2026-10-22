@@ -44,21 +44,19 @@ import './FiscalYearsPage.css'
 // COMPONENT PROPERTIES
 // ============================================================
 
+/**
+ * The current business determines which fiscal years
+ * and accounting periods the page manages.
+ *
+ * SECURITY:
+ *
+ * No actorId prop is needed.
+ *
+ * The backend obtains the authenticated user
+ * from the verified JWT.
+ */
 interface FiscalYearsPageProps {
-
-  // Business currently being managed.
   businessId: number
-
-  /**
-   * Temporary development actor.
-   *
-   * Authentication has not yet been implemented.
-   *
-   * Once authentication is introduced, Spring Boot
-   * must determine the actor from the logged-in
-   * session rather than trusting a client-supplied ID.
-   */
-  actorId: number
 }
 
 // ============================================================
@@ -117,7 +115,6 @@ function formatPeriodMonth(date: string): string {
 
 function FiscalYearsPage({
   businessId,
-  actorId,
 }: FiscalYearsPageProps) {
 
   // ==========================================================
@@ -648,22 +645,6 @@ function FiscalYearsPage({
       return
     }
 
-    // ========================================================
-    // VALIDATE TEMPORARY DEVELOPMENT ACTOR
-    // ========================================================
-
-    if (
-      !Number.isInteger(actorId) ||
-      actorId <= 0
-    ) {
-
-      setPeriodActionError(
-        'A valid development actor ID is required.',
-      )
-
-      return
-    }
-
     const action = pendingPeriodAction.action
     const periodId = pendingPeriod.id
 
@@ -688,7 +669,6 @@ function FiscalYearsPage({
         updatedPeriod = await closeAccountingPeriod(
           businessId,
           periodId,
-          { actorId },
         )
 
       } else {
@@ -696,7 +676,6 @@ function FiscalYearsPage({
         updatedPeriod = await reopenAccountingPeriod(
           businessId,
           periodId,
-          { actorId },
         )
 
       }

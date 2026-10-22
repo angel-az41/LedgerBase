@@ -10,18 +10,30 @@ import org.junit.jupiter.api.Test;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.context.WebApplicationContext;
 
+import org.springframework.security.oauth2.jwt.BadJwtException;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -35,27 +47,40 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  *
  * These tests verify:
  *
- * 1. Listing the 12 periods of a fiscal year.
- * 2. Retrieving an individual accounting period.
- * 3. Returning HTTP 404 for missing records.
- * 4. Preventing cross-business data access.
- * 5. Supporting non-calendar fiscal years.
- * 6. Rejecting requests for nonexistent businesses.
+ * - Listing the 12 periods of a fiscal year.
+ * - Retrieving individual accounting periods.
+ * - Returning HTTP 404 for missing records.
+ * - Enforcing cross-business data isolation.
+ * - Supporting non-calendar fiscal years.
+ * - Enforcing Spring Security authentication.
+ * - Checking business membership authorization.
+ * - Closing and reopening accounting periods.
+ * - Rejecting invalid status transitions.
+ * - Recording the authenticated actor in audit events.
+ * - Ignoring forged client-supplied actor IDs.
  *
- * Tests use the real:
+ * These tests exercise the real:
  *
- * - Spring Boot application
- * - AccountingPeriodController
- * - AccountingPeriodService
- * - MyBatis mappers
- * - PostgreSQL ledgerbase_test database
+ * - Spring Boot application context.
+ * - Spring Security filter chain.
+ * - Business authorization manager.
+ * - AccountingPeriodController.
+ * - AccountingPeriodService.
+ * - FiscalYearService.
+ * - MyBatis mappers.
+ * - PostgreSQL test database.
  *
- * Each test runs in a transaction that is
- * automatically rolled back afterward.
+ * JWT decoding is mocked to create deterministic
+ * authenticated test users.
  *
- * The development database is never modified.
+ * The business memberships and authorization logic
+ * remain real and are checked against PostgreSQL.
+ *
+ * Each test is transactional and automatically rolled
+ * back after completion.
  */
 @SpringBootTest
+@AutoConfigureMockMvc
 @ActiveProfiles("test")
 @Transactional
 class AccountingPeriodControllerIntegrationTest {
@@ -64,19 +89,43 @@ class AccountingPeriodControllerIntegrationTest {
     // DEPENDENCIES
     // ========================================================
 
-    @Autowired
-    private WebApplicationContext context;
-
+    /**
+     * Execute fixture SQL and verify database state.
+     */
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    /**
+     * Create fiscal years and their accounting periods.
+     */
     @Autowired
     private FiscalYearService fiscalYearService;
 
+    /**
+     * Retrieve accounting periods directly from PostgreSQL.
+     */
     @Autowired
     private AccountingPeriodMapper accountingPeriodMapper;
 
+    /**
+     * Inject MockMvc with the real Spring Security filters.
+     *
+     * Do not construct MockMvc manually without those filters,
+     * because doing so bypasses authentication and authorization.
+     */
+    @Autowired
     private MockMvc mvc;
+
+    /**
+     * Mock JWT decoding for these integration tests.
+     *
+     * Authentication requests still pass through the
+     * actual Spring Security resource-server filter.
+     *
+     * Only token decoding is replaced.
+     */
+    @MockitoBean
+    private JwtDecoder jwtDecoder;
 
 
     // ========================================================
@@ -89,33 +138,33 @@ class AccountingPeriodControllerIntegrationTest {
 
 
     // ========================================================
-    // SETUP
+    // SETUP — TEST USER AND BUSINESS
     // ========================================================
 
     /**
-     * Prepare a new test user and business.
+     * Create a new test user and business.
      *
      * The database generates their IDs.
      *
-     * We never assume the business ID is 1.
+     * We never assume that user ID or business ID is 1.
      *
-     * By default, the new business uses January
-     * as its fiscal-year starting month.
+     * The business initially uses January as its
+     * fiscal-year starting month.
+     *
+     * Because we insert the business directly through
+     * JDBC, we explicitly provision its OWNER membership.
      */
     @BeforeEach
     void setUp() {
-
-        mvc = MockMvcBuilders
-            .webAppContextSetup(context)
-            .build();
 
         String email = "period-api-"
             + UUID.randomUUID()
             + "@ledgerbase.local";
 
-        // ====================================================
+
+        // ----------------------------------------------------
         // CREATE TEST USER
-        // ====================================================
+        // ----------------------------------------------------
 
         testUserId = jdbcTemplate.queryForObject(
             """
@@ -134,9 +183,9 @@ class AccountingPeriodControllerIntegrationTest {
         );
 
 
-        // ====================================================
+        // ----------------------------------------------------
         // CREATE TEST BUSINESS
-        // ====================================================
+        // ----------------------------------------------------
 
         testBusinessId = jdbcTemplate.queryForObject(
             """
@@ -153,15 +202,209 @@ class AccountingPeriodControllerIntegrationTest {
             "Accounting Period Test Business",
             "USD"
         );
+
+
+        // ----------------------------------------------------
+        // GRANT OWNER MEMBERSHIP
+        // ----------------------------------------------------
+
+        /**
+         * The authorization manager checks memberships,
+         * not merely businesses.owner_id.
+         *
+         * Therefore, creating a business through JDBC
+         * also requires an explicit membership fixture.
+         */
+        grantOwnerMembership(testBusinessId);
     }
 
 
     // ========================================================
-    // URL HELPERS
+    // SETUP — JWT DECODER
     // ========================================================
 
     /**
-     * Build the URL for retrieving a fiscal year's periods.
+     * Configure a deterministic mocked JWT decoder.
+     *
+     * Test Bearer tokens have this format:
+     *
+     * period-test-user-{userId}
+     *
+     * Example:
+     *
+     * period-test-user-42
+     *
+     * The resulting JWT subject is "42".
+     *
+     * This matches LedgerBase's use of PostgreSQL
+     * user IDs as JWT subjects.
+     *
+     * Only test tokens with positive numeric
+     * subjects are accepted.
+     */
+    @BeforeEach
+    void configureTestJwtDecoder() {
+
+        when(jwtDecoder.decode(anyString()))
+            .thenAnswer(invocation -> {
+
+                String token = invocation.getArgument(0);
+
+                String prefix = "period-test-user-";
+
+                if (!token.startsWith(prefix)) {
+                    throw new BadJwtException(
+                        "Invalid test Bearer token"
+                    );
+                }
+
+                String subject = token.substring(
+                    prefix.length()
+                );
+
+
+                // --------------------------------------------
+                // VALIDATE SUBJECT
+                // --------------------------------------------
+
+                try {
+
+                    long userId = Long.parseLong(subject);
+
+                    if (userId <= 0) {
+                        throw new NumberFormatException(
+                            "User ID must be positive"
+                        );
+                    }
+
+                } catch (NumberFormatException exception) {
+
+                    throw new BadJwtException(
+                        "Invalid test JWT subject"
+                    );
+                }
+
+
+                // --------------------------------------------
+                // BUILD AUTHENTICATED JWT
+                // --------------------------------------------
+
+                Instant now = Instant.now();
+
+                return Jwt.withTokenValue(token)
+                    .header("alg", "HS256")
+                    .subject(subject)
+                    .issuedAt(now)
+                    .expiresAt(now.plusSeconds(900))
+                    .build();
+            });
+    }
+
+
+    // ========================================================
+    // HELPER — GRANT BUSINESS OWNER MEMBERSHIP
+    // ========================================================
+
+    /**
+     * Add the current test user as an OWNER of a business.
+     *
+     * This allows Spring Security to authorize business
+     * read and write operations for the test user.
+     *
+     * ON CONFLICT avoids duplicate membership inserts
+     * if provisioning has already created the row.
+     *
+     * The membership belongs only to ledgerbase_test
+     * and is rolled back after the test.
+     */
+    private void grantOwnerMembership(Long businessId) {
+
+        jdbcTemplate.update(
+            """
+            INSERT INTO business_memberships (
+                business_id,
+                user_id,
+                role
+            )
+            VALUES (?, ?, 'OWNER')
+            ON CONFLICT (business_id, user_id) DO NOTHING
+            """,
+            businessId,
+            testUserId
+        );
+    }
+
+
+    // ========================================================
+    // HELPER — AUTHENTICATED BEARER TOKEN
+    // ========================================================
+
+    /**
+     * Construct a test-only Bearer token for a user ID.
+     *
+     * The JWT decoder converts the token into an
+     * authenticated principal.
+     *
+     * A valid JWT alone is not enough to authorize
+     * a business operation: the user must also hold
+     * the required business membership.
+     */
+    private String bearerFor(Long userId) {
+
+        return "Bearer period-test-user-" + userId;
+    }
+
+
+    // ========================================================
+    // HELPER — AUTHENTICATED GET
+    // ========================================================
+
+    /**
+     * Create an authenticated GET request.
+     *
+     * The current test user is the JWT subject.
+     */
+    private MockHttpServletRequestBuilder authenticatedGet(
+            String url) {
+
+        return get(url)
+            .header(
+                HttpHeaders.AUTHORIZATION,
+                bearerFor(testUserId)
+            );
+    }
+
+
+    // ========================================================
+    // HELPER — AUTHENTICATED POST
+    // ========================================================
+
+    /**
+     * Create an authenticated POST request.
+     *
+     * Accounting-period changes derive the actor
+     * from this authenticated JWT.
+     *
+     * Any actorId inside the JSON body is ignored.
+     */
+    private MockHttpServletRequestBuilder authenticatedPost(
+            String url) {
+
+        return post(url)
+            .header(
+                HttpHeaders.AUTHORIZATION,
+                bearerFor(testUserId)
+            );
+    }
+
+
+    // ========================================================
+    // HELPER — FISCAL YEAR PERIODS URL
+    // ========================================================
+
+    /**
+     * Build the URL for retrieving the accounting
+     * periods of a fiscal year.
      */
     private String periodsUrl(Long fiscalYearId) {
 
@@ -173,8 +416,13 @@ class AccountingPeriodControllerIntegrationTest {
     }
 
 
+    // ========================================================
+    // HELPER — INDIVIDUAL PERIOD URL
+    // ========================================================
+
     /**
-     * Build the URL for retrieving a single period.
+     * Build the URL for retrieving or modifying
+     * one accounting period.
      */
     private String periodUrl(Long periodId) {
 
@@ -186,21 +434,20 @@ class AccountingPeriodControllerIntegrationTest {
 
 
     // ========================================================
-    // TEST 1 — LIST ALL TWELVE PERIODS
+    // LIST ALL TWELVE ACCOUNTING PERIODS
     // ========================================================
 
     /**
-     * Create FY2027 through FiscalYearService.
+     * Create FY2027 and retrieve its 12 monthly periods.
      *
-     * The service automatically creates 12 periods.
+     * Verify that:
      *
-     * Verify that GET returns:
-     *
-     * - HTTP 200
-     * - Exactly 12 periods
-     * - Periods ordered from 1 to 12
-     * - Correct January and December dates
-     * - OPEN status
+     * - The endpoint returns HTTP 200.
+     * - Exactly 12 periods exist.
+     * - Periods are ordered from 1 through 12.
+     * - The expected calendar dates are returned.
+     * - New periods start with OPEN status.
+     * - PostgreSQL contains exactly 12 periods.
      */
     @Test
     void listsTwelveAccountingPeriodsInOrder()
@@ -212,7 +459,16 @@ class AccountingPeriodControllerIntegrationTest {
                 2027
             );
 
-        mvc.perform(get(periodsUrl(fiscalYear.getId())))
+
+        // ----------------------------------------------------
+        // REQUEST PERIODS THROUGH AUTHENTICATED HTTP
+        // ----------------------------------------------------
+
+        mvc.perform(
+                authenticatedGet(
+                    periodsUrl(fiscalYear.getId())
+                )
+            )
 
             .andExpect(status().isOk())
 
@@ -252,9 +508,9 @@ class AccountingPeriodControllerIntegrationTest {
             );
 
 
-        // ====================================================
-        // VERIFY POSTGRESQL RECORD COUNT
-        // ====================================================
+        // ----------------------------------------------------
+        // VERIFY DATABASE RECORD COUNT
+        // ----------------------------------------------------
 
         Long count = jdbcTemplate.queryForObject(
             """
@@ -273,20 +529,14 @@ class AccountingPeriodControllerIntegrationTest {
 
 
     // ========================================================
-    // TEST 2 — GET ONE ACCOUNTING PERIOD
+    // RETRIEVE AN INDIVIDUAL ACCOUNTING PERIOD
     // ========================================================
 
     /**
      * Retrieve October's accounting period.
      *
-     * The endpoint should return the correct:
-     *
-     * - ID
-     * - Business ID
-     * - Fiscal year ID
-     * - Period number
-     * - Date range
-     * - Status
+     * Verify the returned ID, business, fiscal year,
+     * period number, dates, and status.
      */
     @Test
     void retrievesIndividualAccountingPeriod()
@@ -304,19 +554,30 @@ class AccountingPeriodControllerIntegrationTest {
                 fiscalYear.getId()
             );
 
-        // List index 9 corresponds to Period 10.
+        // Index 9 corresponds to period 10.
         AccountingPeriod october = periods.get(9);
 
-        mvc.perform(get(periodUrl(october.getId())))
+
+        // ----------------------------------------------------
+        // REQUEST ACCOUNTING PERIOD
+        // ----------------------------------------------------
+
+        mvc.perform(
+                authenticatedGet(
+                    periodUrl(october.getId())
+                )
+            )
 
             .andExpect(status().isOk())
 
             .andExpect(
-                jsonPath("$.id").value(october.getId())
+                jsonPath("$.id")
+                    .value(october.getId())
             )
 
             .andExpect(
-                jsonPath("$.businessId").value(testBusinessId)
+                jsonPath("$.businessId")
+                    .value(testBusinessId)
             )
 
             .andExpect(
@@ -345,57 +606,74 @@ class AccountingPeriodControllerIntegrationTest {
 
 
     // ========================================================
-    // TEST 3 — MISSING FISCAL YEAR
+    // RETURN 404 FOR MISSING FISCAL YEAR
     // ========================================================
 
     /**
-     * Requesting periods for a fiscal year that
-     * does not exist must return HTTP 404.
+     * An authenticated business owner must receive
+     * HTTP 404 when the fiscal year does not exist.
      *
-     * We use Long.MAX_VALUE as a nonexistent ID.
+     * Long.MAX_VALUE is used as a nonexistent ID.
      */
     @Test
     void returnsNotFoundForMissingFiscalYear()
             throws Exception {
 
-        mvc.perform(get(periodsUrl(Long.MAX_VALUE)))
+        mvc.perform(
+                authenticatedGet(
+                    periodsUrl(Long.MAX_VALUE)
+                )
+            )
 
             .andExpect(status().isNotFound());
     }
 
 
     // ========================================================
-    // TEST 4 — MISSING ACCOUNTING PERIOD
+    // RETURN 404 FOR MISSING ACCOUNTING PERIOD
     // ========================================================
 
     /**
-     * Requesting a nonexistent accounting period
-     * must return HTTP 404 rather than an empty object.
+     * An authenticated business owner must receive
+     * HTTP 404 when an accounting period is missing.
      */
     @Test
     void returnsNotFoundForMissingAccountingPeriod()
             throws Exception {
 
-        mvc.perform(get(periodUrl(Long.MAX_VALUE)))
+        mvc.perform(
+                authenticatedGet(
+                    periodUrl(Long.MAX_VALUE)
+                )
+            )
 
             .andExpect(status().isNotFound());
     }
 
 
     // ========================================================
-    // TEST 5 — CROSS-BUSINESS FISCAL YEAR ISOLATION
+    // CROSS-BUSINESS FISCAL YEAR ISOLATION
     // ========================================================
 
     /**
-     * A fiscal year belonging to Business A must
-     * not be accessible through Business B.
+     * A fiscal year belonging to Business A must not
+     * be returned through Business B's URL.
      *
-     * Business B can have the same owner, but that
-     * does not make Business A's periods its own.
+     * Both businesses belong to the same test user.
+     *
+     * The test user has OWNER membership in both.
+     *
+     * Therefore, authorization succeeds, but the
+     * service must still enforce business-scoped
+     * data isolation and return HTTP 404.
      */
     @Test
     void preventsCrossBusinessFiscalYearAccess()
             throws Exception {
+
+        // ----------------------------------------------------
+        // CREATE BUSINESS A'S FISCAL YEAR
+        // ----------------------------------------------------
 
         FiscalYear fiscalYear =
             fiscalYearService.createFiscalYear(
@@ -403,7 +681,11 @@ class AccountingPeriodControllerIntegrationTest {
                 2027
             );
 
-        // Create a second business under the same user.
+
+        // ----------------------------------------------------
+        // CREATE BUSINESS B
+        // ----------------------------------------------------
+
         Long otherBusinessId = jdbcTemplate.queryForObject(
             """
             INSERT INTO businesses (
@@ -420,6 +702,18 @@ class AccountingPeriodControllerIntegrationTest {
             "USD"
         );
 
+
+        // ----------------------------------------------------
+        // AUTHORIZE ACCESS TO BUSINESS B
+        // ----------------------------------------------------
+
+        grantOwnerMembership(otherBusinessId);
+
+
+        // ----------------------------------------------------
+        // REQUEST BUSINESS A'S YEAR THROUGH BUSINESS B
+        // ----------------------------------------------------
+
         String otherBusinessUrl =
             "/api/v1/businesses/"
             + otherBusinessId
@@ -427,24 +721,26 @@ class AccountingPeriodControllerIntegrationTest {
             + fiscalYear.getId()
             + "/periods";
 
-        mvc.perform(get(otherBusinessUrl))
+        mvc.perform(
+                authenticatedGet(otherBusinessUrl)
+            )
 
             .andExpect(status().isNotFound());
     }
 
 
     // ========================================================
-    // TEST 6 — CROSS-BUSINESS PERIOD ISOLATION
+    // CROSS-BUSINESS ACCOUNTING PERIOD ISOLATION
     // ========================================================
 
     /**
-     * Knowing another business's accounting-period ID
-     * must not allow that period to be retrieved.
+     * Knowing an accounting-period ID from another
+     * business must not provide access to that period.
      *
-     * The MyBatis query must match both:
+     * Authorization for Business B is valid.
      *
-     * - business_id
-     * - period id
+     * The service must check both business_id
+     * and period ID.
      */
     @Test
     void preventsCrossBusinessAccountingPeriodAccess()
@@ -462,6 +758,11 @@ class AccountingPeriodControllerIntegrationTest {
                 fiscalYear.getId()
             ).get(0);
 
+
+        // ----------------------------------------------------
+        // CREATE BUSINESS B
+        // ----------------------------------------------------
+
         Long otherBusinessId = jdbcTemplate.queryForObject(
             """
             INSERT INTO businesses (
@@ -478,41 +779,47 @@ class AccountingPeriodControllerIntegrationTest {
             "USD"
         );
 
+        grantOwnerMembership(otherBusinessId);
+
+
+        // ----------------------------------------------------
+        // REQUEST A FOREIGN PERIOD
+        // ----------------------------------------------------
+
         String otherBusinessUrl =
             "/api/v1/businesses/"
             + otherBusinessId
             + "/accounting-periods/"
             + firstPeriod.getId();
 
-        mvc.perform(get(otherBusinessUrl))
+        mvc.perform(
+                authenticatedGet(otherBusinessUrl)
+            )
 
             .andExpect(status().isNotFound());
     }
 
 
     // ========================================================
-    // TEST 7 — NON-CALENDAR FISCAL YEAR
+    // SUPPORT NON-CALENDAR FISCAL YEARS
     // ========================================================
 
     /**
-     * Verify that the periods API supports fiscal years
-     * that do not start in January.
-     *
-     * Example:
-     *
-     * Business start month = April.
+     * Verify accounting periods for a fiscal year
+     * starting in April rather than January.
      *
      * FY2027:
-     * April 1, 2026 - March 31, 2027.
      *
-     * Period 1 should be April 2026.
-     * Period 12 should be March 2027.
+     * April 1, 2026 through March 31, 2027.
      */
     @Test
     void listsPeriodsForAprilStartingFiscalYear()
             throws Exception {
 
-        // Configure the test business to start in April.
+        // ----------------------------------------------------
+        // CONFIGURE APRIL FISCAL-YEAR START
+        // ----------------------------------------------------
+
         jdbcTemplate.update(
             """
             UPDATE businesses
@@ -522,13 +829,27 @@ class AccountingPeriodControllerIntegrationTest {
             testBusinessId
         );
 
+
+        // ----------------------------------------------------
+        // CREATE FISCAL YEAR
+        // ----------------------------------------------------
+
         FiscalYear fiscalYear =
             fiscalYearService.createFiscalYear(
                 testBusinessId,
                 2027
             );
 
-        mvc.perform(get(periodsUrl(fiscalYear.getId())))
+
+        // ----------------------------------------------------
+        // VERIFY MONTHLY PERIODS THROUGH HTTP
+        // ----------------------------------------------------
+
+        mvc.perform(
+                authenticatedGet(
+                    periodsUrl(fiscalYear.getId())
+                )
+            )
 
             .andExpect(status().isOk())
 
@@ -567,77 +888,84 @@ class AccountingPeriodControllerIntegrationTest {
 
 
     // ========================================================
-    // TEST 8 — NONEXISTENT BUSINESS
+    // REJECT REQUESTS FOR UNAUTHORIZED BUSINESS
     // ========================================================
 
     /**
-     * Requests for a business that does not exist
-     * must return HTTP 404.
+     * A request for a business with no valid membership
+     * must be denied by Spring Security.
      *
-     * This applies to both accounting-period endpoints.
+     * This includes a business ID that does not exist.
      *
-     * Our existing BusinessNotFoundException handler
-     * produces the 404 response.
+     * Previously, bypassing security filters allowed
+     * the controller to return HTTP 404.
+     *
+     * With business membership authorization enabled,
+     * access is denied before reaching the controller.
+     *
+     * Therefore, we expect HTTP 403 for these requests.
      */
     @Test
     void rejectsRequestsForMissingBusiness()
             throws Exception {
 
-        mvc.perform(get(
-                "/api/v1/businesses/-1"
-                + "/fiscal-years/1/periods"
-            ))
+        // ----------------------------------------------------
+        // REQUEST FISCAL-YEAR PERIODS
+        // ----------------------------------------------------
 
-            .andExpect(status().isNotFound());
+        mvc.perform(
+                authenticatedGet(
+                    "/api/v1/businesses/-1"
+                    + "/fiscal-years/1/periods"
+                )
+            )
 
-        mvc.perform(get(
-                "/api/v1/businesses/-1"
-                + "/accounting-periods/1"
-            ))
+            .andExpect(status().isForbidden());
 
-            .andExpect(status().isNotFound());
+
+        // ----------------------------------------------------
+        // REQUEST INDIVIDUAL ACCOUNTING PERIOD
+        // ----------------------------------------------------
+
+        mvc.perform(
+                authenticatedGet(
+                    "/api/v1/businesses/-1"
+                    + "/accounting-periods/1"
+                )
+            )
+
+            .andExpect(status().isForbidden());
     }
 
 
     // ========================================================
-    // TEST 9 — CLOSE AND REOPEN ACCOUNTING PERIOD THROUGH API
+    // CLOSE AND REOPEN AN ACCOUNTING PERIOD THROUGH HTTP
     // ========================================================
 
     /**
-     * Verify the complete accounting-period lifecycle
-     * through the real Spring MVC REST endpoints.
+     * Verify the full accounting-period lifecycle.
      *
-     * This test covers:
+     * Steps:
      *
-     * 1. Creating a fiscal year with OPEN periods.
-     * 2. Closing an OPEN period through POST /close.
-     * 3. Receiving HTTP 200 and CLOSED status.
-     * 4. Recording the closing timestamp.
-     * 5. Reopening the period through POST /reopen.
-     * 6. Receiving HTTP 200 and OPEN status.
-     * 7. Clearing the closing timestamp.
-     * 8. Recording both actions in audit_events.
-     *
-     * The enclosing @Transactional test annotation
-     * rolls back all database changes afterward.
+     * - Create a fiscal year.
+     * - Select an OPEN period.
+     * - Close the period.
+     * - Verify CLOSED status and closedAt.
+     * - Retrieve the CLOSED period through GET.
+     * - Reopen the period.
+     * - Verify OPEN status and cleared closedAt.
+     * - Retrieve the OPEN period through GET.
+     * - Verify both audit events use the JWT user.
      */
     @Test
     void closesAndReopensAccountingPeriodThroughApi()
             throws Exception {
-
-        // ====================================================
-        // CREATE A FISCAL YEAR
-        // ====================================================
 
         FiscalYear fiscalYear =
             fiscalYearService.createFiscalYear(
                 testBusinessId,
                 2027
             );
-
-        // ====================================================
-        // SELECT AN OPEN ACCOUNTING PERIOD
-        // ====================================================
 
         AccountingPeriod period =
             accountingPeriodMapper.findByFiscalYearId(
@@ -650,27 +978,23 @@ class AccountingPeriodControllerIntegrationTest {
             period.getStatus()
         );
 
-        // ====================================================
-        // PREPARE REQUEST BODY
-        // ====================================================
+
+        // ----------------------------------------------------
+        // CLOSE ACCOUNTING PERIOD
+        // ----------------------------------------------------
 
         /**
-         * The actor is the test user created in setUp().
+         * No actorId is supplied.
          *
-         * Using a real test user ID ensures that
-         * PostgreSQL audit-event foreign keys are valid.
+         * Spring Security determines the actor from
+         * the authenticated JWT.
          */
-        String requestBody =
-            "{\"actorId\":" + testUserId + "}";
-
-        // ====================================================
-        // CLOSE THE ACCOUNTING PERIOD
-        // ====================================================
-
         mvc.perform(
-                post(periodUrl(period.getId()) + "/close")
+                authenticatedPost(
+                    periodUrl(period.getId()) + "/close"
+                )
                     .contentType(MediaType.APPLICATION_JSON)
-                    .content(requestBody)
+                    .content("{}")
             )
 
             .andExpect(status().isOk())
@@ -687,11 +1011,16 @@ class AccountingPeriodControllerIntegrationTest {
                 jsonPath("$.closedAt").isNotEmpty()
             );
 
-        // ====================================================
-        // VERIFY CLOSED STATUS THROUGH GET API
-        // ====================================================
 
-        mvc.perform(get(periodUrl(period.getId())))
+        // ----------------------------------------------------
+        // VERIFY CLOSED STATUS THROUGH GET
+        // ----------------------------------------------------
+
+        mvc.perform(
+                authenticatedGet(
+                    periodUrl(period.getId())
+                )
+            )
 
             .andExpect(status().isOk())
 
@@ -699,14 +1028,17 @@ class AccountingPeriodControllerIntegrationTest {
                 jsonPath("$.status").value("CLOSED")
             );
 
-        // ====================================================
-        // REOPEN THE ACCOUNTING PERIOD
-        // ====================================================
+
+        // ----------------------------------------------------
+        // REOPEN ACCOUNTING PERIOD
+        // ----------------------------------------------------
 
         mvc.perform(
-                post(periodUrl(period.getId()) + "/reopen")
+                authenticatedPost(
+                    periodUrl(period.getId()) + "/reopen"
+                )
                     .contentType(MediaType.APPLICATION_JSON)
-                    .content(requestBody)
+                    .content("{}")
             )
 
             .andExpect(status().isOk())
@@ -723,11 +1055,16 @@ class AccountingPeriodControllerIntegrationTest {
                 jsonPath("$.closedAt").doesNotExist()
             );
 
-        // ====================================================
-        // VERIFY OPEN STATUS THROUGH GET API
-        // ====================================================
 
-        mvc.perform(get(periodUrl(period.getId())))
+        // ----------------------------------------------------
+        // VERIFY OPEN STATUS THROUGH GET
+        // ----------------------------------------------------
+
+        mvc.perform(
+                authenticatedGet(
+                    periodUrl(period.getId())
+                )
+            )
 
             .andExpect(status().isOk())
 
@@ -735,20 +1072,16 @@ class AccountingPeriodControllerIntegrationTest {
                 jsonPath("$.status").value("OPEN")
             );
 
-        // ====================================================
-        // VERIFY ACCOUNTING PERIOD AUDIT EVENTS
-        // ====================================================
+
+        // ----------------------------------------------------
+        // VERIFY AUDIT EVENTS
+        // ----------------------------------------------------
 
         /**
-         * Both state changes must be recorded.
+         * Both status changes must be attributed
+         * to the authenticated test user.
          *
-         * We verify the audit events belong to:
-         *
-         * - The correct business
-         * - The correct accounting period
-         * - The correct actor
-         *
-         * Exactly two events are expected:
+         * These are the two expected audit actions:
          *
          * ACCOUNTING_PERIOD_CLOSED
          * ACCOUNTING_PERIOD_REOPENED
@@ -778,26 +1111,21 @@ class AccountingPeriodControllerIntegrationTest {
 
 
     // ========================================================
-    // TEST 10 — CANNOT CLOSE AN ALREADY CLOSED PERIOD
+    // CANNOT CLOSE AN ALREADY CLOSED PERIOD
     // ========================================================
 
     /**
-     * An accounting period can only be closed
-     * when its current status is OPEN.
+     * A period can only be closed when its status is OPEN.
      *
-     * Verify:
+     * First close:
+     * HTTP 200
      *
-     * 1. The first closing request succeeds.
-     * 2. A second closing request returns HTTP 409.
-     * 3. The API provides a meaningful error message.
+     * Second close:
+     * HTTP 409 Conflict
      */
     @Test
     void returnsConflictWhenClosingAlreadyClosedPeriod()
             throws Exception {
-
-        // ====================================================
-        // CREATE FISCAL YEAR AND SELECT A PERIOD
-        // ====================================================
 
         FiscalYear fiscalYear =
             fiscalYearService.createFiscalYear(
@@ -811,20 +1139,18 @@ class AccountingPeriodControllerIntegrationTest {
                 fiscalYear.getId()
             ).get(0);
 
-        String requestBody =
-            "{\"actorId\":" + testUserId + "}";
-
         String closeUrl =
             periodUrl(period.getId()) + "/close";
 
-        // ====================================================
+
+        // ----------------------------------------------------
         // FIRST CLOSE — SUCCESS
-        // ====================================================
+        // ----------------------------------------------------
 
         mvc.perform(
-                post(closeUrl)
+                authenticatedPost(closeUrl)
                     .contentType(MediaType.APPLICATION_JSON)
-                    .content(requestBody)
+                    .content("{}")
             )
 
             .andExpect(status().isOk())
@@ -833,21 +1159,15 @@ class AccountingPeriodControllerIntegrationTest {
                 jsonPath("$.status").value("CLOSED")
             );
 
-        // ====================================================
-        // SECOND CLOSE — CONFLICT
-        // ====================================================
 
-        /**
-         * The period is already CLOSED.
-         *
-         * AccountingPeriodConflictException should
-         * be converted to HTTP 409 by our
-         * GlobalExceptionHandler.
-         */
+        // ----------------------------------------------------
+        // SECOND CLOSE — CONFLICT
+        // ----------------------------------------------------
+
         mvc.perform(
-                post(closeUrl)
+                authenticatedPost(closeUrl)
                     .contentType(MediaType.APPLICATION_JSON)
-                    .content(requestBody)
+                    .content("{}")
             )
 
             .andExpect(status().isConflict())
@@ -859,25 +1179,20 @@ class AccountingPeriodControllerIntegrationTest {
 
 
     // ========================================================
-    // TEST 11 — CANNOT REOPEN AN ALREADY OPEN PERIOD
+    // CANNOT REOPEN AN ALREADY OPEN PERIOD
     // ========================================================
 
     /**
-     * Reopening an accounting period is only valid
-     * when its current status is CLOSED.
+     * Reopening is only valid when the current
+     * accounting-period status is CLOSED.
      *
-     * All newly created accounting periods begin OPEN.
+     * Newly created periods start OPEN.
      *
-     * Attempting to reopen one immediately must
-     * return HTTP 409 Conflict.
+     * Reopening one immediately must return HTTP 409.
      */
     @Test
     void returnsConflictWhenReopeningOpenPeriod()
             throws Exception {
-
-        // ====================================================
-        // CREATE FISCAL YEAR AND SELECT AN OPEN PERIOD
-        // ====================================================
 
         FiscalYear fiscalYear =
             fiscalYearService.createFiscalYear(
@@ -896,17 +1211,17 @@ class AccountingPeriodControllerIntegrationTest {
             period.getStatus()
         );
 
-        String requestBody =
-            "{\"actorId\":" + testUserId + "}";
 
-        // ====================================================
-        // REOPEN AN OPEN PERIOD — CONFLICT
-        // ====================================================
+        // ----------------------------------------------------
+        // ATTEMPT INVALID REOPEN
+        // ----------------------------------------------------
 
         mvc.perform(
-                post(periodUrl(period.getId()) + "/reopen")
+                authenticatedPost(
+                    periodUrl(period.getId()) + "/reopen"
+                )
                     .contentType(MediaType.APPLICATION_JSON)
-                    .content(requestBody)
+                    .content("{}")
             )
 
             .andExpect(status().isConflict())
@@ -918,29 +1233,34 @@ class AccountingPeriodControllerIntegrationTest {
 
 
     // ========================================================
-    // TEST 12 — INVALID ACTOR ID RETURNS HTTP 400
+    // IGNORE CLIENT-SUPPLIED ACTOR IDENTITIES
     // ========================================================
 
     /**
-     * Closing or reopening an accounting period requires
-     * a valid actor ID for audit attribution.
+     * Previously, this test expected HTTP 400 for missing
+     * or invalid client-supplied actorId values.
      *
-     * Jakarta Bean Validation must reject:
+     * That is no longer the correct security contract.
      *
-     * - Missing actor ID
-     * - Null actor ID
-     * - Zero or negative actor ID
+     * Authentication now comes from the JWT.
      *
-     * The existing GlobalExceptionHandler converts
-     * validation failures into HTTP 400 responses.
+     * Therefore:
+     *
+     * - Missing actorId is accepted.
+     * - A forged positive actorId is ignored.
+     * - Zero actorId is ignored.
+     * - Negative actorId is ignored.
+     *
+     * Audit events must always contain the authenticated
+     * JWT user's database ID.
      */
     @Test
-    void rejectsInvalidActorIdForPeriodActions()
+    void ignoresClientSuppliedActorIdForPeriodActions()
             throws Exception {
 
-        // ====================================================
-        // CREATE AN OPEN ACCOUNTING PERIOD
-        // ====================================================
+        // ----------------------------------------------------
+        // CREATE OPEN ACCOUNTING PERIOD
+        // ----------------------------------------------------
 
         FiscalYear fiscalYear =
             fiscalYearService.createFiscalYear(
@@ -960,68 +1280,142 @@ class AccountingPeriodControllerIntegrationTest {
         String reopenUrl =
             periodUrl(period.getId()) + "/reopen";
 
-        // ====================================================
-        // MISSING ACTOR ID
-        // ====================================================
+
+        // ----------------------------------------------------
+        // CLOSE WITHOUT ACTOR ID
+        // ----------------------------------------------------
 
         mvc.perform(
-                post(closeUrl)
+                authenticatedPost(closeUrl)
                     .contentType(MediaType.APPLICATION_JSON)
                     .content("{}")
             )
 
-            .andExpect(status().isBadRequest())
+            .andExpect(status().isOk())
 
             .andExpect(
-                jsonPath("$.error").value("Actor ID is required")
+                jsonPath("$.status").value("CLOSED")
             );
 
-        // ====================================================
-        // NULL ACTOR ID
-        // ====================================================
 
+        // ----------------------------------------------------
+        // REOPEN WITH FORGED ACTOR ID
+        // ----------------------------------------------------
+
+        /**
+         * The forged actor ID is not a real test user.
+         *
+         * The endpoint must ignore it and attribute
+         * the action to testUserId from the JWT.
+         */
         mvc.perform(
-                post(closeUrl)
+                authenticatedPost(reopenUrl)
                     .contentType(MediaType.APPLICATION_JSON)
-                    .content("{\"actorId\":null}")
+                    .content("{\"actorId\":999999999}")
             )
 
-            .andExpect(status().isBadRequest());
+            .andExpect(status().isOk())
 
-        // ====================================================
-        // ZERO ACTOR ID
-        // ====================================================
+            .andExpect(
+                jsonPath("$.status").value("OPEN")
+            );
+
+
+        // ----------------------------------------------------
+        // CLOSE WITH ZERO ACTOR ID
+        // ----------------------------------------------------
 
         mvc.perform(
-                post(closeUrl)
+                authenticatedPost(closeUrl)
                     .contentType(MediaType.APPLICATION_JSON)
                     .content("{\"actorId\":0}")
             )
 
-            .andExpect(status().isBadRequest())
+            .andExpect(status().isOk())
 
             .andExpect(
-                jsonPath("$.error")
-                    .value("Actor ID must be positive")
+                jsonPath("$.status").value("CLOSED")
             );
 
-        // ====================================================
-        // NEGATIVE ACTOR ID FOR REOPEN
-        // ====================================================
+
+        // ----------------------------------------------------
+        // REOPEN WITH NEGATIVE ACTOR ID
+        // ----------------------------------------------------
 
         mvc.perform(
-                post(reopenUrl)
+                authenticatedPost(reopenUrl)
                     .contentType(MediaType.APPLICATION_JSON)
                     .content("{\"actorId\":-1}")
             )
 
-            .andExpect(status().isBadRequest());
+            .andExpect(status().isOk())
 
-        // ====================================================
-        // VERIFY NO STATUS CHANGE OCCURRED
-        // ====================================================
+            .andExpect(
+                jsonPath("$.status").value("OPEN")
+            );
 
-        AccountingPeriod unchangedPeriod =
+
+        // ----------------------------------------------------
+        // VERIFY AUTHENTICATED AUDIT ATTRIBUTION
+        // ----------------------------------------------------
+
+        /**
+         * Four valid state transitions occurred.
+         *
+         * All four must be attributed to the actual
+         * authenticated user, regardless of the
+         * submitted actorId values.
+         */
+        Long authenticatedAuditCount =
+            jdbcTemplate.queryForObject(
+                """
+                SELECT COUNT(*)
+                FROM audit_events
+                WHERE business_id = ?
+                  AND entity_type = 'ACCOUNTING_PERIOD'
+                  AND entity_id = ?
+                  AND actor_id = ?
+                  AND action IN (
+                      'ACCOUNTING_PERIOD_CLOSED',
+                      'ACCOUNTING_PERIOD_REOPENED'
+                  )
+                """,
+                Long.class,
+                testBusinessId,
+                period.getId(),
+                testUserId
+            );
+
+        assertEquals(4L, authenticatedAuditCount);
+
+
+        // ----------------------------------------------------
+        // VERIFY FORGED USER IS NEVER RECORDED
+        // ----------------------------------------------------
+
+        Long forgedAuditCount =
+            jdbcTemplate.queryForObject(
+                """
+                SELECT COUNT(*)
+                FROM audit_events
+                WHERE business_id = ?
+                  AND entity_type = 'ACCOUNTING_PERIOD'
+                  AND entity_id = ?
+                  AND actor_id = 999999999
+                """,
+                Long.class,
+                testBusinessId,
+                period.getId()
+            );
+
+        assertEquals(0L, forgedAuditCount);
+
+
+        // ----------------------------------------------------
+        // VERIFY FINAL PERIOD STATUS
+        // ----------------------------------------------------
+
+        AccountingPeriod finalPeriod =
             accountingPeriodMapper.findById(
                 testBusinessId,
                 period.getId()
@@ -1029,54 +1423,59 @@ class AccountingPeriodControllerIntegrationTest {
 
         assertEquals(
             AccountingPeriod.Status.OPEN,
-            unchangedPeriod.getStatus()
+            finalPeriod.getStatus()
         );
     }
 
 
     // ========================================================
-    // TEST 13 — MISSING PERIOD RETURNS HTTP 404
+    // MISSING PERIOD RETURNS HTTP 404 FOR BOTH OPERATIONS
     // ========================================================
 
     /**
-     * Both period-action endpoints must return HTTP 404
-     * if the requested period does not exist.
+     * Close and reopen operations must return HTTP 404
+     * when a period does not exist within the
+     * authenticated user's authorized business.
      *
-     * A missing period is different from a status conflict.
+     * Missing period:
+     * HTTP 404
      *
-     * Missing period = 404
-     * Invalid status transition = 409
+     * Invalid state transition:
+     * HTTP 409
      */
     @Test
     void returnsNotFoundWhenClosingOrReopeningMissingPeriod()
             throws Exception {
 
-        String requestBody =
-            "{\"actorId\":" + testUserId + "}";
-
         String missingPeriodUrl =
             periodUrl(Long.MAX_VALUE);
 
-        // ====================================================
+
+        // ----------------------------------------------------
         // CLOSE NONEXISTENT PERIOD
-        // ====================================================
+        // ----------------------------------------------------
 
         mvc.perform(
-                post(missingPeriodUrl + "/close")
+                authenticatedPost(
+                    missingPeriodUrl + "/close"
+                )
                     .contentType(MediaType.APPLICATION_JSON)
-                    .content(requestBody)
+                    .content("{}")
             )
 
             .andExpect(status().isNotFound());
 
-        // ====================================================
+
+        // ----------------------------------------------------
         // REOPEN NONEXISTENT PERIOD
-        // ====================================================
+        // ----------------------------------------------------
 
         mvc.perform(
-                post(missingPeriodUrl + "/reopen")
+                authenticatedPost(
+                    missingPeriodUrl + "/reopen"
+                )
                     .contentType(MediaType.APPLICATION_JSON)
-                    .content(requestBody)
+                    .content("{}")
             )
 
             .andExpect(status().isNotFound());
@@ -1084,28 +1483,28 @@ class AccountingPeriodControllerIntegrationTest {
 
 
     // ========================================================
-    // TEST 14 — CROSS-BUSINESS PERIOD ACCESS RETURNS 404
+    // PREVENT CROSS-BUSINESS PERIOD STATUS CHANGES
     // ========================================================
 
     /**
-     * Business B must not be able to close or reopen
-     * an accounting period belonging to Business A.
+     * A period belonging to Business A cannot be closed
+     * or reopened through Business B's endpoint.
      *
-     * This verifies business-scoped data isolation.
+     * The user holds OWNER membership in both businesses,
+     * so authentication and RBAC checks pass.
      *
-     * NOTE:
+     * The service must independently enforce period
+     * ownership and return HTTP 404.
      *
-     * This is not yet authenticated authorization.
-     * User permissions will be enforced separately
-     * when Spring Security is introduced.
+     * The original period must remain unchanged.
      */
     @Test
     void preventsCrossBusinessPeriodStatusChanges()
             throws Exception {
 
-        // ====================================================
-        // CREATE A PERIOD FOR BUSINESS A
-        // ====================================================
+        // ----------------------------------------------------
+        // CREATE BUSINESS A'S PERIOD
+        // ----------------------------------------------------
 
         FiscalYear fiscalYear =
             fiscalYearService.createFiscalYear(
@@ -1119,16 +1518,11 @@ class AccountingPeriodControllerIntegrationTest {
                 fiscalYear.getId()
             ).get(0);
 
-        // ====================================================
-        // CREATE BUSINESS B
-        // ====================================================
 
-        /**
-         * The second business has the same test owner.
-         *
-         * A valid user does not change which business
-         * owns the accounting period.
-         */
+        // ----------------------------------------------------
+        // CREATE BUSINESS B
+        // ----------------------------------------------------
+
         Long otherBusinessId = jdbcTemplate.queryForObject(
             """
             INSERT INTO businesses (
@@ -1145,9 +1539,17 @@ class AccountingPeriodControllerIntegrationTest {
             "USD"
         );
 
-        // ====================================================
+
+        // ----------------------------------------------------
+        // AUTHORIZE BUSINESS B
+        // ----------------------------------------------------
+
+        grantOwnerMembership(otherBusinessId);
+
+
+        // ----------------------------------------------------
         // BUILD INCORRECT BUSINESS URL
-        // ====================================================
+        // ----------------------------------------------------
 
         String otherBusinessPeriodUrl =
             "/api/v1/businesses/"
@@ -1155,36 +1557,210 @@ class AccountingPeriodControllerIntegrationTest {
             + "/accounting-periods/"
             + period.getId();
 
-        String requestBody =
-            "{\"actorId\":" + testUserId + "}";
 
-        // ====================================================
-        // BUSINESS B CANNOT CLOSE BUSINESS A'S PERIOD
-        // ====================================================
+        // ----------------------------------------------------
+        // ATTEMPT CLOSE THROUGH BUSINESS B
+        // ----------------------------------------------------
 
         mvc.perform(
-                post(otherBusinessPeriodUrl + "/close")
+                authenticatedPost(
+                    otherBusinessPeriodUrl + "/close"
+                )
                     .contentType(MediaType.APPLICATION_JSON)
-                    .content(requestBody)
+                    .content("{}")
             )
 
             .andExpect(status().isNotFound());
 
-        // ====================================================
-        // BUSINESS B CANNOT REOPEN BUSINESS A'S PERIOD
-        // ====================================================
+
+        // ----------------------------------------------------
+        // ATTEMPT REOPEN THROUGH BUSINESS B
+        // ----------------------------------------------------
 
         mvc.perform(
-                post(otherBusinessPeriodUrl + "/reopen")
+                authenticatedPost(
+                    otherBusinessPeriodUrl + "/reopen"
+                )
                     .contentType(MediaType.APPLICATION_JSON)
-                    .content(requestBody)
+                    .content("{}")
             )
 
             .andExpect(status().isNotFound());
 
-        // ====================================================
-        // VERIFY BUSINESS A'S PERIOD REMAINS UNCHANGED
-        // ====================================================
+
+        // ----------------------------------------------------
+        // VERIFY BUSINESS A'S PERIOD IS UNCHANGED
+        // ----------------------------------------------------
+
+        AccountingPeriod unchangedPeriod =
+            accountingPeriodMapper.findById(
+                testBusinessId,
+                period.getId()
+            );
+
+        assertEquals(
+            AccountingPeriod.Status.OPEN,
+            unchangedPeriod.getStatus()
+        );
+    }
+
+
+    // ========================================================
+    // REJECT UNAUTHENTICATED ACCOUNTING PERIOD CHANGES
+    // ========================================================
+
+    /**
+     * An unauthenticated request cannot change
+     * an accounting period.
+     *
+     * Even if the browser submits a valid database
+     * user ID inside actorId, that does not
+     * constitute authentication.
+     *
+     * Spring Security must return HTTP 401 before
+     * executing the accounting-period operation.
+     */
+    @Test
+    void rejectsUnauthenticatedPeriodChanges()
+            throws Exception {
+
+        FiscalYear fiscalYear =
+            fiscalYearService.createFiscalYear(
+                testBusinessId,
+                2027
+            );
+
+        AccountingPeriod period =
+            accountingPeriodMapper.findByFiscalYearId(
+                testBusinessId,
+                fiscalYear.getId()
+            ).get(0);
+
+
+        // ----------------------------------------------------
+        // SEND REQUEST WITHOUT BEARER TOKEN
+        // ----------------------------------------------------
+
+        /**
+         * Use post() directly rather than authenticatedPost().
+         *
+         * The Authorization header is intentionally absent.
+         */
+        mvc.perform(
+                post(periodUrl(period.getId()) + "/close")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(
+                        "{\"actorId\":" + testUserId + "}"
+                    )
+            )
+
+            .andExpect(status().isUnauthorized());
+
+
+        // ----------------------------------------------------
+        // VERIFY STATUS REMAINS OPEN
+        // ----------------------------------------------------
+
+        AccountingPeriod unchangedPeriod =
+            accountingPeriodMapper.findById(
+                testBusinessId,
+                period.getId()
+            );
+
+        assertEquals(
+            AccountingPeriod.Status.OPEN,
+            unchangedPeriod.getStatus()
+        );
+    }
+
+
+    // ========================================================
+    // REJECT AUTHENTICATED USERS WITHOUT BUSINESS MEMBERSHIP
+    // ========================================================
+
+    /**
+     * JWT authentication does not automatically
+     * authorize access to every business.
+     *
+     * This test creates another valid user who has
+     * no membership in the target business.
+     *
+     * The new user is authenticated successfully
+     * but must receive HTTP 403.
+     *
+     * The accounting-period status must not change.
+     */
+    @Test
+    void rejectsPeriodActionForNonmember()
+            throws Exception {
+
+        // ----------------------------------------------------
+        // CREATE A PERIOD IN THE ORIGINAL BUSINESS
+        // ----------------------------------------------------
+
+        FiscalYear fiscalYear =
+            fiscalYearService.createFiscalYear(
+                testBusinessId,
+                2027
+            );
+
+        AccountingPeriod period =
+            accountingPeriodMapper.findByFiscalYearId(
+                testBusinessId,
+                fiscalYear.getId()
+            ).get(0);
+
+
+        // ----------------------------------------------------
+        // CREATE AN UNRELATED TEST USER
+        // ----------------------------------------------------
+
+        Long unrelatedUserId = jdbcTemplate.queryForObject(
+            """
+            INSERT INTO users (
+                email,
+                password_hash,
+                full_name
+            )
+            VALUES (?, ?, ?)
+            RETURNING id
+            """,
+            Long.class,
+            "period-nonmember-"
+                + UUID.randomUUID()
+                + "@ledgerbase.local",
+            "TEST_ONLY_NOT_A_REAL_PASSWORD_HASH",
+            "Nonmember Test User"
+        );
+
+
+        // ----------------------------------------------------
+        // SEND AUTHENTICATED REQUEST AS NONMEMBER
+        // ----------------------------------------------------
+
+        /**
+         * The JWT identifies a real user.
+         *
+         * However, the user has no membership in
+         * testBusinessId, so the authorization manager
+         * must deny this write operation.
+         */
+        mvc.perform(
+                post(periodUrl(period.getId()) + "/close")
+                    .header(
+                        HttpHeaders.AUTHORIZATION,
+                        bearerFor(unrelatedUserId)
+                    )
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{}")
+            )
+
+            .andExpect(status().isForbidden());
+
+
+        // ----------------------------------------------------
+        // VERIFY STATUS REMAINS UNCHANGED
+        // ----------------------------------------------------
 
         AccountingPeriod unchangedPeriod =
             accountingPeriodMapper.findById(

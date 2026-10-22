@@ -1078,7 +1078,6 @@ function App() {
 
               <FiscalYearsPage
                 businessId={businessId}
-                actorId={currentUser.userId}
               />
 
             )}
