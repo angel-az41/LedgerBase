@@ -3,18 +3,23 @@ package com.ledgerbase.backend.integration;
 import com.ledgerbase.backend.dto.AuthenticatedUser;
 import com.ledgerbase.backend.mapper.UserMapper;
 import com.ledgerbase.backend.model.User;
+import com.ledgerbase.backend.security.AuthSessionJwtValidator;
 import com.ledgerbase.backend.service.JwtTokenService;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 
+import org.springframework.security.oauth2.core.OAuth2TokenValidatorResult;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -61,6 +66,33 @@ class CurrentUserControllerIntegrationTest {
 
     @MockitoBean
     private UserMapper userMapper;
+
+    @MockitoBean
+    private AuthSessionJwtValidator sessionValidator;
+
+
+    // ========================================================
+    // CONFIGURE CONTROLLER TEST AUTHENTICATION
+    // ========================================================
+
+    /**
+     * Allow the existing controller-focused test
+     * JWTs through the session-validation layer.
+     *
+     * Other token validations remain active.
+     *
+     * This allows the controller to reach UserMapper
+     * and exercise its existing response behavior.
+     */
+    @BeforeEach
+    void allowSessionChecksForControllerTests() {
+
+        when(
+            sessionValidator.validate(any(Jwt.class))
+        ).thenReturn(
+            OAuth2TokenValidatorResult.success()
+        );
+    }
 
 
     // ========================================================
