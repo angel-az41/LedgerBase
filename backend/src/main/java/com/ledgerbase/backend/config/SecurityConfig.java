@@ -1,5 +1,7 @@
 package com.ledgerbase.backend.config;
 
+import com.ledgerbase.backend.security.BusinessAuthorizationManager;
+
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 
 import org.springframework.context.annotation.Bean;
@@ -11,6 +13,7 @@ import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
+
 import org.springframework.security.web.SecurityFilterChain;
 
 // ============================================================
@@ -18,12 +21,12 @@ import org.springframework.security.web.SecurityFilterChain;
 // ============================================================
 
 /**
- * Configures Spring Security for LedgerBase's REST APIs.
+ * Configure HTTP authentication and business authorization.
  *
- * AUTHENTICATION ARCHITECTURE:
+ * AUTHENTICATION:
  *
- * - Stateless HTTP requests.
- * - JWT Bearer access tokens.
+ * - Stateless Spring Security.
+ * - Signed JWT Bearer access tokens.
  * - PostgreSQL-backed authentication sessions.
  * - HttpOnly refresh cookies.
  *
@@ -34,32 +37,32 @@ import org.springframework.security.web.SecurityFilterChain;
  * - POST /api/v1/auth/logout
  * - GET  /api/v1/health/**
  *
- * PROTECTED ENDPOINTS:
+ * BUSINESS DIRECTORY:
  *
- * - GET /api/v1/auth/me
- * - All accounting and financial APIs.
- * - All other endpoints not explicitly made public.
+ * GET /api/v1/businesses
+ * POST /api/v1/businesses
  *
- * JWT VALIDATION:
+ * These require authentication.
  *
- * The configured JwtDecoder validates:
+ * BusinessController obtains the current user's ID
+ * from Spring Security, and BusinessService enforces
+ * membership-scoped reads and business ownership.
  *
- * - JWT cryptographic signature.
- * - Token expiration.
- * - Issuer and audience.
- * - Session identifier.
- * - Active PostgreSQL authentication session.
+ * BUSINESS-SCOPED FINANCIAL ENDPOINTS:
  *
- * AUTHORIZATION:
+ * /api/v1/businesses/{businessId}/...
  *
- * This configuration establishes the requirement
- * that API callers must be authenticated.
+ * BusinessAuthorizationManager verifies the user's
+ * current PostgreSQL membership and role.
  *
- * Business membership and role-specific permissions
- * must be enforced separately.
+ * Unauthenticated requests return HTTP 401.
  *
- * Being authenticated does not automatically mean
- * the user may access every business.
+ * Authenticated users without sufficient membership
+ * permissions receive HTTP 403.
+ *
+ * A trusted audit-actor identity and additional
+ * endpoint-specific permissions must still be
+ * enforced separately.
  */
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnWebApplication(
@@ -72,28 +75,30 @@ public class SecurityConfig {
     // ========================================================
 
     /**
-     * Register the application HTTP security rules.
+     * Configure authentication and authorization.
      *
      * @param http Spring Security HTTP configuration
-     * @return configured security filter chain
+     * @param businessAuthorizationManager membership authorization
+     * @return configured filter chain
      */
     @Bean
     public SecurityFilterChain securityFilterChain(
-        HttpSecurity http
+        HttpSecurity http,
+        BusinessAuthorizationManager businessAuthorizationManager
     ) throws Exception {
 
         http
 
             // =================================================
-            // STATELESS AUTHENTICATION
+            // STATELESS SESSION MANAGEMENT
             // =================================================
 
             /**
-             * Spring Security does not create or use
-             * servlet HTTP sessions for authentication.
+             * Do not store authenticated identities
+             * in servlet HTTP sessions.
              *
-             * Authentication-session records are instead
-             * managed by LedgerBase in PostgreSQL.
+             * LedgerBase's PostgreSQL auth_sessions
+             * table tracks refreshable login sessions.
              */
             .sessionManagement(session ->
                 session.sessionCreationPolicy(
@@ -103,15 +108,12 @@ public class SecurityConfig {
 
 
             // =================================================
-            // DISABLE UNUSED LOGIN MECHANISMS
+            // DISABLE UNUSED AUTHENTICATION MECHANISMS
             // =================================================
 
             /**
-             * LedgerBase has its own JSON-based
-             * authentication endpoints.
-             *
-             * Browser form login and HTTP Basic
-             * authentication are unnecessary.
+             * LedgerBase authenticates through its
+             * JSON-based /api/v1/auth endpoints.
              */
             .formLogin(
                 AbstractHttpConfigurer::disable
@@ -129,15 +131,14 @@ public class SecurityConfig {
             /**
              * CSRF is currently disabled globally.
              *
-             * LedgerBase's cookie-authenticated login,
-             * refresh, and logout operations explicitly
-             * validate the request Origin header.
+             * Existing cookie-authenticated login,
+             * refresh, and logout operations validate
+             * trusted Origin headers.
              *
-             * Financial API requests use Bearer JWTs
-             * rather than cookie authentication.
+             * Financial API requests use Bearer JWTs.
              *
-             * The complete CSRF strategy must be
-             * reviewed before production deployment.
+             * Review the full CSRF and CORS strategy
+             * before production deployment.
              */
             .csrf(
                 AbstractHttpConfigurer::disable
@@ -148,35 +149,19 @@ public class SecurityConfig {
             // HTTP AUTHORIZATION RULES
             // =================================================
 
-            /**
-             * Spring Security evaluates these rules
-             * in the order in which they are declared.
-             *
-             * More specific public endpoints must
-             * appear before the authenticated fallback.
-             */
             .authorizeHttpRequests(authorize -> authorize
 
                 // ---------------------------------------------
-                // PUBLIC AUTHENTICATION OPERATIONS
+                // PUBLIC AUTHENTICATION ENDPOINTS
                 // ---------------------------------------------
 
                 /**
-                 * Login, refresh, and logout are
-                 * deliberately accessible without
+                 * These endpoints do not require
                  * an existing access JWT.
                  *
-                 * Login uses credentials.
-                 *
-                 * Refresh and logout use the
-                 * HttpOnly refresh cookie.
-                 *
-                 * All three operations validate
-                 * trusted request origins in the
-                 * authentication controller.
-                 *
-                 * Restrict public access to POST
-                 * rather than every HTTP method.
+                 * Their authentication and cookie
+                 * security checks remain in the
+                 * existing authentication services.
                  */
                 .requestMatchers(
                     HttpMethod.POST,
@@ -187,23 +172,12 @@ public class SecurityConfig {
 
 
                 // ---------------------------------------------
-                // PUBLIC DATABASE HEALTH ENDPOINTS
+                // PUBLIC DATABASE HEALTH CHECKS
                 // ---------------------------------------------
 
                 /**
-                 * Health checks must remain accessible
-                 * before a user has authenticated.
-                 *
-                 * Existing development endpoint:
-                 *
-                 * GET /api/v1/health/database
-                 *
-                 * Only GET requests are allowed through
-                 * this public authentication exception.
-                 *
-                 * Health responses should not expose
-                 * database credentials or sensitive
-                 * infrastructure configuration.
+                 * Allow existing read-only health
+                 * checks without authentication.
                  */
                 .requestMatchers(
                     HttpMethod.GET,
@@ -213,13 +187,12 @@ public class SecurityConfig {
 
 
                 // ---------------------------------------------
-                // AUTHENTICATED CURRENT USER
+                // AUTHENTICATED USER IDENTITY
                 // ---------------------------------------------
 
                 /**
-                 * Spring Security must verify a valid
-                 * Bearer JWT before allowing access
-                 * to the authenticated user's identity.
+                 * A signed, active JWT is required
+                 * to retrieve the current user.
                  */
                 .requestMatchers(
                     "/api/v1/auth/me"
@@ -227,52 +200,103 @@ public class SecurityConfig {
 
 
                 // ---------------------------------------------
-                // PROTECT ALL REMAINING API ENDPOINTS
+                // INDIVIDUAL BUSINESS METADATA
                 // ---------------------------------------------
 
                 /**
-                 * Every other API request requires
-                 * an authenticated principal.
+                 * BusinessController already performs
+                 * its own membership-scoped lookup.
                  *
-                 * This covers:
+                 * Preserve its existing behavior:
                  *
-                 * - Businesses.
+                 * - Accessible business: HTTP 200.
+                 * - Missing or inaccessible: HTTP 404.
+                 *
+                 * Only the GET endpoint receives this
+                 * specific authentication rule.
+                 *
+                 * Nested accounting APIs use the
+                 * business authorization manager below.
+                 */
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/api/v1/businesses/{businessId}"
+                ).authenticated()
+
+
+                // ---------------------------------------------
+                // BUSINESS-SCOPED FINANCIAL AUTHORIZATION
+                // ---------------------------------------------
+
+                /**
+                 * Every nested business API request
+                 * must pass the business-level RBAC check.
+                 *
+                 * This covers existing routes for:
+                 *
                  * - Chart of Accounts.
+                 * - Account balances.
                  * - Account import/export.
-                 * - Transactions.
+                 * - Financial transactions.
+                 * - Transaction posting.
                  * - Fiscal years.
                  * - Accounting periods.
                  * - Trial Balance.
                  * - Income Statement.
                  * - Balance Sheet.
                  *
-                 * It also protects newly added APIs
-                 * by default.
+                 * BusinessAuthorizationManager receives:
                  *
-                 * Authentication establishes identity.
+                 * - The authenticated JWT principal.
+                 * - businessId from the URL.
+                 * - The HTTP method.
                  *
-                 * Business-scoped authorization is
-                 * the next security implementation.
+                 * It checks the user's current
+                 * business_memberships record.
+                 *
+                 * IMPORTANT:
+                 *
+                 * This is not merely an authentication
+                 * check. It enforces business membership
+                 * and read/write role permissions.
+                 */
+                .requestMatchers(
+                    "/api/v1/businesses/{businessId}/**"
+                ).access(
+                    businessAuthorizationManager
+                )
+
+
+                // ---------------------------------------------
+                // AUTHENTICATED DEFAULT
+                // ---------------------------------------------
+
+                /**
+                 * Preserve authentication for all
+                 * other endpoints.
+                 *
+                 * Future financial routes outside the
+                 * current business URL structure must
+                 * receive explicit authorization rules.
                  */
                 .anyRequest().authenticated()
             )
 
 
             // =================================================
-            // JWT BEARER RESOURCE SERVER
+            // JWT RESOURCE SERVER
             // =================================================
 
             /**
-             * Configure Spring Security to read:
-             *
-             * Authorization: Bearer <JWT>
+             * Spring Security extracts Bearer tokens
+             * from Authorization headers.
              *
              * The application's JwtDecoder validates
-             * cryptographic claims and checks the
-             * PostgreSQL authentication-session state.
+             * signatures, claims, expiration, and
+             * PostgreSQL-backed session status.
              *
-             * An invalid, expired, or revoked session
-             * must not authenticate successfully.
+             * BusinessAuthorizationManager then applies
+             * the business-specific authorization policy.
              */
             .oauth2ResourceServer(oauth2 ->
                 oauth2.jwt(
