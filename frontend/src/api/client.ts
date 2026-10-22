@@ -3,53 +3,354 @@
 // ============================================================
 
 /**
- * This module provides reusable functions for sending
- * HTTP requests from React to our Spring Boot backend.
- *
- * React components should not repeatedly implement
- * fetch(), JSON parsing, and HTTP error handling.
- *
- * Instead, each accounting feature uses these helpers.
- *
- * During local development, Vite forwards requests
- * beginning with /api to http://localhost:8080.
- */
+* Provides reusable HTTP functions for communicating
+* with the LedgerBase Spring Boot backend.
+*
+* PURPOSE:
+*
+* React components should not repeatedly implement
+* fetch(), HTTP headers, JSON parsing, and error handling.
+*
+* Instead, feature-specific API modules use these helpers.
+*
+* SUPPORTED OPERATIONS:
+*
+* - GET requests returning JSON.
+* - POST requests sending and receiving JSON.
+* - PATCH requests returning no content.
+* - Multipart file uploads.
+* - CSV and Excel file downloads.
+*
+* AUTHENTICATION:
+*
+* After login, AuthProvider registers the verified
+* JWT access token with this shared client.
+*
+* The client automatically attaches:
+*
+* Authorization: Bearer <access-token>
+*
+* to eligible LedgerBase backend requests.
+*
+* SECURITY:
+*
+* - Access tokens remain in JavaScript memory.
+* - No tokens are written to localStorage.
+* - No tokens are written to sessionStorage.
+* - Bearer tokens are not attached to external URLs.
+* - Login and refresh endpoints do not receive
+*   automatically attached Bearer tokens.
+*
+* Refresh tokens are managed separately through
+* the backend's HttpOnly authentication cookies.
+*
+* DEVELOPMENT:
+*
+* Vite proxies /api requests to localhost:8080.
+*/
+
+
+// ============================================================
+// IN-MEMORY ACCESS TOKEN
+// ============================================================
+
+/**
+* Holds the current access JWT in module memory.
+*
+* This variable is intentionally private.
+*
+* React AuthProvider manages it through exported
+* functions rather than accessing it directly.
+*
+* A full browser reload resets this value to null.
+*/
+let accessToken: string | null = null
+
+
+// ============================================================
+// REGISTER OR CLEAR ACCESS TOKEN
+// ============================================================
+
+/**
+* Register the authenticated user's access token.
+*
+* Called by AuthProvider after login succeeds
+* and the user's identity has been verified.
+*
+* Passing null clears the current token.
+*
+* The access token is never persisted to browser
+* storage or written to a cookie.
+*
+* @param token verified access JWT or null
+*/
+export function setApiAccessToken(
+  token: string | null,
+): void {
+
+  // ----------------------------------------------------------
+  // CLEAR EXISTING TOKEN
+  // ----------------------------------------------------------
+
+  if (
+    token === null ||
+    token.trim().length === 0
+  ) {
+
+    accessToken = null
+    return
+  }
+
+
+  // ----------------------------------------------------------
+  // STORE TOKEN IN JAVASCRIPT MEMORY
+  // ----------------------------------------------------------
+
+  accessToken = token
+}
+
+
+// ============================================================
+// CLEAR ACCESS TOKEN ONLY IF STILL CURRENT
+// ============================================================
+
+/**
+* Clear the token only when it matches the
+* currently registered access token.
+*
+* PURPOSE:
+*
+* An older authentication session may expire
+* after the user has signed in again.
+*
+* Its expiration handler must not remove the
+* newer session's access token.
+*
+* @param expectedToken token belonging to old session
+*/
+export function clearApiAccessTokenIfCurrent(
+  expectedToken: string,
+): void {
+
+  // ----------------------------------------------------------
+  // PREVENT STALE SESSION CLEANUP
+  // ----------------------------------------------------------
+
+  if (accessToken === expectedToken) {
+    accessToken = null
+  }
+}
+
+
+// ============================================================
+// AUTHENTICATION ENDPOINT EXCLUSIONS
+// ============================================================
+
+/**
+* These authentication routes must not receive
+* an automatically attached access JWT.
+*
+* LOGIN:
+*
+* Uses email and password credentials.
+*
+* REFRESH:
+*
+* Uses the HttpOnly refresh cookie to obtain
+* a replacement access JWT.
+*
+* LOGOUT:
+*
+* Uses the refresh cookie to revoke the
+* PostgreSQL authentication session.
+*
+* The /auth/me endpoint is deliberately not
+* excluded because it requires a Bearer JWT.
+*
+* Its API helper can also supply a specific
+* Authorization header explicitly.
+*/
+const COOKIE_AUTH_ENDPOINTS = new Set<string>([
+  '/api/v1/auth/login',
+  '/api/v1/auth/refresh',
+  '/api/v1/auth/logout',
+])
+
+
+// ============================================================
+// BUILD SHARED HTTP REQUEST HEADERS
+// ============================================================
+
+/**
+* Construct headers for backend requests.
+*
+* AUTHENTICATION RULES:
+*
+* - Attach a Bearer token when one is available.
+* - Only attach it to relative /api/ paths.
+* - Exclude cookie-based authentication endpoints.
+* - Preserve explicitly provided Authorization headers.
+*
+* SECURITY:
+*
+* Requiring paths to begin with /api/ prevents
+* automatic credential forwarding to external
+* HTTP URLs.
+*
+* The API helpers should use relative LedgerBase
+* backend paths rather than arbitrary URLs.
+*
+* @param path requested API path
+* @param requestHeaders optional custom headers
+* @returns complete request headers
+*/
+function buildRequestHeaders(
+  path: string,
+  requestHeaders: Record<string, string> = {},
+): Record<string, string> {
+
+  // ----------------------------------------------------------
+  // ADD STANDARD HTTP HEADERS
+  // ----------------------------------------------------------
+
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    ...requestHeaders,
+  }
+
+
+  // ----------------------------------------------------------
+  // CHECK FOR EXPLICIT AUTHORIZATION
+  // ----------------------------------------------------------
+
+  /**
+  * HTTP header names are case-insensitive.
+  *
+  * Detect Authorization, authorization, and
+  * other capitalization combinations.
+  *
+  * This preserves the existing getCurrentUser()
+  * behavior, which supplies a newly issued JWT
+  * before AuthProvider registers it globally.
+  */
+  const hasExplicitAuthorization =
+    Object.keys(requestHeaders).some(
+      (name) =>
+        name.toLowerCase() === 'authorization',
+    )
+
+
+  // ----------------------------------------------------------
+  // REQUIRE A RELATIVE LEDGERBASE API PATH
+  // ----------------------------------------------------------
+
+  const isBackendApiPath =
+    path.startsWith('/api/')
+
+
+  // ----------------------------------------------------------
+  // IDENTIFY COOKIE-AUTHENTICATION ENDPOINTS
+  // ----------------------------------------------------------
+
+  /**
+  * Remove a potential query string before
+  * matching endpoint paths.
+  *
+  * For example:
+  *
+  * /api/v1/auth/login?source=web
+  *
+  * should still be identified as login.
+  */
+  const endpointPath =
+    path.split('?')[0]
+
+  const isCookieAuthEndpoint =
+    COOKIE_AUTH_ENDPOINTS.has(endpointPath)
+
+
+  // ----------------------------------------------------------
+  // ATTACH VERIFIED ACCESS TOKEN
+  // ----------------------------------------------------------
+
+  if (
+    accessToken !== null &&
+    isBackendApiPath &&
+    !isCookieAuthEndpoint &&
+    !hasExplicitAuthorization
+  ) {
+
+    headers.Authorization =
+      `Bearer ${accessToken}`
+  }
+
+
+  // ----------------------------------------------------------
+  // RETURN COMPLETE HEADERS
+  // ----------------------------------------------------------
+
+  return headers
+}
+
 
 // ============================================================
 // HTTP ERROR HANDLING
 // ============================================================
 
 /**
- * Verify that an HTTP request succeeded.
- *
- * response.ok is true for HTTP status codes 200–299.
- *
- * If a request fails, try to read an error message
- * returned by the Spring Boot backend.
- */
+* Validate that an HTTP response was successful.
+*
+* response.ok is true for HTTP status codes 200–299.
+*
+* If the backend returns an unsuccessful response,
+* attempt to extract a meaningful JSON error message.
+*
+* Otherwise, use a generic HTTP status message.
+*
+* AUTOMATIC TOKEN REFRESH:
+*
+* This helper currently does not retry requests
+* or obtain replacement access tokens.
+*
+* Refresh-token rotation will be integrated later.
+*
+* @param response raw fetch response
+*/
 async function ensureSuccessfulResponse(
   response: Response,
 ): Promise<void> {
 
-  // A successful response requires no further checks.
+  // ----------------------------------------------------------
+  // ACCEPT SUCCESSFUL RESPONSES
+  // ----------------------------------------------------------
+
   if (response.ok) {
     return
   }
 
-  // Fall back to the HTTP status when no message exists.
-  let errorMessage = `API request failed (${response.status})`
+
+  // ----------------------------------------------------------
+  // PREPARE DEFAULT ERROR MESSAGE
+  // ----------------------------------------------------------
+
+  let errorMessage =
+    `API request failed (${response.status})`
+
+
+  // ----------------------------------------------------------
+  // READ OPTIONAL BACKEND ERROR RESPONSE
+  // ----------------------------------------------------------
 
   try {
 
-    // Read the backend response as JSON.
-    const errorBody: unknown = await response.json()
+    const errorBody: unknown =
+      await response.json()
 
-    /**
-     * Spring Boot may return an error object.
-     *
-     * We only use its "error" property when it
-     * contains a meaningful string.
-     */
+
+    // --------------------------------------------------------
+    // CHECK FOR A MEANINGFUL ERROR PROPERTY
+    // --------------------------------------------------------
+
     if (
       typeof errorBody === 'object' &&
       errorBody !== null &&
@@ -57,307 +358,411 @@ async function ensureSuccessfulResponse(
       typeof errorBody.error === 'string' &&
       errorBody.error.trim().length > 0
     ) {
-      errorMessage = errorBody.error
+
+      errorMessage =
+        errorBody.error
     }
 
   } catch {
 
-    // The response may be empty or may not contain JSON.
-    // Keep the default error message in that case.
+    /**
+    * Some backend responses contain no JSON body.
+    *
+    * Keep the default message instead of masking
+    * the original HTTP failure with a parsing error.
+    */
+
   }
+
+
+  // ----------------------------------------------------------
+  // PROPAGATE THE REQUEST ERROR
+  // ----------------------------------------------------------
 
   throw new Error(errorMessage)
 }
+
 
 // ============================================================
 // JSON RESPONSE HANDLING
 // ============================================================
 
 /**
- * Convert a successful HTTP response into typed data.
- *
- * T represents the data structure we expect.
- *
- * Examples:
- *
- * T = Account[]
- * T = Account
- * T = LedgerTransaction[]
- *
- * TypeScript helps check how the returned data is used.
- *
- * Note: A TypeScript type does not validate JSON at
- * runtime. The backend remains responsible for
- * returning data that matches the API contract.
- */
+* Parse a successful HTTP response as JSON.
+*
+* T is the expected response type defined by
+* the feature-specific API module.
+*
+* Examples:
+*
+* - Account[]
+* - Account
+* - LedgerTransaction[]
+*
+* IMPORTANT:
+*
+* TypeScript checks the returned type at compile
+* time but does not validate JSON at runtime.
+*
+* The backend API contract must remain consistent.
+*/
 async function parseJsonResponse<T>(
   response: Response,
 ): Promise<T> {
 
+  // ----------------------------------------------------------
+  // CHECK HTTP STATUS
+  // ----------------------------------------------------------
+
   await ensureSuccessfulResponse(response)
+
+
+  // ----------------------------------------------------------
+  // PARSE JSON BODY
+  // ----------------------------------------------------------
 
   return (await response.json()) as T
 }
+
 
 // ============================================================
 // HTTP GET
 // ============================================================
 
 /**
- * Retrieve typed JSON data from Spring Boot.
- *
- * Optional request headers allow authenticated
- * endpoints to provide an Authorization header.
- *
- * Existing accounting API calls remain compatible
- * because the second argument is optional.
- */
+* Retrieve typed JSON data from Spring Boot.
+*
+* Optional custom headers support endpoints that
+* need to supply Authorization explicitly.
+*
+* Existing accounting API calls remain compatible.
+*
+* @param path backend API path
+* @param requestHeaders optional HTTP headers
+* @returns parsed JSON response
+*/
 export async function getJson<T>(
   path: string,
   requestHeaders: Record<string, string> = {},
 ): Promise<T> {
 
+  // ----------------------------------------------------------
+  // SEND GET REQUEST
+  // ----------------------------------------------------------
+
   const response = await fetch(path, {
     method: 'GET',
 
-    headers: {
-      Accept: 'application/json',
-      ...requestHeaders,
-    },
+    headers: buildRequestHeaders(
+      path,
+      requestHeaders,
+    ),
   })
+
+
+  // ----------------------------------------------------------
+  // VALIDATE AND PARSE RESPONSE
+  // ----------------------------------------------------------
 
   return parseJsonResponse<T>(response)
 }
 
+
 // ============================================================
-// HTTP POST
+// HTTP POST — JSON
 // ============================================================
 
 /**
- * Send JSON data to the backend.
- *
- * POST will be used to create:
- * - General ledger accounts
- * - Financial transactions
- * - Draft journal entries
- *
- * TResponse describes the returned data.
- * TRequest describes the submitted data.
- */
+* Send JSON data to Spring Boot.
+*
+* Used for:
+*
+* - User login.
+* - Creating financial accounts.
+* - Creating transactions and journal entries.
+* - Other JSON-based accounting operations.
+*
+* The shared request-header builder attaches
+* the Bearer token when required.
+*
+* @param path backend API path
+* @param body JSON-serializable request data
+* @returns parsed JSON response
+*/
 export async function postJson<TResponse, TRequest>(
   path: string,
   body: TRequest,
 ): Promise<TResponse> {
 
+  // ----------------------------------------------------------
+  // SEND JSON REQUEST
+  // ----------------------------------------------------------
+
   const response = await fetch(path, {
     method: 'POST',
+
     headers: {
-      Accept: 'application/json',
+      ...buildRequestHeaders(path),
       'Content-Type': 'application/json',
     },
+
     body: JSON.stringify(body),
   })
+
+
+  // ----------------------------------------------------------
+  // VALIDATE AND PARSE RESPONSE
+  // ----------------------------------------------------------
 
   return parseJsonResponse<TResponse>(response)
 }
 
+
 // ============================================================
-// HTTP PATCH
+// HTTP PATCH — NO CONTENT
 // ============================================================
 
 /**
- * Send an update request to Spring Boot.
- *
- * The request body is optional.
- *
- * Current examples:
- *
- * Rename account:
- * PATCH /api/v1/businesses/1/accounts/6
- * Body: { "name": "Operating Checking Account" }
- *
- * Deactivate account:
- * PATCH /api/v1/businesses/1/accounts/6/deactivate
- *
- * Both endpoints return HTTP 204 No Content.
- *
- * Therefore, we must not attempt to parse their
- * successful responses as JSON.
- */
+* Send a partial update to Spring Boot.
+*
+* Used for operations such as:
+*
+* - Renaming an account.
+* - Deactivating an account.
+*
+* The request body is optional.
+*
+* Successful updates may return HTTP 204 No Content.
+*
+* Therefore, no JSON parsing is attempted.
+*
+* @param path backend API path
+* @param body optional JSON object
+*/
 export async function patchNoContent(
   path: string,
   body?: object,
 ): Promise<void> {
 
-  const headers: Record<string, string> = {
-    Accept: 'application/json',
-  }
+  // ----------------------------------------------------------
+  // BUILD AUTHENTICATED HEADERS
+  // ----------------------------------------------------------
 
-  // Only declare JSON content when a body is present.
+  const headers =
+    buildRequestHeaders(path)
+
+
+  // ----------------------------------------------------------
+  // ADD CONTENT TYPE ONLY WHEN NECESSARY
+  // ----------------------------------------------------------
+
   if (body !== undefined) {
     headers['Content-Type'] = 'application/json'
   }
 
+
+  // ----------------------------------------------------------
+  // SEND PATCH REQUEST
+  // ----------------------------------------------------------
+
   const response = await fetch(path, {
     method: 'PATCH',
+
     headers,
+
     body:
       body === undefined
         ? undefined
         : JSON.stringify(body),
   })
 
-  // HTTP 204 is a successful response without JSON.
+
+  // ----------------------------------------------------------
+  // VALIDATE RESPONSE WITHOUT PARSING JSON
+  // ----------------------------------------------------------
+
   await ensureSuccessfulResponse(response)
 }
 
- // ============================================================
- // HTTP MULTIPART POST
- // ============================================================
 
- /**
-  * Upload multipart/form-data to the Spring Boot backend.
+// ============================================================
+// HTTP MULTIPART POST
+// ============================================================
+
+/**
+* Upload FormData to Spring Boot.
+*
+* Used for:
+*
+* - CSV account import preview.
+* - XLSX account import preview.
+* - Confirmed account imports.
+*
+* AUTHENTICATION:
+*
+* The shared Bearer token is included when present.
+*
+* IMPORTANT:
+*
+* Do not manually set Content-Type for FormData.
+*
+* The browser must generate the appropriate
+* multipart/form-data boundary.
+*
+* @param path backend upload endpoint
+* @param formData file upload data
+* @returns parsed JSON response
+*/
+export async function postMultipart<TResponse>(
+  path: string,
+  formData: FormData,
+): Promise<TResponse> {
+
+  // ----------------------------------------------------------
+  // SEND MULTIPART REQUEST
+  // ----------------------------------------------------------
+
+  const response = await fetch(path, {
+    method: 'POST',
+
+    headers: buildRequestHeaders(path),
+
+    body: formData,
+  })
+
+
+  // ----------------------------------------------------------
+  // VALIDATE AND PARSE RESPONSE
+  // ----------------------------------------------------------
+
+  return parseJsonResponse<TResponse>(response)
+}
+
+
+// ============================================================
+// HTTP FILE DOWNLOAD
+// ============================================================
+
+/**
+* Download a binary file from Spring Boot.
+*
+* Used for:
+*
+* - CSV account exports.
+* - XLSX Excel account exports.
+*
+* The request automatically includes the active
+* Bearer token when authentication is available.
+*
+* Unlike getJson(), this function expects a Blob
+* rather than a JSON response.
+*
+* @param path backend export endpoint
+* @param fallbackFilename filename used when no
+*        server-provided filename is available
+*/
+export async function downloadFile(
+  path: string,
+  fallbackFilename: string,
+): Promise<void> {
+
+  // ----------------------------------------------------------
+  // REQUEST FILE WITH AUTHENTICATION
+  // ----------------------------------------------------------
+
+  const response = await fetch(path, {
+    method: 'GET',
+
+    headers: buildRequestHeaders(path),
+  })
+
+
+  // ----------------------------------------------------------
+  // CHECK HTTP RESPONSE
+  // ----------------------------------------------------------
+
+  await ensureSuccessfulResponse(response)
+
+
+  // ----------------------------------------------------------
+  // READ BINARY CONTENT
+  // ----------------------------------------------------------
+
+  const blob = await response.blob()
+
+
+  // ----------------------------------------------------------
+  // GET CONTENT-DISPOSITION HEADER
+  // ----------------------------------------------------------
+
+  /**
+  * Prefer a filename supplied by the backend.
   *
-  * Unlike postJson(), this helper sends FormData.
-  *
-  * Used for:
-  *
-  * - CSV account import preview
-  * - XLSX account import preview
-  * - Confirmed account imports
-  *
-  * IMPORTANT:
-  *
-  * Do not manually set the Content-Type header.
-  *
-  * The browser automatically adds the correct
-  * multipart/form-data boundary.
-  *
-  * Manually setting Content-Type would prevent
-  * Spring Boot from correctly parsing the upload.
-  *
-  * Reuse the existing shared JSON response and
-  * HTTP error handling functions.
+  * Otherwise, retain the caller's fallback name.
   */
- export async function postMultipart<TResponse>(
-   path: string,
-   formData: FormData,
- ): Promise<TResponse> {
+  const disposition =
+    response.headers.get('Content-Disposition')
 
-   // ==========================================================
-   // SEND MULTIPART REQUEST
-   // ==========================================================
 
-   const response = await fetch(path, {
+  // ----------------------------------------------------------
+  // EXTRACT OPTIONAL SERVER FILENAME
+  // ----------------------------------------------------------
 
-     method: 'POST',
+  const filenameMatch = disposition?.match(
+    /filename="?([^";]+)"?/i,
+  )
 
-     headers: {
-       Accept: 'application/json',
-     },
 
-     body: formData,
+  // ----------------------------------------------------------
+  // NORMALIZE FILENAME
+  // ----------------------------------------------------------
 
-   })
-
-   // ==========================================================
-   // VALIDATE RESPONSE AND PARSE JSON
-   // ==========================================================
-
-   return parseJsonResponse<TResponse>(response)
- }
-
- // ============================================================
- // HTTP FILE DOWNLOAD
- // ============================================================
-
- /**
-  * Download a binary file from Spring Boot.
-  *
-  * Supports:
-  * - CSV files
-  * - XLSX Excel spreadsheets
-  *
-  * Unlike getJson(), this function expects a Blob
-  * rather than a JSON response.
-  *
-  * We reuse our existing HTTP error handler to
-  * handle unsuccessful backend requests.
+  /**
+  * Remove directory separators from server
+  * filenames to keep only the final component.
   */
- export async function downloadFile(
-   path: string,
-   fallbackFilename: string,
- ): Promise<void> {
+  const filename = (
+    filenameMatch?.[1] ?? fallbackFilename
+  ).split(/[\\/]/).pop() || fallbackFilename
 
-   // ==========================================================
-   // STEP 1 — REQUEST FILE FROM BACKEND
-   // ==========================================================
 
-   const response = await fetch(path, {
-     method: 'GET',
-   })
+  // ----------------------------------------------------------
+  // CREATE TEMPORARY DOWNLOAD URL
+  // ----------------------------------------------------------
 
-   // ==========================================================
-   // STEP 2 — CHECK HTTP RESPONSE
-   // ==========================================================
+  const objectUrl =
+    URL.createObjectURL(blob)
 
-   await ensureSuccessfulResponse(response)
 
-   // ==========================================================
-   // STEP 3 — READ BINARY RESPONSE
-   // ==========================================================
+  // ----------------------------------------------------------
+  // CREATE DOWNLOAD LINK
+  // ----------------------------------------------------------
 
-   const blob = await response.blob()
+  const link =
+    document.createElement('a')
 
-   // ==========================================================
-   // STEP 4 — RESOLVE DOWNLOAD FILENAME
-   // ==========================================================
+  link.href = objectUrl
 
-   /**
-    * Prefer the filename supplied by Spring Boot
-    * through the Content-Disposition header.
-    *
-    * Use a predictable fallback when no filename
-    * is provided.
-    */
-   const disposition = response.headers.get(
-     'Content-Disposition',
-   )
+  link.download = filename
 
-   const filenameMatch = disposition?.match(
-     /filename="?([^";]+)"?/i,
-   )
 
-   const filename = (
-     filenameMatch?.[1] ?? fallbackFilename
-   ).split(/[\\/]/).pop() || fallbackFilename
+  // ----------------------------------------------------------
+  // TRIGGER DOWNLOAD AND CLEAN UP
+  // ----------------------------------------------------------
 
-   // ==========================================================
-   // STEP 5 — CREATE TEMPORARY DOWNLOAD URL
-   // ==========================================================
+  try {
 
-   const objectUrl = URL.createObjectURL(blob)
+    document.body.appendChild(link)
 
-   const link = document.createElement('a')
+    link.click()
 
-   link.href = objectUrl
-   link.download = filename
+  } finally {
 
-   // ==========================================================
-   // STEP 6 — START BROWSER DOWNLOAD
-   // ==========================================================
+    // Remove the temporary element.
+    link.remove()
 
-   try {
+    // Release the browser's temporary object URL.
+    URL.revokeObjectURL(objectUrl)
 
-     document.body.appendChild(link)
-
-     link.click()
-
-   } finally {
-
-     // Remove temporary DOM element and file URL.
-     link.remove()
-     URL.revokeObjectURL(objectUrl)
-
-   }
- }
+  }
+}
