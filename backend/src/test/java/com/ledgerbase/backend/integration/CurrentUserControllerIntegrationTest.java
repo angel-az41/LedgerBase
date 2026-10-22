@@ -15,9 +15,14 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 
 import org.springframework.security.oauth2.core.OAuth2TokenValidatorResult;
 import org.springframework.security.oauth2.jwt.Jwt;
+
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
@@ -39,15 +44,30 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  *
  * - MockMvc
  * - Spring Security Bearer authentication
- * - Real JWT signing and verification
+ * - Real JWT signing and signature verification
  * - CurrentUserController
  * - Mocked UserMapper
+ * - Mocked PostgreSQL session validator
  *
- * The database mapper is mocked so that no real
- * user or accounting records are modified.
+ * TEST SCOPE:
  *
- * The Spring Boot test profile provides a
- * separate JWT signing key.
+ * These tests verify:
+ *
+ * - Missing-token rejection.
+ * - Successful authenticated user lookup.
+ * - Malformed-token rejection.
+ * - Handling of users missing from PostgreSQL.
+ *
+ * Session-aware JWTs contain the sub and sid claims.
+ *
+ * The session validator is mocked because these tests
+ * focus on controller behavior rather than PostgreSQL
+ * session validity.
+ *
+ * Separate database integration tests verify real
+ * session ownership, revocation, and expiration.
+ *
+ * No real user or accounting records are modified.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -64,9 +84,32 @@ class CurrentUserControllerIntegrationTest {
     @Autowired
     private JwtTokenService jwtTokenService;
 
+
+    // ========================================================
+    // MOCKED DATABASE DEPENDENCIES
+    // ========================================================
+
+    /**
+     * Replace user database access so each test
+     * controls whether the requested user exists.
+     */
     @MockitoBean
     private UserMapper userMapper;
 
+
+    // ========================================================
+    // ISOLATE HTTP TESTS FROM SESSION STORAGE
+    // ========================================================
+
+    /**
+     * Replace the session validator in this test
+     * application context only.
+     *
+     * The application still verifies JWT signatures,
+     * issuer, audience, and expiration.
+     *
+     * Production uses the real PostgreSQL validator.
+     */
     @MockitoBean
     private AuthSessionJwtValidator sessionValidator;
 
@@ -76,13 +119,11 @@ class CurrentUserControllerIntegrationTest {
     // ========================================================
 
     /**
-     * Allow the existing controller-focused test
-     * JWTs through the session-validation layer.
+     * Allow signed test JWTs to pass the database
+     * session check.
      *
-     * Other token validations remain active.
-     *
-     * This allows the controller to reach UserMapper
-     * and exercise its existing response behavior.
+     * This lets the tests reach CurrentUserController
+     * and verify its user lookup behavior.
      */
     @BeforeEach
     void allowSessionChecksForControllerTests() {
@@ -96,7 +137,63 @@ class CurrentUserControllerIntegrationTest {
 
 
     // ========================================================
-    // TEST 1 — MISSING ACCESS TOKEN
+    // GENERATE SESSION-AWARE TEST ACCESS TOKEN
+    // ========================================================
+
+    /**
+     * Generate an access JWT using the application's
+     * current session-aware authentication method.
+     *
+     * Each test token receives:
+     *
+     * - The authenticated user ID as sub.
+     * - A randomly generated session UUID as sid.
+     * - An absolute session expiration in the future.
+     *
+     * The session is not inserted into PostgreSQL
+     * because the session validator is mocked.
+     *
+     * This helper must not be used in tests that
+     * verify real database session enforcement.
+     *
+     * @param user authenticated test identity
+     * @return signed session-aware JWT
+     */
+    private String issueSessionAwareToken(
+        AuthenticatedUser user
+    ) {
+
+        // ----------------------------------------------------
+        // GENERATE TEST SESSION IDENTIFIER
+        // ----------------------------------------------------
+
+        UUID sessionId =
+            UUID.randomUUID();
+
+
+        // ----------------------------------------------------
+        // SET TEST SESSION EXPIRATION
+        // ----------------------------------------------------
+
+        OffsetDateTime absoluteExpiresAt =
+            OffsetDateTime.now(ZoneOffset.UTC)
+                .plusHours(8);
+
+
+        // ----------------------------------------------------
+        // GENERATE SIGNED ACCESS JWT
+        // ----------------------------------------------------
+
+        return jwtTokenService.generateAccessToken(
+            user,
+            sessionId,
+            absoluteExpiresAt
+        );
+    }
+
+
+    // ========================================================
+    // TEST — MISSING ACCESS TOKEN
     // ========================================================
 
     /**
@@ -107,58 +204,76 @@ class CurrentUserControllerIntegrationTest {
     void shouldRejectRequestWithoutToken()
             throws Exception {
 
+        // ----------------------------------------------------
+        // SEND REQUEST WITHOUT AUTHORIZATION
+        // ----------------------------------------------------
+
         mockMvc.perform(
             get("/api/v1/auth/me")
         )
+
         .andExpect(
             status().isUnauthorized()
         );
+
+
+        // ----------------------------------------------------
+        // ENSURE DATABASE LOOKUP WAS NOT ATTEMPTED
+        // ----------------------------------------------------
 
         verifyNoInteractions(userMapper);
     }
 
 
     // ========================================================
-    // TEST 2 — VALID ACCESS TOKEN
+    // TEST — VALID SESSION-AWARE ACCESS TOKEN
     // ========================================================
 
     /**
-     * A valid JWT must establish the authenticated
-     * user identity.
+     * A correctly signed session-aware JWT must
+     * establish the authenticated user identity.
      *
-     * The controller retrieves the user from PostgreSQL
-     * through the mocked UserMapper.
+     * The controller retrieves the user from the
+     * mocked UserMapper.
      */
     @Test
     void shouldReturnCurrentUserWithValidToken()
             throws Exception {
 
         // ----------------------------------------------------
-        // PREPARE AN EXISTING TEST USER
+        // PREPARE EXISTING TEST USER
         // ----------------------------------------------------
 
-        User user = new User();
+        User user =
+            new User();
 
         user.setId(1L);
         user.setEmail("test@example.com");
         user.setFullName("Test User");
 
-        when(userMapper.findById(1L))
-            .thenReturn(user);
+
+        // ----------------------------------------------------
+        // CONFIGURE DATABASE LOOKUP
+        // ----------------------------------------------------
+
+        when(
+            userMapper.findById(1L)
+        ).thenReturn(user);
 
 
         // ----------------------------------------------------
-        // GENERATE A VALID SIGNED JWT
+        // GENERATE SESSION-AWARE ACCESS JWT
         // ----------------------------------------------------
+
+        AuthenticatedUser identity =
+            new AuthenticatedUser(
+                1L,
+                "test@example.com",
+                "Test User"
+            );
 
         String token =
-            jwtTokenService.generateAccessToken(
-                new AuthenticatedUser(
-                    1L,
-                    "test@example.com",
-                    "Test User"
-                )
-            );
+            issueSessionAwareToken(identity);
 
 
         // ----------------------------------------------------
@@ -173,10 +288,15 @@ class CurrentUserControllerIntegrationTest {
                 )
         )
 
+        // ----------------------------------------------------
+        // VERIFY SUCCESSFUL RESPONSE
+        // ----------------------------------------------------
+
         .andExpect(status().isOk())
 
         .andExpect(
-            jsonPath("$.userId").value(1)
+            jsonPath("$.userId")
+                .value(1)
         )
 
         .andExpect(
@@ -189,9 +309,20 @@ class CurrentUserControllerIntegrationTest {
                 .value("Test User")
         )
 
+
+        // ----------------------------------------------------
+        // ENSURE PASSWORD HASH IS NOT EXPOSED
+        // ----------------------------------------------------
+
         .andExpect(
-            jsonPath("$.passwordHash").doesNotExist()
+            jsonPath("$.passwordHash")
+                .doesNotExist()
         )
+
+
+        // ----------------------------------------------------
+        // PREVENT AUTHENTICATION RESPONSE CACHING
+        // ----------------------------------------------------
 
         .andExpect(
             header().string(
@@ -202,20 +333,23 @@ class CurrentUserControllerIntegrationTest {
 
 
         // ----------------------------------------------------
-        // VERIFY TRUSTED DATABASE LOOKUP
+        // VERIFY TRUSTED USER LOOKUP
         // ----------------------------------------------------
 
-        verify(userMapper).findById(1L);
+        verify(userMapper)
+            .findById(1L);
     }
 
 
     // ========================================================
-    // TEST 3 — INVALID ACCESS TOKEN
+    // TEST — MALFORMED ACCESS TOKEN
     // ========================================================
 
     /**
-     * A malformed JWT must be rejected by the
-     * Spring Security filter chain.
+     * An invalid JWT must be rejected by the
+     * Spring Security authentication filter.
+     *
+     * The controller must not access UserMapper.
      */
     @Test
     void shouldRejectMalformedAccessToken()
@@ -228,39 +362,76 @@ class CurrentUserControllerIntegrationTest {
                     "Bearer invalid.jwt.token"
                 )
         )
+
         .andExpect(
             status().isUnauthorized()
         );
+
+
+        // ----------------------------------------------------
+        // VERIFY NO USER LOOKUP
+        // ----------------------------------------------------
 
         verifyNoInteractions(userMapper);
     }
 
 
     // ========================================================
-    // TEST 4 — USER NO LONGER EXISTS
+    // TEST — AUTHENTICATED USER NO LONGER EXISTS
     // ========================================================
 
     /**
-     * A token can remain cryptographically valid
-     * after a user has been deleted.
+     * A JWT may remain cryptographically valid even
+     * when its associated user has been deleted.
      *
      * The endpoint must reject the identity when
-     * no corresponding database record exists.
+     * UserMapper cannot locate a user record.
+     *
+     * This test isolates controller behavior by
+     * mocking session validation.
+     *
+     * Production also performs database-backed
+     * session ownership validation.
      */
     @Test
     void shouldRejectTokenForUnknownUser()
             throws Exception {
 
-        String token =
-            jwtTokenService.generateAccessToken(
-                new AuthenticatedUser(
-                    999L,
-                    "missing@example.com",
-                    "Missing User"
-                )
+        // ----------------------------------------------------
+        // PREPARE AUTHENTICATED TEST IDENTITY
+        // ----------------------------------------------------
+
+        AuthenticatedUser missingUser =
+            new AuthenticatedUser(
+                999L,
+                "missing@example.com",
+                "Missing User"
             );
 
-        // The mocked mapper returns null by default.
+
+        // ----------------------------------------------------
+        // GENERATE SESSION-AWARE ACCESS JWT
+        // ----------------------------------------------------
+
+        String token =
+            issueSessionAwareToken(missingUser);
+
+
+        // ----------------------------------------------------
+        // USERMAPPER RETURNS NULL BY DEFAULT
+        // ----------------------------------------------------
+
+        /**
+         * No UserMapper stub is configured for 999L.
+         *
+         * The mocked database lookup therefore
+         * returns null.
+         */
+
+
+        // ----------------------------------------------------
+        // REQUEST CURRENT USER
+        // ----------------------------------------------------
 
         mockMvc.perform(
             get("/api/v1/auth/me")
@@ -269,10 +440,17 @@ class CurrentUserControllerIntegrationTest {
                     "Bearer " + token
                 )
         )
+
         .andExpect(
             status().isUnauthorized()
         );
 
-        verify(userMapper).findById(999L);
+
+        // ----------------------------------------------------
+        // VERIFY CONTROLLER ATTEMPTED USER LOOKUP
+        // ----------------------------------------------------
+
+        verify(userMapper)
+            .findById(999L);
     }
 }

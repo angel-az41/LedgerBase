@@ -9,11 +9,21 @@ import org.junit.jupiter.api.Test;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-
 import org.springframework.boot.test.context.SpringBootTest;
+
 import org.springframework.security.oauth2.core.OAuth2TokenValidatorResult;
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
-import org.springframework.security.oauth2.jwt.*;
+
+import org.springframework.security.oauth2.jwt.BadJwtException;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtClaimsSet;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.JwtEncoder;
+import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
+import org.springframework.security.oauth2.jwt.JwtException;
+import org.springframework.security.oauth2.jwt.JwsHeader;
+import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
+
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
@@ -23,7 +33,10 @@ import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -39,24 +52,39 @@ import static org.mockito.Mockito.when;
  *
  * COMPONENTS UNDER TEST:
  *
- * - JWT signing key
- * - JwtEncoder
- * - JwtDecoder
- * - JwtTokenService
+ * - JWT signing key.
+ * - JwtEncoder.
+ * - JwtDecoder.
+ * - JwtTokenService.
  *
- * SECURITY:
+ * SECURITY TEST COVERAGE:
  *
- * The test profile provides a separate signing key.
+ * - Valid session-aware JWT generation.
+ * - JWT subject and session claims.
+ * - Expected issuer.
+ * - Expected audience.
+ * - Access token expiration.
+ * - Rejection of incorrect audiences.
+ * - Rejection of incorrect issuers.
+ * - Rejection of incorrect signing keys.
  *
- * No development or production JWT secrets are needed.
+ * TEST ISOLATION:
  *
- * No real user passwords or personal credentials
- * are used in these tests.
+ * These tests verify cryptographic configuration
+ * independently of PostgreSQL session persistence.
  *
- * DATABASE:
+ * The AuthSessionJwtValidator is mocked.
  *
- * The Spring Boot test context uses ledgerbase_test.
- * These tests do not insert or update database records.
+ * Separate integration tests exercise real
+ * database-backed session validation.
+ *
+ * The Spring Boot test profile provides a separate
+ * JWT signing secret.
+ *
+ * No development or production credentials
+ * are needed in these tests.
+ *
+ * No database records are modified.
  */
 @SpringBootTest(
     webEnvironment = SpringBootTest.WebEnvironment.NONE
@@ -79,7 +107,7 @@ class JwtConfigIntegrationTest {
 
 
     // ========================================================
-    // JWT CONFIGURATION
+    // JWT APPLICATION CONFIGURATION
     // ========================================================
 
     @Value("${ledgerbase.jwt.issuer}")
@@ -90,35 +118,38 @@ class JwtConfigIntegrationTest {
 
 
     // ========================================================
-    // ISOLATE CRYPTOGRAPHIC TESTS FROM SESSION STORAGE
+    // MOCK POSTGRESQL SESSION VALIDATION
     // ========================================================
 
     /**
-     * These existing tests focus on:
+     * These tests focus on JWT cryptography and claims.
      *
-     * - JWT signing.
-     * - JWT verification.
-     * - Issuer and audience validation.
-     * - Claims and token expiration.
+     * Replace the PostgreSQL session validator in
+     * this test context only.
      *
-     * Substitute only the PostgreSQL session validator.
+     * The configured decoder still verifies:
      *
-     * This is test-only behavior.
+     * - JWT signatures.
+     * - Token expiration.
+     * - Token issuer.
+     * - Intended audience.
      *
-     * Production JwtDecoder always uses the real
+     * Production continues to use the real
      * AuthSessionJwtValidator.
-     *
-     * A separate database integration test verifies
-     * the actual session validation requirement.
      */
     @MockitoBean
     private AuthSessionJwtValidator sessionValidator;
 
 
     // ========================================================
-    // ALLOW SESSION CHECK IN CRYPTOGRAPHIC TESTS
+    // CONFIGURE CRYPTOGRAPHIC TEST ISOLATION
     // ========================================================
 
+    /**
+     * Allow test JWTs to pass session validation
+     * so each test can examine cryptographic
+     * signing and other token requirements.
+     */
     @BeforeEach
     void configureCryptographicTestIsolation() {
 
@@ -131,64 +162,144 @@ class JwtConfigIntegrationTest {
 
 
     // ========================================================
-    // TEST 1 — VALID ACCESS TOKEN
+    // TEST — VALID SESSION-AWARE ACCESS TOKEN
     // ========================================================
 
     /**
      * Verify that the real Spring-managed encoder
-     * and decoder can generate and validate a token.
+     * and decoder can generate and verify a JWT.
      *
-     * The token must contain the expected user ID,
-     * issuer, audience, and expiration.
+     * The JWT must contain:
+     *
+     * - Correct user ID.
+     * - Authentication session UUID.
+     * - Expected issuer.
+     * - Expected audience.
+     * - Correct expiration lifetime.
      */
     @Test
     void shouldIssueAndVerifyValidAccessToken() {
 
         // ----------------------------------------------------
-        // CREATE A TEST-ONLY AUTHENTICATED USER
+        // CREATE TEST-ONLY AUTHENTICATED USER
         // ----------------------------------------------------
 
-        AuthenticatedUser user = new AuthenticatedUser(
-            1L,
-            "test@example.com",
-            "Test User"
-        );
+        AuthenticatedUser user =
+            new AuthenticatedUser(
+                1L,
+                "test@example.com",
+                "Test User"
+            );
 
 
         // ----------------------------------------------------
-        // GENERATE THE ACCESS TOKEN
+        // CREATE TEST AUTHENTICATION SESSION DETAILS
+        // ----------------------------------------------------
+
+        /**
+         * JWT signing does not require a database
+         * session insert in this test class.
+         *
+         * The session validator is mocked.
+         */
+        UUID sessionId =
+            UUID.randomUUID();
+
+        OffsetDateTime absoluteExpiresAt =
+            OffsetDateTime.now(ZoneOffset.UTC)
+                .plusHours(8);
+
+
+        // ----------------------------------------------------
+        // GENERATE SESSION-AWARE ACCESS TOKEN
         // ----------------------------------------------------
 
         String token =
-            jwtTokenService.generateAccessToken(user);
+            jwtTokenService.generateAccessToken(
+                user,
+                sessionId,
+                absoluteExpiresAt
+            );
 
 
         // ----------------------------------------------------
-        // VERIFY USING THE CONFIGURED SERVICE
+        // VERIFY USING CONFIGURED TOKEN SERVICE
         // ----------------------------------------------------
 
         Long verifiedUserId =
             jwtTokenService.verifyAndGetUserId(token);
 
-        assertEquals(1L, verifiedUserId);
+        assertEquals(
+            1L,
+            verifiedUserId
+        );
 
 
         // ----------------------------------------------------
-        // INSPECT VERIFIED JWT CLAIMS
+        // VERIFY SESSION IDENTIFIER
         // ----------------------------------------------------
 
-        Jwt jwt = jwtDecoder.decode(token);
+        UUID verifiedSessionId =
+            jwtTokenService.verifyAndGetSessionId(token);
 
-        assertEquals("1", jwt.getSubject());
+        assertEquals(
+            sessionId,
+            verifiedSessionId
+        );
+
+
+        // ----------------------------------------------------
+        // DECODE AND INSPECT JWT CLAIMS
+        // ----------------------------------------------------
+
+        Jwt jwt =
+            jwtDecoder.decode(token);
+
+
+        // ----------------------------------------------------
+        // VERIFY AUTHENTICATED USER SUBJECT
+        // ----------------------------------------------------
+
+        assertEquals(
+            "1",
+            jwt.getSubject()
+        );
+
+
+        // ----------------------------------------------------
+        // VERIFY SESSION CLAIM
+        // ----------------------------------------------------
+
+        assertEquals(
+            sessionId.toString(),
+            jwt.getClaimAsString(
+                JwtTokenService.SESSION_ID_CLAIM
+            )
+        );
+
+
+        // ----------------------------------------------------
+        // VERIFY ISSUER
+        // ----------------------------------------------------
 
         assertEquals(
             issuer,
             jwt.getClaimAsString("iss")
         );
 
+
+        // ----------------------------------------------------
+        // VERIFY AUDIENCE
+        // ----------------------------------------------------
+
         assertTrue(
             jwt.getAudience().contains(audience)
         );
+
+
+        // ----------------------------------------------------
+        // VERIFY ISSUANCE AND EXPIRATION CLAIMS
+        // ----------------------------------------------------
 
         assertNotNull(jwt.getIssuedAt());
 
@@ -200,6 +311,16 @@ class JwtConfigIntegrationTest {
             )
         );
 
+
+        // ----------------------------------------------------
+        // VERIFY STANDARD ACCESS TOKEN LIFETIME
+        // ----------------------------------------------------
+
+        /**
+         * The session expires in eight hours,
+         * so it does not shorten the standard
+         * 15-minute JWT lifetime.
+         */
         assertEquals(
             Duration.ofMinutes(15),
             Duration.between(
@@ -211,34 +332,54 @@ class JwtConfigIntegrationTest {
 
 
     // ========================================================
-    // TEST 2 — WRONG AUDIENCE
+    // TEST — WRONG AUDIENCE
     // ========================================================
 
     /**
-     * A JWT signed by LedgerBase must still be rejected
-     * when its audience identifies another application.
+     * A correctly signed JWT must be rejected
+     * when its audience identifies another API.
      *
-     * A valid signature alone is not sufficient.
+     * A valid cryptographic signature alone
+     * is not sufficient for authentication.
      */
     @Test
     void shouldRejectTokenWithWrongAudience() {
 
-        Instant now = Instant.now();
+        // ----------------------------------------------------
+        // BUILD CLAIMS WITH AN INCORRECT AUDIENCE
+        // ----------------------------------------------------
 
-        JwtClaimsSet claims = JwtClaimsSet.builder()
-            .issuer(issuer)
-            .subject("1")
-            .audience(List.of("another-api"))
-            .issuedAt(now)
-            .expiresAt(now.plusSeconds(900))
-            .build();
+        Instant now =
+            Instant.now();
 
-        String token = jwtEncoder.encode(
-            JwtEncoderParameters.from(
-                JwsHeader.with(MacAlgorithm.HS256).build(),
-                claims
-            )
-        ).getTokenValue();
+        JwtClaimsSet claims =
+            JwtClaimsSet.builder()
+                .issuer(issuer)
+                .subject("1")
+                .audience(List.of("another-api"))
+                .issuedAt(now)
+                .expiresAt(now.plusSeconds(900))
+                .build();
+
+
+        // ----------------------------------------------------
+        // SIGN TOKEN WITH THE REAL APPLICATION ENCODER
+        // ----------------------------------------------------
+
+        String token =
+            jwtEncoder.encode(
+                JwtEncoderParameters.from(
+                    JwsHeader
+                        .with(MacAlgorithm.HS256)
+                        .build(),
+                    claims
+                )
+            ).getTokenValue();
+
+
+        // ----------------------------------------------------
+        // REJECT INCORRECT AUDIENCE
+        // ----------------------------------------------------
 
         assertThrows(
             BadJwtException.class,
@@ -250,35 +391,54 @@ class JwtConfigIntegrationTest {
 
 
     // ========================================================
-    // TEST 3 — WRONG ISSUER
+    // TEST — WRONG ISSUER
     // ========================================================
 
     /**
-     * Reject a correctly signed JWT with an unexpected
-     * issuer.
+     * Reject a correctly signed JWT with an
+     * unexpected token issuer.
      *
-     * The decoder's issuer validator must prevent
-     * authentication using tokens from another issuer.
+     * Tokens from a different issuer must not
+     * be accepted by LedgerBase.
      */
     @Test
     void shouldRejectTokenWithWrongIssuer() {
 
-        Instant now = Instant.now();
+        // ----------------------------------------------------
+        // BUILD CLAIMS WITH AN INCORRECT ISSUER
+        // ----------------------------------------------------
 
-        JwtClaimsSet claims = JwtClaimsSet.builder()
-            .issuer("another-issuer")
-            .subject("1")
-            .audience(List.of(audience))
-            .issuedAt(now)
-            .expiresAt(now.plusSeconds(900))
-            .build();
+        Instant now =
+            Instant.now();
 
-        String token = jwtEncoder.encode(
-            JwtEncoderParameters.from(
-                JwsHeader.with(MacAlgorithm.HS256).build(),
-                claims
-            )
-        ).getTokenValue();
+        JwtClaimsSet claims =
+            JwtClaimsSet.builder()
+                .issuer("another-issuer")
+                .subject("1")
+                .audience(List.of(audience))
+                .issuedAt(now)
+                .expiresAt(now.plusSeconds(900))
+                .build();
+
+
+        // ----------------------------------------------------
+        // SIGN WITH THE REAL APPLICATION ENCODER
+        // ----------------------------------------------------
+
+        String token =
+            jwtEncoder.encode(
+                JwtEncoderParameters.from(
+                    JwsHeader
+                        .with(MacAlgorithm.HS256)
+                        .build(),
+                    claims
+                )
+            ).getTokenValue();
+
+
+        // ----------------------------------------------------
+        // EXPECT ISSUER VALIDATION FAILURE
+        // ----------------------------------------------------
 
         assertThrows(
             JwtException.class,
@@ -290,73 +450,81 @@ class JwtConfigIntegrationTest {
 
 
     // ========================================================
-    // TEST 4 — INVALID SIGNING KEY
+    // TEST — INVALID SIGNING KEY
     // ========================================================
 
     /**
      * A JWT signed with a different secret key
-     * must fail signature verification.
+     * must fail cryptographic signature verification.
      *
-     * The alternate key exists only inside this test.
+     * The alternate signing key is test-only.
      *
-     * It must never be reused for real access tokens.
+     * It must not be reused for application
+     * authentication or production.
      */
     @Test
     void shouldRejectTokenSignedWithDifferentKey() {
 
         // ----------------------------------------------------
-        // CREATE A DIFFERENT TEST-ONLY KEY
+        // CREATE AN ALTERNATE TEST-ONLY SIGNING KEY
         // ----------------------------------------------------
 
         byte[] otherKeyBytes = (
             "AnotherTestOnlyJwtSigningKey-NotForProduction"
         ).getBytes(StandardCharsets.UTF_8);
 
-        SecretKey otherKey = new SecretKeySpec(
-            otherKeyBytes,
-            "HmacSHA256"
-        );
+        SecretKey otherKey =
+            new SecretKeySpec(
+                otherKeyBytes,
+                "HmacSHA256"
+            );
 
 
         // ----------------------------------------------------
-        // CREATE AN INDEPENDENT ENCODER
+        // CREATE AN INDEPENDENT JWT ENCODER
         // ----------------------------------------------------
 
-        JwtEncoder otherEncoder = NimbusJwtEncoder
-            .withSecretKey(otherKey)
-            .algorithm(MacAlgorithm.HS256)
-            .build();
-
-
-        // ----------------------------------------------------
-        // BUILD OTHERWISE VALID CLAIMS
-        // ----------------------------------------------------
-
-        Instant now = Instant.now();
-
-        JwtClaimsSet claims = JwtClaimsSet.builder()
-            .issuer(issuer)
-            .subject("1")
-            .audience(List.of(audience))
-            .issuedAt(now)
-            .expiresAt(now.plusSeconds(900))
-            .build();
+        JwtEncoder otherEncoder =
+            NimbusJwtEncoder
+                .withSecretKey(otherKey)
+                .algorithm(MacAlgorithm.HS256)
+                .build();
 
 
         // ----------------------------------------------------
-        // SIGN WITH THE WRONG KEY
+        // BUILD OTHERWISE VALID JWT CLAIMS
         // ----------------------------------------------------
 
-        String token = otherEncoder.encode(
-            JwtEncoderParameters.from(
-                JwsHeader.with(MacAlgorithm.HS256).build(),
-                claims
-            )
-        ).getTokenValue();
+        Instant now =
+            Instant.now();
+
+        JwtClaimsSet claims =
+            JwtClaimsSet.builder()
+                .issuer(issuer)
+                .subject("1")
+                .audience(List.of(audience))
+                .issuedAt(now)
+                .expiresAt(now.plusSeconds(900))
+                .build();
 
 
         // ----------------------------------------------------
-        // EXPECT SIGNATURE VALIDATION FAILURE
+        // SIGN TOKEN USING THE WRONG KEY
+        // ----------------------------------------------------
+
+        String token =
+            otherEncoder.encode(
+                JwtEncoderParameters.from(
+                    JwsHeader
+                        .with(MacAlgorithm.HS256)
+                        .build(),
+                    claims
+                )
+            ).getTokenValue();
+
+
+        // ----------------------------------------------------
+        // VERIFY SIGNATURE REJECTION
         // ----------------------------------------------------
 
         assertThrows(
