@@ -78,19 +78,6 @@ interface JournalEntryLine {
 }
 
 // ============================================================
-// TEMPORARY DEVELOPMENT USER
-// ============================================================
-
-/**
- * Authentication is not implemented yet.
- *
- * This value is for local development only.
- * We must verify that user ID 1 exists before
- * submitting our first real transaction.
- */
-const DEMO_CREATOR_ID = 1
-
-// ============================================================
 // CREATE AN EMPTY JOURNAL LINE
 // ============================================================
 
@@ -535,7 +522,6 @@ function NewJournalEntryForm({
       const createdTransaction = await createDraftTransaction(
         businessId,
         {
-          createdBy: DEMO_CREATOR_ID,
           description: description.trim(),
           transactionDate,
           entries,

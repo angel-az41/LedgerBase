@@ -96,18 +96,6 @@ interface TransactionDetailsProps {
 }
 
 // ============================================================
-// TEMPORARY DEVELOPMENT ACTOR
-// ============================================================
-
-/**
- * Authentication has not been implemented yet.
- *
- * We verified that developer user #1 exists
- * in our PostgreSQL development database.
- */
-const DEMO_ACTOR_ID = 1
-
-// ============================================================
 // ACCOUNTING DATE FORMATTING
 // ============================================================
 
@@ -415,36 +403,13 @@ function TransactionDetails({
   // ============================================================
 
   /**
-   * Send:
+   * Finalize the selected draft transaction.
    *
-   * POST /api/v1/businesses/{businessId}/transactions/
-   *      {transactionId}/post
+   * The backend obtains the posting actor from the
+   * authenticated JWT instead of trusting a browser ID.
    *
-   * Body:
-   *
-   * {
-   *   "actorId": 1
-   * }
-   *
-   * Spring Boot will:
-   *
-   * - Verify the transaction belongs to the business
-   * - Verify its status is DRAFT
-   * - Perform its posting validation
-   * - Change its status to POSTED
-   * - Create an audit event
-   * - Preserve its assigned journal number
-   *
-   * PostgreSQL rules protect posted entries.
-   *
-   * IMPORTANT:
-   *
-   * The POST request uses the internal transactionId.
-   *
-   * For example, JE-0001 might have internal ID 2.
-   *
-   * Sending JE-0001 in place of the numeric ID would
-   * not match the existing backend API.
+   * PostgreSQL preserves the original journal reference
+   * and records the posting event in the audit log.
    */
   async function handleConfirmPost(): Promise<void> {
 
@@ -464,9 +429,6 @@ function TransactionDetails({
       const postedTransaction = await postTransaction(
         businessId,
         transactionId,
-        {
-          actorId: DEMO_ACTOR_ID,
-        },
       )
 
       // ========================================================
