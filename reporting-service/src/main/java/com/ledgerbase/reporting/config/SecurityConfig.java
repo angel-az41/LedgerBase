@@ -1,5 +1,7 @@
 package com.ledgerbase.reporting.config;
 
+import com.ledgerbase.reporting.security.ReportingBusinessAuthorizationManager;
+
 import jakarta.servlet.DispatcherType;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
@@ -42,7 +44,9 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain reportingSecurityFilterChain(
-        HttpSecurity http
+        HttpSecurity http,
+        ReportingBusinessAuthorizationManager
+            reportingBusinessAuthorizationManager
     ) throws Exception {
 
         http
@@ -76,9 +80,43 @@ public class SecurityConfig {
                     "/actuator/health",
                     "/actuator/health/**"
                 ).permitAll()
+                
+                // ---------------------------------------------
+                // TRIAL BALANCE REPORTING
+                // ---------------------------------------------
 
-                // Financial endpoints are not exposed yet.
-                // Business authorization will be added next.
+                /**
+                 * Allow GET requests to the Trial Balance
+                 * endpoint only after business authorization.
+                 *
+                 * The authorization manager:
+                 *
+                 * 1. Requires authenticated JWT identity.
+                 * 2. Validates the requested business ID.
+                 * 3. Allows read-only HTTP operations.
+                 * 4. Checks current session and membership
+                 *    through Accounting Core.
+                 *
+                 * OWNER, ADMIN, ACCOUNTANT, and VIEWER
+                 * may read authorized business reports.
+                 *
+                 * No financial writes are permitted.
+                 */
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/api/v1/businesses/{businessId}/reports/trial-balance"
+                ).access(
+                    reportingBusinessAuthorizationManager
+                )
+
+                // ---------------------------------------------
+                // DENY ALL UNKNOWN ENDPOINTS
+                // ---------------------------------------------
+
+                /**
+                 * Additional reporting APIs must receive
+                 * explicit security rules before use.
+                 */
                 .anyRequest().denyAll()
             )
 
