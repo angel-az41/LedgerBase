@@ -5,7 +5,12 @@ import com.ledgerbase.backend.mapper.BusinessMapper;
 import com.ledgerbase.backend.mapper.TrialBalanceMapper;
 import com.ledgerbase.backend.model.TrialBalanceReport;
 import com.ledgerbase.backend.model.TrialBalanceRow;
+import com.ledgerbase.backend.reporting.ReplicaTrialBalanceReader;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,60 +26,100 @@ import java.util.Objects;
 /**
  * Business logic for generating Trial Balance reports.
  *
- * The service coordinates:
+ * RESPONSIBILITIES:
  *
- * - Business existence validation
- * - Reporting date validation
- * - PostgreSQL Trial Balance calculations
- * - Debit and credit total calculations
- * - Complete report construction
+ * - Validate the requested business
+ * - Validate the reporting date
+ * - Select the appropriate reporting database
+ * - Retrieve posted accounting balances through MyBatis
+ * - Calculate total debit and credit balances
+ * - Construct the complete Trial Balance report
  *
- * ACCOUNTING PRINCIPLES:
+ * ACCOUNTING RULES:
  *
- * 1. Only POSTED transactions contribute to reports.
+ * - Include only POSTED transactions.
+ * - Exclude transactions after the reporting date.
+ * - Include zero-balance and inactive accounts.
+ * - Calculate monetary amounts using BigDecimal.
+ * - Preserve visibility of unbalanced results.
  *
- * 2. Transactions after the reporting date are excluded.
+ * DATABASE ROUTING:
  *
- * 3. Each account has a net debit or credit balance.
+ * Primary PostgreSQL:
+ *   Used for business validation and the default
+ *   Trial Balance query.
  *
- * 4. Total debit balances should equal total
- *    credit balances.
+ * Replica PostgreSQL:
+ *   Used for the Trial Balance aggregation when
+ *   replica reporting is enabled.
  *
- * 5. All monetary arithmetic uses BigDecimal.
+ * IMPORTANT:
  *
- * 6. Reports are read-only and do not change
- *    the underlying accounting records.
+ * PostgreSQL streaming replication is asynchronous.
+ * Reports generated through the replica may briefly
+ * lag behind recently committed transactions.
  *
- * The mapper handles SQL calculations.
- * This service handles report-level business logic.
+ * Reports requiring immediate consistency should
+ * continue to use the primary database.
  */
 @Service
 public class TrialBalanceService {
 
     // ========================================================
-    // DATABASE DEPENDENCIES
+    // LOGGING
     // ========================================================
 
     /**
-     * Executes the Trial Balance reporting SQL
-     * through MyBatis.
+     * Log report execution and database selection.
+     *
+     * These messages help verify that requests
+     * reach the service and use the intended
+     * PostgreSQL connection.
+     */
+    private static final Logger log =
+        LoggerFactory.getLogger(
+            TrialBalanceService.class
+        );
+
+    // ========================================================
+    // PRIMARY DATABASE DEPENDENCIES
+    // ========================================================
+
+    /**
+     * Default MyBatis mapper connected to
+     * the primary PostgreSQL database.
      */
     private final TrialBalanceMapper trialBalanceMapper;
 
     /**
-     * Checks that the requested business exists.
+     * Verify business existence through
+     * the primary database.
      */
     private final BusinessMapper businessMapper;
+
+    // ========================================================
+    // OPTIONAL READ REPLICA DEPENDENCY
+    // ========================================================
+
+    /**
+     * Replica-backed Trial Balance reader.
+     *
+     * Spring creates this component only when
+     * ledgerbase.read-replica.enabled=true.
+     *
+     * It is optional so the application can
+     * continue running without a replica.
+     */
+    private ReplicaTrialBalanceReader replicaTrialBalanceReader;
 
     // ========================================================
     // CONSTRUCTOR
     // ========================================================
 
     /**
-     * Spring injects both mapper dependencies.
-     *
-     * Constructor injection makes our service
-     * easier to maintain and unit test.
+     * Preserve the existing constructor so ordinary
+     * application startup and existing tests can
+     * continue injecting the primary MyBatis mappers.
      */
     public TrialBalanceService(
             TrialBalanceMapper trialBalanceMapper,
@@ -85,45 +130,46 @@ public class TrialBalanceService {
     }
 
     // ========================================================
+    // OPTIONAL REPLICA INJECTION
+    // ========================================================
+
+    /**
+     * Inject the replica reader when available.
+     *
+     * If no replica is configured, this field
+     * remains null and primary reporting is used.
+     */
+    @Autowired(required = false)
+    public void setReplicaTrialBalanceReader(
+            ReplicaTrialBalanceReader replicaTrialBalanceReader) {
+
+        this.replicaTrialBalanceReader =
+            replicaTrialBalanceReader;
+    }
+
+    // ========================================================
     // GENERATE TRIAL BALANCE REPORT
     // ========================================================
 
     /**
-     * Generate a Trial Balance for one business
-     * as of a specified reporting date.
-     *
-     * Example:
-     *
-     * businessId = 1
-     * asOfDate   = 2026-10-13
-     *
-     * The report includes all posted journal
-     * transactions dated October 13 or earlier.
-     *
-     * BUSINESS VALIDATION:
-     *
-     * A nonexistent business must not silently
-     * return an empty financial report.
-     *
-     * REPORTING DATE:
-     *
-     * A date is required for every report.
-     *
-     * This will allow us to support fiscal years
-     * and accounting periods in future milestones.
+     * Generate the Trial Balance for a business
+     * as of the specified reporting date.
      *
      * TRANSACTION MANAGEMENT:
      *
-     * readOnly = true tells Spring that this
-     * operation is intended only to read data.
+     * The primary-backed service operations execute
+     * within a Spring read-only transaction.
      *
-     * The database queries and report calculations
-     * take place within the same read-only transaction.
+     * When replica reporting is enabled, the replica
+     * query uses a separate DataSource and does not
+     * share the primary database's MVCC snapshot.
      *
-     * @param businessId Business being reported.
-     * @param asOfDate Inclusive reporting cutoff date.
+     * The report must therefore tolerate replication
+     * lag and eventual consistency.
      *
-     * @return Complete Trial Balance report.
+     * @param businessId requested business ID
+     * @param asOfDate inclusive reporting cutoff date
+     * @return complete Trial Balance report
      */
     @Transactional(readOnly = true)
     public TrialBalanceReport generateTrialBalance(
@@ -131,51 +177,58 @@ public class TrialBalanceService {
             LocalDate asOfDate) {
 
         // ====================================================
-        // STEP 1 — VALIDATE BUSINESS
+        // STEP 1 — LOG THE REPORT REQUEST
         // ====================================================
 
         /**
-         * Confirm the business ID is valid and exists.
+         * This message confirms that the frontend
+         * request reached TrialBalanceService.
          *
-         * Use our existing BusinessNotFoundException
-         * so the API can return HTTP 404.
+         * If this message does not appear after
+         * generating a report, investigate the
+         * controller endpoint and frontend request.
+         */
+        log.info(
+            "Trial Balance requested: businessId={}, "
+                + "asOfDate={}, replicaReaderEnabled={}",
+            businessId,
+            asOfDate,
+            replicaTrialBalanceReader != null
+        );
+
+        // ====================================================
+        // STEP 2 — VALIDATE BUSINESS EXISTENCE
+        // ====================================================
+
+        /**
+         * A nonexistent business must not produce
+         * an apparently valid but empty report.
          *
-         * IMPORTANT:
+         * Business existence validation is distinct
+         * from user authorization.
          *
-         * Business existence validation is not the
-         * same as user authorization.
-         *
-         * Ownership and permission checks will
-         * be implemented with authentication later.
+         * JWT authentication, RBAC, and business
+         * authorization must remain enforced
+         * by the application's security layer.
          */
         if (businessId == null ||
                 !businessMapper.existsById(businessId)) {
 
-            throw new BusinessNotFoundException(businessId);
+            throw new BusinessNotFoundException(
+                businessId
+            );
         }
 
         // ====================================================
-        // STEP 2 — VALIDATE REPORTING DATE
+        // STEP 3 — VALIDATE REPORTING DATE
         // ====================================================
 
         /**
-         * A Trial Balance must have a valid reporting date.
+         * Every Trial Balance requires a reporting date.
          *
-         * Our current reporting policy:
-         *
-         * - Past dates are accepted.
-         * - Today's date is accepted.
-         * - Future dates are rejected.
-         *
-         * Validation order matters:
-         *
-         * We must check for null BEFORE calling
-         * methods on the LocalDate object.
+         * Historical dates and today's date are valid.
+         * Future reporting dates are rejected.
          */
-
-        // ============================================================
-        // FIRST — REJECT MISSING REPORTING DATES
-        // ============================================================
 
         if (asOfDate == null) {
 
@@ -184,16 +237,6 @@ public class TrialBalanceService {
             );
         }
 
-        // ============================================================
-        // SECOND — REJECT FUTURE REPORTING DATES
-        // ============================================================
-
-        /**
-         * Obtain the current date from the backend server.
-         *
-         * We can safely call asOfDate.isAfter() now
-         * because we already checked that it is not null.
-         */
         LocalDate today = LocalDate.now();
 
         if (asOfDate.isAfter(today)) {
@@ -204,103 +247,145 @@ public class TrialBalanceService {
         }
 
         // ====================================================
-        // STEP 3 — RETRIEVE TRIAL BALANCE ROWS
+        // STEP 4 — SELECT THE REPORTING DATABASE
         // ====================================================
 
         /**
-         * Ask MyBatis to execute the PostgreSQL query.
+         * REPLICA MODE:
          *
-         * The query:
+         * Execute the Trial Balance SQL using the
+         * dedicated read-only replica connection.
          *
-         * - Filters by business
-         * - Includes POSTED transactions only
-         * - Applies the reporting date cutoff
-         * - Aggregates net debit/credit activity
-         * - Includes zero-balance accounts
-         * - Includes inactive accounts
+         * DEFAULT MODE:
          *
-         * Each database result becomes a
-         * TrialBalanceRow Java object.
+         * Execute the same SQL using the existing
+         * primary-backed MyBatis mapper.
+         *
+         * This is explicit reporting query routing.
+         *
+         * We do not automatically route every
+         * @Transactional(readOnly = true) operation
+         * to the replica because some reads require
+         * strong consistency.
          */
-        List<TrialBalanceRow> rows =
-            trialBalanceMapper.findByBusinessIdAsOfDate(
-                businessId,
-                asOfDate
+
+        List<TrialBalanceRow> rows;
+
+        if (replicaTrialBalanceReader != null) {
+
+            log.info(
+                "Trial Balance routing: REPLICA "
+                    + "(PostgreSQL read-only standby)"
             );
 
+            rows =
+                replicaTrialBalanceReader
+                    .findByBusinessIdAsOfDate(
+                        businessId,
+                        asOfDate
+                    );
+
+        } else {
+
+            log.info(
+                "Trial Balance routing: PRIMARY "
+                    + "(default MyBatis datasource)"
+            );
+
+            rows =
+                trialBalanceMapper.findByBusinessIdAsOfDate(
+                    businessId,
+                    asOfDate
+                );
+        }
+
         // ====================================================
-        // STEP 4 — INITIALIZE REPORT TOTALS
+        // STEP 5 — INITIALIZE MONETARY TOTALS
         // ====================================================
 
         /**
-         * Start both totals at exactly zero.
+         * All monetary arithmetic uses BigDecimal
+         * to preserve exact decimal calculations.
          *
-         * BigDecimal.ZERO is safe for
-         * financial calculations.
-         *
-         * Do not use double or float.
+         * Never use double or float for financial
+         * accounting balances.
          */
         BigDecimal totalDebits = BigDecimal.ZERO;
         BigDecimal totalCredits = BigDecimal.ZERO;
 
         // ====================================================
-        // STEP 5 — CALCULATE DEBIT AND CREDIT TOTALS
+        // STEP 6 — CALCULATE REPORT TOTALS
         // ====================================================
 
         /**
-         * Loop through every account row returned
-         * by PostgreSQL.
+         * Iterate through the account balances
+         * returned by PostgreSQL.
          *
-         * Add each account's net Debit Balance
-         * to totalDebits.
+         * The mapper already separates each
+         * account's net amount into its Debit
+         * and Credit balance columns.
          *
-         * Add each account's net Credit Balance
-         * to totalCredits.
-         *
-         * IMPORTANT:
-         *
-         * These totals represent account-level
-         * net balances.
-         *
-         * They are not the gross sum of every
-         * debit and credit journal posting.
+         * This service calculates the complete
+         * report's debit and credit totals.
          */
         for (TrialBalanceRow row : rows) {
 
-            // ==================================================
-            // REQUIRE VALID MONETARY VALUES
-            // ==================================================
+            // ================================================
+            // REQUIRE NON-NULL FINANCIAL VALUES
+            // ================================================
 
             /**
-             * The SQL query should always return
-             * non-null BigDecimal values because
-             * it uses COALESCE and GREATEST.
+             * SQL should always return non-null
+             * amounts using COALESCE and GREATEST.
              *
-             * If a value is unexpectedly null,
-             * fail rather than silently replacing
-             * missing accounting data with zero.
+             * Unexpected null values should fail
+             * explicitly rather than being silently
+             * converted to zero.
              */
-            BigDecimal debitBalance = Objects.requireNonNull(
-                row.getDebitBalance(),
-                "Trial Balance debit amount cannot be null"
-            );
+            BigDecimal debitBalance =
+                Objects.requireNonNull(
+                    row.getDebitBalance(),
+                    "Trial Balance debit amount cannot be null"
+                );
 
-            BigDecimal creditBalance = Objects.requireNonNull(
-                row.getCreditBalance(),
-                "Trial Balance credit amount cannot be null"
-            );
+            BigDecimal creditBalance =
+                Objects.requireNonNull(
+                    row.getCreditBalance(),
+                    "Trial Balance credit amount cannot be null"
+                );
 
-            // ==================================================
-            // ADD EXACT DECIMAL AMOUNTS
-            // ==================================================
+            // ================================================
+            // AGGREGATE ACCOUNT BALANCES
+            // ================================================
 
-            totalDebits = totalDebits.add(debitBalance);
+            totalDebits =
+                totalDebits.add(debitBalance);
 
-            totalCredits = totalCredits.add(creditBalance);
+            totalCredits =
+                totalCredits.add(creditBalance);
         }
 
         // ====================================================
-        // STEP 6 — CONSTRUCT COMPLETE REPORT
+        // STEP 7 — LOG REPORT COMPLETION
+        // ====================================================
+
+        /**
+         * Log accounting totals and account count
+         * for local verification.
+         *
+         * Do not log passwords, tokens,
+         * or sensitive customer information.
+         */
+        log.info(
+            "Trial Balance completed: accountCount={}, "
+                + "totalDebits={}, totalCredits={}",
+            rows.size(),
+            totalDebits,
+            totalCredits
+        );
+
+        // ====================================================
+        // STEP 8 — CONSTRUCT COMPLETE REPORT
         // ====================================================
 
         /**
@@ -308,19 +393,15 @@ public class TrialBalanceService {
          *
          * - Business ID
          * - Reporting date
-         * - Account rows
+         * - Account balances
          * - Total debit balances
          * - Total credit balances
          *
-         * Its constructor automatically calculates:
+         * Its existing constructor calculates
+         * the difference and balanced status.
          *
-         * difference = totalDebits - totalCredits
-         *
-         * balanced = difference == 0
-         *
-         * An unbalanced result remains visible
-         * rather than being falsely reported
-         * as balanced.
+         * An unbalanced result must remain visible
+         * instead of being falsely marked balanced.
          */
         return new TrialBalanceReport(
             businessId,

@@ -1,55 +1,151 @@
-# ==========================================
-# LedgerBase - Docker Compose Configuration
-# ==========================================
-# This file defines the containers needed
-# to run LedgerBase locally.
+# ============================================================
+# LEDGERBASE — DOCKER COMPOSE CONFIGURATION
+# ============================================================
 #
-# Currently:
-#   - PostgreSQL database
+# Local PostgreSQL primary-replica infrastructure.
 #
-# Later:
-#   - Spring Boot backend
-#   - Vue frontend
-#   - Redis (performance optimization)
+# Primary:
+#   - Financial transaction writes
+#   - ACID transactions and row-level locking
+#   - Flyway schema migrations
+#   - WAL streaming to the replica
+#
+# Replica:
+#   - Read-only PostgreSQL standby
+#   - Receives WAL from the primary
+#   - Serves eligible read-only queries
+#
+# Never delete database volumes when applying updates.
 
 services:
 
-  # PostgreSQL database service
+  # ==========================================================
+  # POSTGRESQL PRIMARY DATABASE
+  # ==========================================================
+
   postgres:
 
-    # Use PostgreSQL version 17
     image: postgres:17
 
-    # Custom name for the Docker container
     container_name: ledgerbase-postgres
 
-    # Restart automatically unless manually stopped
     restart: unless-stopped
 
-    # Database configuration
+    # Database credentials
     environment:
       POSTGRES_DB: ledgerbase
       POSTGRES_USER: ledgerbase
-
-      # Read password from the local .env file
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    
+    # ========================================================
+    # POSTGRESQL REPLICATION AND WAL SAFEGUARDS
+    # ========================================================
+    #
+    # wal_level:
+    #   Generate WAL suitable for streaming replication.
+    #
+    # max_wal_senders:
+    #   Maximum concurrent WAL sender processes.
+    #
+    # max_replication_slots:
+    #   Maximum replication slots supported.
+    #
+    # wal_keep_size:
+    #   Keep a baseline amount of recent WAL.
+    #
+    # max_slot_wal_keep_size:
+    #   Limit WAL retained for delayed replication slots
+    #   at checkpoint time.
+    #
+    # If the replica falls too far behind, it may need
+    # to be reinitialized from a new base backup.
 
-    # Map Mac port 5434 to container port 5432
-    # Connect from DBeaver using localhost:5434
+    command:
+      - postgres
+      - -c
+      - wal_level=replica
+      - -c
+      - max_wal_senders=10
+      - -c
+      - max_replication_slots=10
+      - -c
+      - wal_keep_size=256MB
+      - -c
+      - max_slot_wal_keep_size=1GB
+
+    # Primary database exposed locally on port 5434
     ports:
       - "127.0.0.1:5434:5432"
 
-    # Preserve database data when the container stops
+    # Preserve existing primary database data
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
-    # Check if PostgreSQL is ready for connections
+    # Primary database health check
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ledgerbase -d ledgerbase"]
       interval: 5s
       timeout: 5s
       retries: 5
 
-# Named Docker volume for persistent database storage
+  # ==========================================================
+  # POSTGRESQL READ REPLICA
+  # ==========================================================
+
+  postgres-replica:
+
+    image: postgres:17
+
+    container_name: ledgerbase-postgres-replica
+
+    restart: unless-stopped
+
+    # Wait for a healthy primary database
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    # Replica database directory
+    environment:
+      PGDATA: /var/lib/postgresql/data
+
+    # Initialize from the primary when the replica is empty
+    entrypoint:
+      - /bin/bash
+      - /usr/local/bin/start-replica.sh
+
+    # Read replica exposed locally on port 5435
+    ports:
+      - "127.0.0.1:5435:5432"
+
+    # Separate persistent replica storage
+    volumes:
+      - postgres_replica_data:/var/lib/postgresql/data
+      - ./docker/postgres/start-replica.sh:/usr/local/bin/start-replica.sh:ro
+
+    # Private replication credentials
+    secrets:
+      - replica_pgpass
+
+    # Replica health check
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ledgerbase -d ledgerbase"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+# ============================================================
+# PERSISTENT DATABASE VOLUMES
+# ============================================================
+
 volumes:
   postgres_data:
+  postgres_replica_data:
+
+# ============================================================
+# REPLICATION CREDENTIALS
+# ============================================================
+
+secrets:
+  replica_pgpass:
+    file: ./.secrets/replica.pgpass
