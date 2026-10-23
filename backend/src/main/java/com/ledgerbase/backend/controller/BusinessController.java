@@ -1,7 +1,12 @@
 package com.ledgerbase.backend.controller;
 
+import com.ledgerbase.backend.dto.BusinessRoleResponse;
 import com.ledgerbase.backend.dto.CreateBusinessRequest;
+
+import com.ledgerbase.backend.mapper.BusinessMembershipMapper;
+
 import com.ledgerbase.backend.model.Business;
+
 import com.ledgerbase.backend.service.BusinessService;
 
 import jakarta.validation.Valid;
@@ -31,37 +36,46 @@ import java.util.List;
  * AUTHENTICATION:
  *
  * Spring Security requires a valid Bearer JWT
- * before allowing requests to this controller.
+ * for all business management endpoints.
  *
- * The authenticated JWT subject contains the
- * PostgreSQL user ID.
+ * The verified JWT subject identifies the
+ * authenticated PostgreSQL user.
  *
  * SECURITY:
  *
- * - Never trust ownerId from a request body.
+ * - Never trust ownerId submitted by the browser.
  * - Never use a hardcoded development user ID.
- * - Never use a browser-supplied user ID for access.
  * - List businesses through membership records.
  * - Retrieve businesses through membership records.
+ * - Derive membership roles from PostgreSQL.
  * - Assign OWNER membership to business creators.
  *
- * DATABASE:
+ * BUSINESS ROLE ENDPOINT:
  *
- * BusinessService and BusinessMapper enforce
- * business membership conditions.
+ * GET /api/v1/businesses/{businessId}/my-role
  *
- * More granular financial operation permissions
- * will be implemented separately.
+ * React uses this endpoint to display accounting
+ * interfaces appropriate to the current role.
+ *
+ * The existing BusinessAuthorizationManager remains
+ * responsible for enforcing backend permissions.
  */
 @RestController
 @RequestMapping("/api/v1/businesses")
 public class BusinessController {
 
     // ========================================================
-    // BUSINESS SERVICE DEPENDENCY
+    // DEPENDENCIES
     // ========================================================
 
     private final BusinessService businessService;
+
+    /**
+     * Retrieve the current membership role
+     * for one authenticated user and business.
+     */
+    private final BusinessMembershipMapper
+        businessMembershipMapper;
 
 
     // ========================================================
@@ -69,10 +83,14 @@ public class BusinessController {
     // ========================================================
 
     public BusinessController(
-        BusinessService businessService
+        BusinessService businessService,
+        BusinessMembershipMapper businessMembershipMapper
     ) {
 
         this.businessService = businessService;
+
+        this.businessMembershipMapper =
+            businessMembershipMapper;
     }
 
 
@@ -83,26 +101,17 @@ public class BusinessController {
     /**
      * GET /api/v1/businesses
      *
-     * Return only businesses for which the
-     * authenticated user has a membership.
+     * Return businesses for which the authenticated
+     * user has a PostgreSQL membership.
      *
-     * Supported roles:
+     * Supported membership roles:
      *
-     * - OWNER
-     * - ADMIN
-     * - ACCOUNTANT
-     * - VIEWER
+     * OWNER, ADMIN, ACCOUNTANT, VIEWER.
      *
-     * HTTP 200:
-     * Returns an accessible business list.
+     * Users without memberships receive
+     * an empty JSON array.
      *
-     * An authenticated user with no memberships
-     * receives an empty JSON array.
-     *
-     * HTTP 401:
-     * Missing or invalid authentication.
-     *
-     * @param jwt validated JWT principal
+     * @param jwt verified JWT principal
      * @return accessible businesses
      */
     @GetMapping
@@ -110,17 +119,8 @@ public class BusinessController {
         @AuthenticationPrincipal Jwt jwt
     ) {
 
-        // ----------------------------------------------------
-        // GET TRUSTED AUTHENTICATED USER ID
-        // ----------------------------------------------------
-
         Long userId =
             getAuthenticatedUserId(jwt);
-
-
-        // ----------------------------------------------------
-        // QUERY MEMBERSHIP-SCOPED BUSINESS LIST
-        // ----------------------------------------------------
 
         return businessService.getBusinessesForUser(
             userId
@@ -135,28 +135,18 @@ public class BusinessController {
     /**
      * GET /api/v1/businesses/{businessId}
      *
-     * Return the requested business only if the
+     * Retrieve business details only when the
      * authenticated user has membership access.
      *
      * HTTP 200:
-     * Business is accessible.
-     *
-     * HTTP 400:
-     * Invalid business ID.
-     *
-     * HTTP 401:
-     * Missing or invalid authentication.
+     * Accessible business.
      *
      * HTTP 404:
-     * Business does not exist or is inaccessible.
+     * Missing or inaccessible business.
      *
-     * Returning 404 for nonmembers prevents
-     * revealing the existence of another
-     * user's business through this endpoint.
-     *
-     * @param businessId requested business ID
-     * @param jwt validated JWT principal
-     * @return accessible business
+     * @param businessId requested business
+     * @param jwt verified JWT principal
+     * @return accessible business information
      */
     @GetMapping("/{businessId}")
     public Business getBusiness(
@@ -164,8 +154,65 @@ public class BusinessController {
         @AuthenticationPrincipal Jwt jwt
     ) {
 
+        Long userId =
+            getAuthenticatedUserId(jwt);
+
+        return businessService.getBusinessForUser(
+            businessId,
+            userId
+        );
+    }
+
+
+    // ========================================================
+    // GET CURRENT USER'S BUSINESS ROLE
+    // ========================================================
+
+    /**
+     * GET /api/v1/businesses/{businessId}/my-role
+     *
+     * Return the authenticated user's membership
+     * role for the requested business.
+     *
+     * The user ID comes from the verified JWT.
+     *
+     * The role comes from the current PostgreSQL
+     * business_memberships record.
+     *
+     * React cannot choose either value.
+     *
+     * SECURITY:
+     *
+     * SecurityConfig routes this nested business
+     * endpoint through BusinessAuthorizationManager.
+     *
+     * Therefore, a caller must already have
+     * recognized membership access to the business.
+     *
+     * This method also handles a missing membership
+     * defensively.
+     *
+     * HTTP 200:
+     * Returns the user's current business role.
+     *
+     * HTTP 401:
+     * Missing or invalid authentication.
+     *
+     * HTTP 403:
+     * No authorized membership.
+     *
+     * @param businessId selected business identifier
+     * @param jwt verified JWT principal
+     * @return authenticated user's business role
+     */
+    @GetMapping("/{businessId}/my-role")
+    public BusinessRoleResponse getMyBusinessRole(
+        @PathVariable Long businessId,
+        @AuthenticationPrincipal Jwt jwt
+    ) {
+
         // ----------------------------------------------------
-        // GET TRUSTED AUTHENTICATED USER ID
+        // RESOLVE TRUSTED USER ID
         // ----------------------------------------------------
 
         Long userId =
@@ -173,13 +220,47 @@ public class BusinessController {
 
 
         // ----------------------------------------------------
-        // QUERY BUSINESS AND MEMBERSHIP
+        // VALIDATE BUSINESS IDENTIFIER
         // ----------------------------------------------------
 
-        return businessService.getBusinessForUser(
-            businessId,
-            userId
-        );
+        if (businessId == null || businessId <= 0) {
+
+            throw new ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                "Invalid business ID"
+            );
+        }
+
+
+        // ----------------------------------------------------
+        // RETRIEVE CURRENT DATABASE MEMBERSHIP
+        // ----------------------------------------------------
+
+        String role =
+            businessMembershipMapper.findRole(
+                businessId,
+                userId
+            );
+
+
+        // ----------------------------------------------------
+        // REQUIRE AN EXISTING MEMBERSHIP
+        // ----------------------------------------------------
+
+        if (role == null) {
+
+            throw new ResponseStatusException(
+                HttpStatus.FORBIDDEN,
+                "Business membership required"
+            );
+        }
+
+
+        // ----------------------------------------------------
+        // RETURN CURRENT MEMBERSHIP ROLE
+        // ----------------------------------------------------
+
+        return new BusinessRoleResponse(role);
     }
 
 
@@ -190,38 +271,20 @@ public class BusinessController {
     /**
      * POST /api/v1/businesses
      *
-     * Example request:
+     * Create a business owned by the authenticated user.
      *
-     * {
-     *     "name": "ABC Consulting LLC",
-     *     "currency": "USD",
-     *     "fiscalYearStartMonth": 1
-     * }
+     * The browser supplies business attributes,
+     * but cannot select the owner ID.
      *
-     * AUTHENTICATED OWNERSHIP:
-     *
-     * The user ID comes exclusively from the
-     * validated JWT subject.
-     *
-     * The browser cannot choose an ownerId.
-     *
-     * DATABASE:
-     *
-     * BusinessService inserts the business and
+     * BusinessService creates the business and
      * its OWNER membership atomically.
      *
      * HTTP 201:
      * Business successfully created.
      *
-     * HTTP 400:
-     * Invalid input.
-     *
-     * HTTP 401:
-     * Missing or invalid authentication.
-     *
-     * @param request validated business input
-     * @param jwt validated JWT principal
-     * @return created business
+     * @param request validated business attributes
+     * @param jwt verified JWT principal
+     * @return newly created business
      */
     @PostMapping
     public ResponseEntity<Business> createBusiness(
@@ -230,7 +293,7 @@ public class BusinessController {
     ) {
 
         // ----------------------------------------------------
-        // GET AUTHENTICATED OWNER ID
+        // RESOLVE AUTHENTICATED OWNER
         // ----------------------------------------------------
 
         Long ownerId =
@@ -238,15 +301,9 @@ public class BusinessController {
 
 
         // ----------------------------------------------------
-        // CREATE BUSINESS AND OWNER MEMBERSHIP
+        // CREATE BUSINESS
         // ----------------------------------------------------
 
-        /**
-         * Only validated business properties are
-         * taken from the request body.
-         *
-         * The trusted ownerId is supplied separately.
-         */
         Business createdBusiness =
             businessService.createBusiness(
                 ownerId,
@@ -271,31 +328,22 @@ public class BusinessController {
     // ========================================================
 
     /**
-     * Extract the database user ID from Spring
-     * Security's validated JWT principal.
+     * Extract the PostgreSQL user ID from the
+     * JWT principal verified by Spring Security.
      *
-     * This is NOT a user ID submitted by the browser.
+     * Do not accept a browser-provided user ID.
      *
-     * The JWT has already passed the configured:
-     *
-     * - Signature validation.
-     * - Issuer and audience validation.
-     * - Expiration validation.
-     * - PostgreSQL session validation.
-     *
-     * The subject must be a positive numeric ID.
-     *
-     * A malformed identity is rejected with HTTP 401.
+     * Invalid or missing identities are rejected.
      *
      * @param jwt verified JWT principal
-     * @return trusted PostgreSQL user ID
+     * @return positive authenticated user ID
      */
     private Long getAuthenticatedUserId(
         Jwt jwt
     ) {
 
         // ----------------------------------------------------
-        // REQUIRE A JWT PRINCIPAL
+        // REQUIRE AUTHENTICATED JWT
         // ----------------------------------------------------
 
         if (jwt == null) {
@@ -308,7 +356,7 @@ public class BusinessController {
 
 
         // ----------------------------------------------------
-        // PARSE POSITIVE USER ID
+        // PARSE JWT SUBJECT
         // ----------------------------------------------------
 
         try {

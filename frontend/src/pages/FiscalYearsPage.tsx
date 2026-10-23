@@ -56,7 +56,23 @@ import './FiscalYearsPage.css'
  * from the verified JWT.
  */
 interface FiscalYearsPageProps {
+
+  // Currently selected business.
   businessId: number
+
+  /**
+   * Whether the authenticated user may perform
+   * accounting write operations for this business.
+   *
+   * OWNER / ADMIN / ACCOUNTANT: true
+   * VIEWER: false
+   *
+   * App.tsx retrieves the current membership role
+   * from Spring Boot and derives this permission.
+   *
+   * Backend authorization remains authoritative.
+   */
+  canWrite: boolean
 }
 
 // ============================================================
@@ -115,6 +131,7 @@ function formatPeriodMonth(date: string): string {
 
 function FiscalYearsPage({
   businessId,
+  canWrite,
 }: FiscalYearsPageProps) {
 
   // ==========================================================
@@ -496,9 +513,26 @@ function FiscalYearsPage({
     event: FormEvent<HTMLFormElement>,
   ): Promise<void> {
 
+    // ----------------------------------------------------------
+    // PREVENT NATIVE FORM SUBMISSION
+    // ----------------------------------------------------------
+
     event.preventDefault()
 
-    if (isCreatingFiscalYear) {
+    // ----------------------------------------------------------
+    // REQUIRE ACCOUNTING WRITE PERMISSION
+    // ----------------------------------------------------------
+
+    /**
+     * VIEWER users cannot submit fiscal-year creation.
+     *
+     * Also prevent duplicate requests while another
+     * creation request is processing.
+     *
+     * Spring Security independently enforces the
+     * user's current database membership permission.
+     */
+    if (!canWrite || isCreatingFiscalYear) {
       return
     }
 
@@ -602,7 +636,12 @@ function FiscalYearsPage({
     period: AccountingPeriod,
   ): void {
 
-    if (isSavingPeriod) {
+    /**
+     * VIEWER users cannot initiate period status changes.
+     *
+     * The current transaction workflow must also be idle.
+     */
+    if (!canWrite || isSavingPeriod) {
       return
     }
 
@@ -637,7 +676,16 @@ function FiscalYearsPage({
    */
   async function handleConfirmPeriodAction(): Promise<void> {
 
+    /**
+     * The confirmation handler independently checks
+     * canWrite before issuing any write request.
+     *
+     * This prevents a pending confirmation from being
+     * submitted after write permission is revoked in
+     * the current React state.
+     */
     if (
+      !canWrite ||
       pendingPeriodAction === null ||
       pendingPeriod === null ||
       isSavingPeriod
@@ -800,31 +848,35 @@ function FiscalYearsPage({
 
           </div>
 
-          <button
-            type="button"
-            className="fy-create-toggle"
-            disabled={
-              isCreatingFiscalYear ||
-              isYearsLoading ||
-              isSavingPeriod
-            }
-            aria-expanded={showCreateForm}
-            aria-controls="fy-create-form"
-            onClick={() => {
+          {canWrite && (
 
-              setShowCreateForm(
-                previous => !previous,
-              )
+            <button
+              type="button"
+              className="fy-create-toggle"
+              disabled={
+                isCreatingFiscalYear ||
+                isYearsLoading ||
+                isSavingPeriod
+              }
+              aria-expanded={showCreateForm}
+              aria-controls="fy-create-form"
+              onClick={() => {
 
-              setCreateFiscalYearError(null)
-              setCreateFiscalYearSuccess(null)
+                setShowCreateForm(
+                  previous => !previous,
+                )
 
-            }}
-          >
-            {showCreateForm
-              ? 'Cancel'
-              : '+ Create Fiscal Year'}
-          </button>
+                setCreateFiscalYearError(null)
+                setCreateFiscalYearSuccess(null)
+
+              }}
+            >
+              {showCreateForm
+                ? 'Cancel'
+                : '+ Create Fiscal Year'}
+            </button>
+
+          )}
 
         </div>
 
@@ -847,7 +899,7 @@ function FiscalYearsPage({
         {/* CREATE FISCAL YEAR FORM */}
         {/* ================================================== */}
 
-        {showCreateForm && (
+        {canWrite && showCreateForm && (
 
           <form
             id="fy-create-form"
@@ -962,8 +1014,11 @@ function FiscalYearsPage({
           fiscalYears.length === 0 && (
 
             <p className="fy-message">
-              No fiscal years exist for this business.
-              Use Create Fiscal Year to get started.
+
+              {canWrite
+                ? 'No fiscal years exist for this business. Use Create Fiscal Year to get started.'
+                : 'No fiscal years are available to display for this business.'}
+
             </p>
 
           )}
@@ -1123,7 +1178,9 @@ function FiscalYearsPage({
           {/* CLOSE / REOPEN CONFIRMATION */}
           {/* ================================================== */}
 
-          {pendingPeriodAction && pendingPeriod && (
+          {canWrite &&
+            pendingPeriodAction &&
+            pendingPeriod && (
 
             <div
               className="fy-period-confirmation"
@@ -1238,7 +1295,9 @@ function FiscalYearsPage({
                       <th scope="col">Start Date</th>
                       <th scope="col">End Date</th>
                       <th scope="col">Status</th>
-                      <th scope="col">Actions</th>
+                      {canWrite && (
+                        <th scope="col">Actions</th>
+                      )}
                     </tr>
 
                   </thead>
@@ -1311,31 +1370,35 @@ function FiscalYearsPage({
                         {/* CLOSE / REOPEN BUTTON */}
                         {/* ==================================== */}
 
-                        <td>
+                        {canWrite && (
 
-                          <button
-                            type="button"
-                            className="fy-period-action-button"
-                            disabled={
-                              isSavingPeriod ||
-                              isPeriodsLoading
-                            }
-                            aria-label={
-                              `${period.status === 'OPEN' ? 'Close' : 'Reopen'} ` +
-                              formatPeriodMonth(
-                                period.startDate,
-                              )
-                            }
-                            onClick={() => {
-                              preparePeriodAction(period)
-                            }}
-                          >
-                            {period.status === 'OPEN'
-                              ? 'Close'
-                              : 'Reopen'}
-                          </button>
+                          <td>
 
-                        </td>
+                            <button
+                              type="button"
+                              className="fy-period-action-button"
+                              disabled={
+                                isSavingPeriod ||
+                                isPeriodsLoading
+                              }
+                              aria-label={
+                                `${period.status === 'OPEN' ? 'Close' : 'Reopen'} ` +
+                                formatPeriodMonth(
+                                  period.startDate,
+                                )
+                              }
+                              onClick={() => {
+                                preparePeriodAction(period)
+                              }}
+                            >
+                              {period.status === 'OPEN'
+                                ? 'Close'
+                                : 'Reopen'}
+                            </button>
+
+                          </td>
+
+                        )}
 
                       </tr>
 

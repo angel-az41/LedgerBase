@@ -75,6 +75,20 @@ interface TransactionDetailsProps {
   businessId: number
 
   /**
+   * Whether the authenticated user has permission
+   * to perform accounting write operations.
+   *
+   * OWNER / ADMIN / ACCOUNTANT: true
+   * VIEWER: false
+   *
+   * This permission comes from App.tsx through
+   * TransactionsPage.tsx.
+   *
+   * Backend RBAC remains authoritative.
+   */
+  canWrite: boolean
+
+  /**
    * Globally unique internal database transaction ID.
    *
    * The parent passes this ID when opening the panel.
@@ -158,6 +172,7 @@ function formatEntryAmount(amount: number): string {
 
 function TransactionDetails({
   businessId,
+  canWrite,
   transactionId,
   onClose,
   onPosted,
@@ -353,12 +368,23 @@ function TransactionDetails({
   // ============================================================
 
   /**
-   * Only DRAFT transactions may be posted.
+   * A transaction can be posted only when:
    *
-   * The backend repeats this validation
-   * before changing the database status.
+   * - The authenticated user has write permission.
+   * - Transaction data has finished loading.
+   * - No posting request is already in progress.
+   * - The transaction is still in DRAFT status.
+   * - Debit and credit totals are available.
+   * - Total debits equal total credits.
+   *
+   * VIEWER users must never be able to initiate
+   * posting through the React interface.
+   *
+   * Spring Security independently verifies the
+   * membership role when the posting API is called.
    */
   const canPost =
+    canWrite &&
     !isLoading &&
     !isPosting &&
     details?.transaction.status === 'DRAFT' &&
@@ -715,7 +741,8 @@ function TransactionDetails({
           {/* POSTING ACTIONS */}
           {/* ================================================== */}
 
-          {details.transaction.status === 'DRAFT' &&
+          {canWrite && 
+            details.transaction.status === 'DRAFT' &&
             !isConfirmingPost && (
 
               <div className="transaction-details-actions">

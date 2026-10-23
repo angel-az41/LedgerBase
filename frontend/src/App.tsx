@@ -23,7 +23,10 @@ import { useAuth } from './auth/useAuth'
 
 import {
   getBusinesses,
+  getBusinessRole,
+  canWriteBusiness,
   type Business,
+  type BusinessRole,
 } from './api/businesses'
 
 import OverviewPage from './pages/OverviewPage'
@@ -85,6 +88,36 @@ interface NavigationGroup {
   heading: string
   accessibleLabel: string
   items: NavigationItem[]
+}
+
+// ============================================================
+// BUSINESS ROLE LOOKUP STATE
+// ============================================================
+
+/**
+ * Represents the result of retrieving an authenticated
+ * user's membership role for a selected business.
+ *
+ * The business and user identifiers are retained so
+ * an earlier result cannot be applied accidentally
+ * after switching businesses or users.
+ *
+ * A missing or unrecognized role never grants
+ * permission to modify accounting data.
+ */
+interface BusinessRoleLookup {
+
+  // Business for which the role was retrieved.
+  businessId: number
+
+  // Authenticated user for whom the role was retrieved.
+  userId: number
+
+  // Verified role, or null if no valid role is available.
+  role: BusinessRole | null
+
+  // Error message if the lookup failed.
+  error: string | null
 }
 
 // ============================================================
@@ -353,6 +386,22 @@ function App() {
 
   const [businessesError, setBusinessesError] =
     useState<string | null>(null)
+  
+  // ==========================================================
+  // CURRENT BUSINESS MEMBERSHIP ROLE
+  // ==========================================================
+
+  /**
+   * The selected user's business role is retrieved
+   * independently from the business directory.
+   *
+   * null means that no valid lookup result is available.
+   *
+   * Permission is denied by default until the backend
+   * confirms the user's current business membership.
+   */
+  const [businessRoleLookup, setBusinessRoleLookup] =
+    useState<BusinessRoleLookup | null>(null)
 
   // ==========================================================
   // LOAD AVAILABLE BUSINESSES
@@ -535,12 +584,258 @@ function App() {
       // Local storage is optional.
     }
   }
-
+  
   // ==========================================================
   // CURRENT ACCOUNTING BUSINESS
   // ==========================================================
 
+  /**
+   * The selected business determines which accounting
+   * records and membership permissions are retrieved.
+   */
   const businessId = selectedBusinessId
+
+
+  // ==========================================================
+  // AUTHENTICATED BUSINESS USER
+  // ==========================================================
+
+  /**
+   * The user ID comes from the verified authentication
+   * context, not from a browser input field.
+   *
+   * null means the authenticated identity is unavailable.
+   */
+  const authenticatedUserId =
+    currentUser?.userId ?? null
+
+
+  // ==========================================================
+  // LOAD BUSINESS MEMBERSHIP ROLE
+  // ==========================================================
+
+  /**
+   * Retrieve the current user's membership role whenever
+   * either the selected business or user identity changes.
+   *
+   * The backend endpoint is:
+   *
+   * GET /api/v1/businesses/{businessId}/my-role
+   *
+   * IMPORTANT:
+   *
+   * - Never infer a role from Business.ownerId.
+   * - Never hardcode roles based on email addresses.
+   * - Never reuse another business's cached permissions.
+   * - Never grant writes before verification completes.
+   *
+   * The cleanup flag prevents an outdated request
+   * from updating state after the selection changes.
+   */
+  
+  useEffect(() => {
+
+    // --------------------------------------------------------
+    // REQUIRE VALID BUSINESS AND USER IDENTITIES
+    // --------------------------------------------------------
+
+    /**
+     * Do not retrieve membership information until
+     * both the business and authenticated user exist.
+     */
+    if (
+      businessId === null ||
+      authenticatedUserId === null
+    ) {
+
+      setBusinessRoleLookup(null)
+      return
+    }
+
+    // --------------------------------------------------------
+    // CAPTURE VERIFIED NON-NULL IDENTIFIERS
+    // --------------------------------------------------------
+
+    /**
+     * After the null checks, TypeScript knows these
+     * identifiers are numbers.
+     *
+     * Explicit number types ensure they remain
+     * non-null inside the asynchronous function.
+     *
+     * These constants capture the business and user
+     * associated with this particular effect run.
+     */
+    const requestedBusinessId: number = businessId
+    const requestedUserId: number = authenticatedUserId
+
+
+
+    // --------------------------------------------------------
+    // PREVENT STALE ASYNCHRONOUS UPDATES
+    // --------------------------------------------------------
+
+    let active = true
+
+    // Clear the previous result while requesting a new role.
+    setBusinessRoleLookup(null)
+
+
+    // --------------------------------------------------------
+    // REQUEST CURRENT MEMBERSHIP ROLE
+    // --------------------------------------------------------
+
+    async function loadBusinessRole(): Promise<void> {
+
+      try {
+
+        const response = await getBusinessRole(
+          requestedBusinessId,
+        )
+
+        if (!active) {
+          return
+        }
+
+
+        // ----------------------------------------------------
+        // REQUIRE AN EXPLICIT RECOGNIZED ROLE
+        // ----------------------------------------------------
+
+        /**
+         * Validate the actual response at runtime.
+         *
+         * TypeScript types alone do not guarantee that
+         * an HTTP response contains a supported role.
+         *
+         * Unknown values fail closed.
+         */
+        const role = response.role
+
+        if (
+          role !== 'OWNER' &&
+          role !== 'ADMIN' &&
+          role !== 'ACCOUNTANT' &&
+          role !== 'VIEWER'
+        ) {
+
+          throw new Error(
+            'The server returned an unrecognized business role.',
+          )
+        }
+
+
+        // ----------------------------------------------------
+        // STORE VERIFIED BUSINESS MEMBERSHIP
+        // ----------------------------------------------------
+
+        setBusinessRoleLookup({
+          businessId: requestedBusinessId,
+          userId: requestedUserId,
+          role,
+          error: null,
+        })
+
+      } catch (error) {
+
+        if (!active) {
+          return
+        }
+
+
+        // ----------------------------------------------------
+        // DENY PERMISSIONS WHEN LOOKUP FAILS
+        // ----------------------------------------------------
+
+        setBusinessRoleLookup({
+          businessId: requestedBusinessId,
+          userId: requestedUserId,
+          role: null,
+          error:
+            error instanceof Error
+              ? error.message
+              : 'Unable to verify business permissions.',
+        })
+      }
+    }
+
+
+    // --------------------------------------------------------
+    // START ROLE LOOKUP
+    // --------------------------------------------------------
+
+    void loadBusinessRole()
+
+
+    // --------------------------------------------------------
+    // CLEAN UP WHEN USER OR BUSINESS CHANGES
+    // --------------------------------------------------------
+
+    return () => {
+      active = false
+    }
+
+  }, [businessId, authenticatedUserId])
+
+
+  // ==========================================================
+  // VERIFY ROLE BELONGS TO CURRENT SELECTION
+  // ==========================================================
+
+  /**
+   * A completed request is applicable only if it belongs
+   * to the currently authenticated user and business.
+   *
+   * This prevents temporarily retaining OWNER permissions
+   * after changing to a different business or user.
+   */
+  const currentRoleLookup =
+    businessRoleLookup !== null &&
+    businessRoleLookup.businessId === businessId &&
+    businessRoleLookup.userId === authenticatedUserId
+      ? businessRoleLookup
+      : null
+
+
+  // ==========================================================
+  // DERIVE CURRENT BUSINESS PERMISSIONS
+  // ==========================================================
+
+  /**
+   * Role validation is centralized here.
+   *
+   * All accounting pages will eventually receive the
+   * same canWrite value.
+   *
+   * The frontend is read-only by default until the
+   * membership role is successfully verified.
+   */
+  const currentBusinessRole =
+    currentRoleLookup?.role ?? null
+
+  const canWrite =
+    canWriteBusiness(currentBusinessRole)
+
+
+  // ==========================================================
+  // ROLE LOADING AND ERROR STATES
+  // ==========================================================
+
+  /**
+   * While the request is outstanding, no verified
+   * membership information is available.
+   */
+  const businessRoleLoading =
+    businessId !== null &&
+    authenticatedUserId !== null &&
+    currentRoleLookup === null
+
+  /**
+   * Errors are shown instead of silently treating
+   * failed permission verification as successful.
+   */
+  const businessRoleError =
+    currentRoleLookup?.error ?? null
 
   // ==========================================================
   // PAGE HEADINGS
@@ -672,6 +967,29 @@ function App() {
             )}
 
           </select>
+
+          {/* ================================================== */}
+          {/* CURRENT BUSINESS ACCESS LEVEL */}
+          {/* ================================================== */}
+
+          {businessId !== null && (
+
+            <p
+              className="business-selector-label"
+              aria-live="polite"
+            >
+              {businessRoleLoading
+                ? 'CHECKING ACCESS...'
+                : businessRoleError
+                  ? 'ACCESS UNAVAILABLE'
+                  : currentBusinessRole
+                    ? `${currentBusinessRole} · ${
+                        canWrite ? 'READ / WRITE' : 'READ ONLY'
+                      }`
+                    : 'ACCESS UNAVAILABLE'}
+            </p>
+
+          )}
 
         </div>
 
@@ -964,12 +1282,57 @@ function App() {
         )}
 
         {/* ================================================== */}
+        {/* VERIFYING BUSINESS ACCESS */}
+        {/* ================================================== */}
+
+        {businessId !== null &&
+          !businessesLoading &&
+          !businessesError &&
+          businessRoleLoading && (
+
+          <p
+            className="page-description"
+            role="status"
+          >
+            Verifying your business access...
+          </p>
+
+        )}
+
+
+        {/* ================================================== */}
+        {/* BUSINESS ACCESS VERIFICATION FAILURE */}
+        {/* ================================================== */}
+
+        {businessId !== null &&
+          !businessesLoading &&
+          !businessesError &&
+          businessRoleError && (
+
+          <div role="alert">
+
+            <h1>Unable to verify business access</h1>
+
+            <p className="page-description">
+              {businessRoleError}
+            </p>
+
+            <p className="page-description">
+              Refresh the page to retry your permissions.
+            </p>
+
+          </div>
+
+        )}
+
+        {/* ================================================== */}
         {/* AUTHENTICATED ACCOUNTING WORKSPACE */}
         {/* ================================================== */}
 
         {businessId !== null &&
           !businessesLoading &&
-          !businessesError && (
+          !businessesError &&
+          currentBusinessRole !== null && (
 
           <>
 
@@ -1026,7 +1389,10 @@ function App() {
 
             {activePage === 'accounts' && (
 
-              <AccountsPage businessId={businessId} />
+              <AccountsPage
+                businessId={businessId}
+                canWrite={canWrite}
+              />
 
             )}
 
@@ -1036,7 +1402,10 @@ function App() {
 
             {activePage === 'transactions' && (
 
-              <TransactionsPage businessId={businessId} />
+              <TransactionsPage
+                businessId={businessId}
+                canWrite={canWrite}
+              />
 
             )}
 
@@ -1078,6 +1447,7 @@ function App() {
 
               <FiscalYearsPage
                 businessId={businessId}
+                canWrite={canWrite}
               />
 
             )}

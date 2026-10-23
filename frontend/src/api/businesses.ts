@@ -6,7 +6,7 @@ import { getJson, postJson } from './client'
 
 /**
  * Defines the TypeScript models and API functions
- * used for business management.
+ * used for business management and authorization.
  *
  * BACKEND:
  *
@@ -16,41 +16,53 @@ import { getJson, postJson } from './client'
  *
  * GET  /api/v1/businesses
  * GET  /api/v1/businesses/{businessId}
+ * GET  /api/v1/businesses/{businessId}/my-role
  * POST /api/v1/businesses
  *
  * RESPONSIBILITIES:
  *
- * 1. Retrieve businesses available to the current
- *    development owner.
- *
- * 2. Retrieve one business by its ID.
- *
- * 3. Submit requests to create new businesses.
+ * - Retrieve businesses accessible to the current user.
+ * - Retrieve one authorized business by ID.
+ * - Create businesses for the authenticated user.
+ * - Retrieve the current user's business membership role.
  *
  * BUSINESS SELECTOR:
  *
- * App.tsx will use getBusinesses() to populate
- * the sidebar business selector.
+ * App.tsx uses getBusinesses() to populate the
+ * sidebar business selector.
  *
- * Each accounting page will receive the selected
- * business ID through its existing businessId prop.
+ * Each accounting page receives the currently
+ * selected business ID through its businessId prop.
  *
- * IMPORTANT:
+ * ROLE-BASED PRESENTATION:
  *
- * We reuse the shared getJson() and postJson()
- * functions instead of calling fetch() directly.
+ * App.tsx can use getBusinessRole() and
+ * canWriteBusiness() to determine whether
+ * accounting write controls should be displayed.
  *
- * Authentication and authorization have not yet
- * been implemented. These endpoints currently
- * operate with the backend's development owner.
+ * SECURITY:
+ *
+ * All requests use the shared authenticated
+ * API client.
+ *
+ * The backend derives user identity from the
+ * verified JWT and current PostgreSQL memberships.
+ *
+ * React never supplies an owner ID, user ID,
+ * or membership role for authorization decisions.
+ *
+ * Frontend role checks improve usability.
+ * Spring Security remains the authoritative
+ * enforcement layer for all financial operations.
  */
+
 
 // ============================================================
 // BUSINESS MODEL
 // ============================================================
 
 /**
- * Represents one business stored in PostgreSQL.
+ * Represents a business stored in PostgreSQL.
  *
  * This interface matches Business.java.
  *
@@ -65,8 +77,13 @@ import { getJson, postJson } from './client'
  *   createdAt: "2026-10-17T20:51:20Z"
  * }
  *
- * This is the response format returned by
- * the Business Management REST API.
+ * IMPORTANT:
+ *
+ * ownerId identifies the business's original owner.
+ * It does not describe the currently authenticated
+ * user's membership role.
+ *
+ * Use getBusinessRole() for role-aware interfaces.
  */
 export interface Business {
 
@@ -74,12 +91,10 @@ export interface Business {
   id: number
 
   /**
-   * Owner of the business.
+   * User ID of the business owner.
    *
-   * Currently, our local development owner has ID 1.
-   *
-   * React must not use this field as proof
-   * that a user is authorized.
+   * Do not use this property to decide whether
+   * the current user may modify business data.
    */
   ownerId: number
 
@@ -110,6 +125,107 @@ export interface Business {
   createdAt: string
 }
 
+
+// ============================================================
+// BUSINESS MEMBERSHIP ROLES
+// ============================================================
+
+/**
+ * Supported PostgreSQL business membership roles.
+ *
+ * OWNER:
+ * Full business accounting read/write access.
+ *
+ * ADMIN:
+ * Business accounting read/write access.
+ *
+ * ACCOUNTANT:
+ * Business accounting read/write access.
+ *
+ * VIEWER:
+ * Read-only access to business accounting data.
+ *
+ * These roles match BusinessAuthorizationManager.
+ *
+ * They must not be inferred from email addresses
+ * or from the Business.ownerId field.
+ */
+export type BusinessRole =
+  | 'OWNER'
+  | 'ADMIN'
+  | 'ACCOUNTANT'
+  | 'VIEWER'
+
+
+// ============================================================
+// BUSINESS ROLE RESPONSE
+// ============================================================
+
+/**
+ * Response returned by:
+ *
+ * GET /api/v1/businesses/{businessId}/my-role
+ *
+ * Example:
+ *
+ * {
+ *   "role": "VIEWER"
+ * }
+ *
+ * The backend determines the authenticated user
+ * from the verified JWT and retrieves the user's
+ * membership role from PostgreSQL.
+ */
+export interface BusinessRoleResponse {
+
+  // Current authenticated user's role for this business.
+  role: BusinessRole
+}
+
+
+// ============================================================
+// BUSINESS WRITE PERMISSION HELPER
+// ============================================================
+
+/**
+ * Determine whether the authenticated user may
+ * perform ordinary accounting write operations.
+ *
+ * WRITE ROLES:
+ *
+ * - OWNER
+ * - ADMIN
+ * - ACCOUNTANT
+ *
+ * READ-ONLY ROLE:
+ *
+ * - VIEWER
+ *
+ * SECURITY:
+ *
+ * Missing, null, or unrecognized roles must
+ * never grant frontend write permissions.
+ *
+ * This helper controls interface presentation only.
+ *
+ * The backend independently validates the user,
+ * business membership, and HTTP operation.
+ *
+ * @param role authenticated user's business role
+ * @returns true if accounting writes are permitted
+ */
+export function canWriteBusiness(
+  role: BusinessRole | null | undefined,
+): boolean {
+
+  return (
+    role === 'OWNER' ||
+    role === 'ADMIN' ||
+    role === 'ACCOUNTANT'
+  )
+}
+
+
 // ============================================================
 // CREATE BUSINESS REQUEST
 // ============================================================
@@ -119,21 +235,19 @@ export interface Business {
  *
  * This interface matches CreateBusinessRequest.java.
  *
- * Only the business information that a client
- * is permitted to supply appears here.
+ * Only client-editable business information
+ * appears in this request.
  *
- * ownerId, id, and createdAt are deliberately
- * excluded from the creation request.
+ * The backend derives ownerId from the verified
+ * authenticated user's JWT.
  *
  * Optional defaults:
  *
  * currency:
- *   Defaults to USD.
+ * Defaults to USD.
  *
  * fiscalYearStartMonth:
- *   Defaults to January (1).
- *
- * The backend remains responsible for validation.
+ * Defaults to January (1).
  */
 export interface CreateBusinessRequest {
 
@@ -147,26 +261,28 @@ export interface CreateBusinessRequest {
   fiscalYearStartMonth?: number
 }
 
+
 // ============================================================
 // BUSINESS API BASE URL
 // ============================================================
 
 /**
- * All business-management requests use
- * the same base endpoint.
+ * All business-management endpoints share
+ * the same base URL.
  *
- * Keeping this in one place avoids duplicating
- * URL strings across API functions.
+ * During local development, Vite forwards
+ * /api requests to the Spring Boot backend.
  */
 const BUSINESSES_ENDPOINT = '/api/v1/businesses'
 
+
 // ============================================================
-// GET ALL BUSINESSES
+// GET ALL ACCESSIBLE BUSINESSES
 // ============================================================
 
 /**
- * Retrieve businesses belonging to the current
- * development owner.
+ * Retrieve businesses accessible to the current
+ * authenticated user.
  *
  * Sends:
  *
@@ -177,33 +293,36 @@ const BUSINESSES_ENDPOINT = '/api/v1/businesses'
  * [
  *   {
  *     id: 1,
+ *     ownerId: 1,
  *     name: "LedgerBase Demo Business",
- *     ...
- *   },
- *   {
- *     id: 2,
- *     name: "ABC Consulting LLC",
- *     ...
+ *     currency: "USD",
+ *     fiscalYearStartMonth: 1,
+ *     createdAt: "2026-10-17T20:51:20Z"
  *   }
  * ]
  *
- * The backend currently orders businesses
- * by their database IDs.
+ * The backend filters businesses using
+ * business_memberships and the JWT user ID.
  *
- * The React business selector will use this
- * function to populate its options.
+ * A user with no memberships receives
+ * an empty list.
+ *
+ * The result populates the business selector.
+ *
+ * @returns accessible businesses
  */
 export async function getBusinesses(): Promise<Business[]> {
 
   // ==========================================================
-  // REQUEST AVAILABLE BUSINESSES
+  // REQUEST AUTHENTICATED USER'S BUSINESSES
   // ==========================================================
 
   return getJson<Business[]>(BUSINESSES_ENDPOINT)
 }
 
+
 // ============================================================
-// GET ONE BUSINESS
+// GET ONE AUTHORIZED BUSINESS
 // ============================================================
 
 /**
@@ -217,12 +336,16 @@ export async function getBusinesses(): Promise<Business[]> {
  *
  * GET /api/v1/businesses/2
  *
- * Returns the business if it is accessible
- * to the current development owner.
+ * The backend verifies membership access.
  *
- * A missing business results in HTTP 404.
+ * HTTP 200:
+ * Business details.
  *
- * Our shared API client handles HTTP errors.
+ * HTTP 404:
+ * Business not found or inaccessible.
+ *
+ * @param businessId requested business ID
+ * @returns accessible business details
  */
 export async function getBusiness(
   businessId: number,
@@ -235,12 +358,81 @@ export async function getBusiness(
   const endpoint =
     `${BUSINESSES_ENDPOINT}/${businessId}`
 
+
   // ==========================================================
   // RETRIEVE BUSINESS DETAILS
   // ==========================================================
 
   return getJson<Business>(endpoint)
 }
+
+
+// ============================================================
+// GET AUTHENTICATED USER'S BUSINESS ROLE
+// ============================================================
+
+/**
+ * Retrieve the current authenticated user's
+ * membership role for one selected business.
+ *
+ * Sends:
+ *
+ * GET /api/v1/businesses/{businessId}/my-role
+ *
+ * Example:
+ *
+ * getBusinessRole(2)
+ *
+ * Example response:
+ *
+ * {
+ *   "role": "VIEWER"
+ * }
+ *
+ * SECURITY:
+ *
+ * The backend derives userId from the verified
+ * JWT rather than accepting a user ID from React.
+ *
+ * BusinessMembershipMapper reads the current
+ * role from PostgreSQL.
+ *
+ * The endpoint is protected by the existing
+ * BusinessAuthorizationManager.
+ *
+ * Missing or unauthorized business memberships
+ * are rejected by the backend.
+ *
+ * ROLE-AWARE UI:
+ *
+ * App.tsx will call this when the selected
+ * business changes.
+ *
+ * While the role is loading or unavailable,
+ * accounting write controls should remain hidden.
+ *
+ * @param businessId currently selected business ID
+ * @returns authenticated user's membership role
+ */
+export async function getBusinessRole(
+  businessId: number,
+): Promise<BusinessRoleResponse> {
+
+  // ==========================================================
+  // BUILD AUTHENTICATED MEMBERSHIP ENDPOINT
+  // ==========================================================
+
+  const endpoint =
+    `${BUSINESSES_ENDPOINT}/${businessId}/my-role`
+
+
+  // ==========================================================
+  // RETRIEVE ROLE FROM SPRING BOOT
+  // ==========================================================
+
+  return getJson<BusinessRoleResponse>(endpoint)
+}
+
 
 // ============================================================
 // CREATE BUSINESS
@@ -263,28 +455,27 @@ export async function getBusiness(
  *
  * The backend:
  *
- * 1. Validates the request.
- * 2. Determines the development owner.
- * 3. Inserts the business into PostgreSQL.
- * 4. Retrieves the generated business ID.
- * 5. Returns the complete created business.
+ * - Validates the request.
+ * - Determines owner identity from the JWT.
+ * - Creates the business in PostgreSQL.
+ * - Assigns OWNER membership to the creator.
+ * - Returns the created business.
  *
  * Expected success status:
  *
  * HTTP 201 Created.
  *
- * We are implementing this function for future
- * business-management UI functionality.
+ * The request deliberately excludes ownerId.
  *
- * The initial selector will only list and
- * switch between existing businesses.
+ * @param request validated business information
+ * @returns newly created business
  */
 export async function createBusiness(
   request: CreateBusinessRequest,
 ): Promise<Business> {
 
   // ==========================================================
-  // SUBMIT CREATION REQUEST
+  // SUBMIT BUSINESS CREATION REQUEST
   // ==========================================================
 
   return postJson<
