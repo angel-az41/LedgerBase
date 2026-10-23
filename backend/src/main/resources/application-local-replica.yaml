@@ -1,0 +1,36 @@
+# ============================================================
+# LEDGERBASE — LOCAL READ REPLICA CONFIGURATION
+# ============================================================
+#
+# This profile enables the PostgreSQL read-replica
+# connection pool during local development.
+#
+# The existing spring.datasource remains connected
+# to the primary PostgreSQL database on port 5434.
+#
+# The replica is used only through explicit injection.
+# Financial writes and Flyway migrations stay on
+# the primary database.
+
+ledgerbase:
+  read-replica:
+
+    # Enable the additional datasource for this profile.
+    enabled: true
+
+    # PostgreSQL standby, exposed on the Mac at port 5435.
+    jdbc-url: jdbc:postgresql://localhost:5435/ledgerbase
+
+    # Dedicated read-only database account.
+    username: ledgerbase_reader
+
+    # Never store the actual password in Git.
+    password: ${POSTGRES_REPLICA_PASSWORD}
+
+    # Small independent connection pool.
+    maximum-pool-size: 4
+
+    # Show which database executes Trial Balance reporting.
+    logging:
+      level:
+        com.ledgerbase.backend.reporting.ReplicaTrialBalanceReader: DEBUG
