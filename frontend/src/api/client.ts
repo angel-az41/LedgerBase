@@ -46,7 +46,11 @@
 *
 * DEVELOPMENT:
 *
-* Vite proxies /api requests to localhost:8080.
+* Vite proxies /api requests to Spring Cloud Gateway
+* on port 8081.
+*
+* Gateway routes financial reporting and accounting
+* requests to their respective backend services.
 */
 
 
