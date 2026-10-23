@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!--
+    ============================================================
+    LEDGERBASE — FINANCIAL REPORTING SERVICE
+    ============================================================
+
+    Independent Spring Boot application for
+    financial reporting workloads.
+
+    Initial responsibilities:
+
+    - Run independently from Accounting Core.
+    - Expose application health information.
+    - Prepare for read-only PostgreSQL access.
+
+    Future responsibilities:
+
+    - Trial Balance generation
+    - Income Statement reporting
+    - Balance Sheet reporting
+    - Secure reporting APIs
+
+    Accounting transactions and financial posting
+    remain inside the existing Accounting Core.
+-->
+
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="
+             http://maven.apache.org/POM/4.0.0
+             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- Spring Boot version aligned with Accounting Core. -->
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>4.0.8</version>
+        <relativePath/>
+    </parent>
+
+    <!-- Independent Maven artifact. -->
+    <groupId>com.ledgerbase</groupId>
+    <artifactId>reporting-service</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+
+    <name>LedgerBase Reporting Service</name>
+
+    <description>
+        Independent financial reporting microservice
+    </description>
+
+    <properties>
+        <java.version>25</java.version>
+    </properties>
+
+    <dependencies>
+
+        <!--
+            Spring Web MVC supports REST reporting APIs.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webmvc</artifactId>
+        </dependency>
+
+        <!--
+            Actuator provides service-specific health
+            checks and future monitoring endpoints.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!--
+            Spring Boot testing infrastructure.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webmvc-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+                
+        <!-- ======================================================== -->
+        <!-- POSTGRESQL READ-ONLY DATA ACCESS -->
+        <!-- ======================================================== -->
+
+        <!--
+            Spring JDBC:
+            Provides DataSource auto-configuration, HikariCP
+            connection pooling, and JdbcTemplate.
+
+            This service will read from PostgreSQL's standby,
+            not perform accounting transaction writes.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-jdbc</artifactId>
+        </dependency>
+
+        <!--
+            PostgreSQL JDBC driver:
+            Allows the reporting service to connect to the
+            existing LedgerBase PostgreSQL 17 replica.
+        -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- ======================================================== -->
+        <!-- MYBATIS — FINANCIAL REPORTING SQL -->
+        <!-- ======================================================== -->
+
+        <!--
+            MyBatis integrates Java mapper interfaces with
+            PostgreSQL financial reporting SQL.
+
+            This uses the same MyBatis version as the existing
+            LedgerBase accounting backend.
+
+            Reporting Service uses its own datasource,
+            which connects exclusively to the read replica.
+        -->
+        <dependency>
+            <groupId>org.mybatis.spring.boot</groupId>
+            <artifactId>mybatis-spring-boot-starter</artifactId>
+            <version>4.0.1</version>
+        </dependency>
+
+    </dependencies>
+
+    <build>
+        <plugins>
+
+            <!-- Build and run as an independent service. -->
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+
+        </plugins>
+    </build>
+
+</project>

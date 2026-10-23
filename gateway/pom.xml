@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!--
+    ============================================================
+    LEDGERBASE — SPRING CLOUD API GATEWAY
+    ============================================================
+
+    Standalone Maven application responsible for
+    routing incoming HTTP requests to backend services.
+
+    The gateway does not directly access PostgreSQL.
+
+    Spring Cloud's dependency BOM manages compatible
+    versions of gateway and related Cloud components.
+-->
+
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="
+             http://maven.apache.org/POM/4.0.0
+             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- ==================================================== -->
+    <!-- SPRING BOOT PARENT -->
+    <!-- ==================================================== -->
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>4.0.8</version>
+        <relativePath/>
+    </parent>
+
+    <!-- ==================================================== -->
+    <!-- PROJECT INFORMATION -->
+    <!-- ==================================================== -->
+
+    <groupId>com.ledgerbase</groupId>
+    <artifactId>gateway</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+
+    <name>LedgerBase API Gateway</name>
+
+    <description>
+        Spring Cloud API Gateway for LedgerBase services
+    </description>
+
+    <!-- ==================================================== -->
+    <!-- JAVA AND SPRING CLOUD VERSIONS -->
+    <!-- ==================================================== -->
+
+    <properties>
+        <java.version>25</java.version>
+        <spring-cloud.version>2025.1.3</spring-cloud.version>
+    </properties>
+
+    <!-- ==================================================== -->
+    <!-- SPRING CLOUD DEPENDENCY MANAGEMENT -->
+    <!-- ==================================================== -->
+
+    <dependencyManagement>
+        <dependencies>
+
+            <!--
+                Use Spring Cloud's tested dependency versions
+                rather than specifying gateway versions manually.
+            -->
+            <dependency>
+                <groupId>org.springframework.cloud</groupId>
+                <artifactId>spring-cloud-dependencies</artifactId>
+                <version>${spring-cloud.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+        </dependencies>
+    </dependencyManagement>
+
+    <!-- ==================================================== -->
+    <!-- APPLICATION DEPENDENCIES -->
+    <!-- ==================================================== -->
+
+    <dependencies>
+
+        <!--
+            Spring Cloud Gateway Server Web MVC.
+
+            Provides request routing and filters using
+            Spring MVC's servlet-based infrastructure.
+        -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-gateway-server-webmvc</artifactId>
+        </dependency>
+
+        <!--
+            Spring Boot Actuator.
+
+            Provides independent gateway health checks
+            without querying accounting database tables.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!--
+            JUnit and Spring Boot testing infrastructure.
+
+            Gateway integration tests will be added
+            after the initial route works.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webmvc-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+    </dependencies>
+
+    <!-- ==================================================== -->
+    <!-- BUILD CONFIGURATION -->
+    <!-- ==================================================== -->
+
+    <build>
+        <plugins>
+
+            <!--
+                Support running and packaging this gateway
+                as an independent Spring Boot application.
+            -->
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+
+        </plugins>
+    </build>
+
+</project>

@@ -1,0 +1,93 @@
+# ============================================================
+# LEDGERBASE — FINANCIAL REPORTING SERVICE
+# ============================================================
+#
+# Independent Spring Boot service for financial reporting.
+#
+# This service connects exclusively to the PostgreSQL
+# read replica using the restricted ledgerbase_reader role.
+#
+# Financial writes, schema migrations, and accounting
+# transaction management remain in Accounting Core.
+
+spring:
+
+  application:
+    name: ledgerbase-reporting-service
+
+  # ==========================================================
+  # POSTGRESQL READ REPLICA DATASOURCE
+  # ==========================================================
+
+  datasource:
+
+    # Local PostgreSQL standby.
+    url: jdbc:postgresql://127.0.0.1:5435/ledgerbase
+
+    # Dedicated restricted database login.
+    username: ledgerbase_reader
+
+    # Load from the root .env file.
+    # Never commit actual passwords.
+    password: ${POSTGRES_REPLICA_PASSWORD}
+
+    # HikariCP connection pool configuration.
+    hikari:
+
+      pool-name: ledgerbase-reporting-replica-pool
+
+      # Separate connection pool for reporting workloads.
+      maximum-pool-size: 4
+      minimum-idle: 0
+
+      # Report queries should never perform writes.
+      read-only: true
+
+      # Fail promptly when the replica is unreachable.
+      connection-timeout: 5000
+      validation-timeout: 2000
+
+# ============================================================
+# REPORTING HTTP SERVER
+# ============================================================
+
+server:
+  port: 8082
+  address: 127.0.0.1
+
+# ============================================================
+# ACTUATOR HEALTH MONITORING
+# ============================================================
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+  endpoint:
+    health:
+      show-details: never
+
+# ============================================================
+# LOGGING
+# ============================================================
+
+logging:
+  level:
+    com.ledgerbase.reporting: INFO
+
+# ============================================================
+# MYBATIS FINANCIAL REPORTING CONFIGURATION
+# ============================================================
+
+mybatis:
+
+  # Load XML statements for financial reporting.
+  mapper-locations: classpath*:mapper/*.xml
+
+  configuration:
+
+    # Map PostgreSQL snake_case columns to
+    # Java camelCase properties when appropriate.
+    map-underscore-to-camel-case: true

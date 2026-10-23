@@ -1,0 +1,242 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+    PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<!-- ============================================================ -->
+<!-- LEDGERBASE — TRIAL BALANCE SQL MAPPER -->
+<!-- ============================================================ -->
+
+<!--
+    PostgreSQL queries for Trial Balance reporting.
+
+    Java interface:
+
+    com.ledgerbase.backend.mapper.TrialBalanceMapper
+
+    Responsibilities:
+
+    - Calculate account balances as of a reporting date
+    - Include only POSTED journal transactions
+    - Separate net debit and credit balances
+    - Include accounts with no posted activity
+    - Include inactive accounts
+    - Restrict all results to one business
+
+    IMPORTANT:
+
+    This mapper performs READ-ONLY reporting.
+
+    It does not modify accounts, transactions,
+    or ledger entries.
+
+    All monetary calculations use PostgreSQL NUMERIC.
+-->
+
+<mapper namespace="com.ledgerbase.reporting.mapper.TrialBalanceMapper">
+
+    <!-- ======================================================== -->
+    <!-- TRIAL BALANCE ROW RESULT MAPPING -->
+    <!-- ======================================================== -->
+
+    <!--
+        Convert PostgreSQL query results into
+        TrialBalanceRow Java objects.
+
+        PostgreSQL column names use snake_case.
+
+        Java properties use camelCase.
+
+        MyBatis uses this resultMap to connect
+        the SQL columns to the correct Java setters.
+
+        Monetary NUMERIC values map to BigDecimal.
+    -->
+
+    <resultMap
+        id="trialBalanceRowResultMap"
+        type="com.ledgerbase.reporting.model.TrialBalanceRow">
+
+        <!-- Account identification. -->
+
+        <id
+            property="accountId"
+            column="account_id"/>
+
+        <result
+            property="code"
+            column="code"/>
+
+        <result
+            property="name"
+            column="name"/>
+
+        <!-- Account classification and status. -->
+
+        <result
+            property="accountType"
+            column="account_type"/>
+
+        <result
+            property="active"
+            column="is_active"/>
+
+        <!-- Calculated monetary balances. -->
+
+        <result
+            property="debitBalance"
+            column="debit_balance"
+            javaType="java.math.BigDecimal"/>
+
+        <result
+            property="creditBalance"
+            column="credit_balance"
+            javaType="java.math.BigDecimal"/>
+
+    </resultMap>
+
+    <!-- ======================================================== -->
+    <!-- TRIAL BALANCE AS OF A REPORTING DATE -->
+    <!-- ======================================================== -->
+
+    <!--
+        Maps to the Java method:
+
+        findByBusinessIdAsOfDate(
+            Long businessId,
+            LocalDate asOfDate
+        )
+
+        MyBatis binds:
+
+        #{businessId}
+            Requested business ID.
+
+        #{asOfDate}
+            Reporting cutoff date.
+
+        The reporting date is inclusive.
+
+        For example, asOfDate = 2026-10-13 includes
+        transactions dated October 13 or earlier.
+
+        Transactions dated October 14 or later
+        are excluded from that report.
+    -->
+
+    <select
+        id="findByBusinessIdAsOfDate"
+        resultMap="trialBalanceRowResultMap">
+
+        -- ======================================================
+        -- STEP 1: CALCULATE POSTED NET ACTIVITY PER ACCOUNT
+        -- ======================================================
+
+        WITH posted_totals AS (
+
+            SELECT
+                le.business_id,
+                le.account_id,
+
+                -- Debit-positive net accounting amount.
+                SUM(
+                    le.debit - le.credit
+                ) AS net_debit_balance
+
+            FROM ledger_entries le
+
+            -- Match each ledger entry to its transaction.
+            -- Both identifiers are used for business safety.
+            INNER JOIN transactions t
+                ON t.business_id = le.business_id
+               AND t.id = le.transaction_id
+
+            WHERE le.business_id = #{businessId}
+
+              -- Only finalized transactions affect reports.
+              AND t.status = 'POSTED'
+
+              -- Include transactions up to the report date.
+              AND t.transaction_date &lt;= #{asOfDate}
+
+            GROUP BY
+                le.business_id,
+                le.account_id
+        ),
+
+        -- ======================================================
+        -- STEP 2: INCLUDE ALL ACCOUNTS IN THE BUSINESS
+        -- ======================================================
+
+        account_net AS (
+
+            SELECT
+                a.id AS account_id,
+                a.code,
+                a.name,
+                a.account_type,
+                a.is_active,
+
+                -- Zero when no posted entries exist.
+                COALESCE(
+                    pt.net_debit_balance,
+                    0::NUMERIC
+                ) AS net_debit_balance
+
+            FROM accounts a
+
+            -- Keep accounts without matching ledger entries.
+            LEFT JOIN posted_totals pt
+                ON pt.business_id = a.business_id
+               AND pt.account_id = a.id
+
+            -- Return accounts belonging to this business.
+            WHERE a.business_id = #{businessId}
+        )
+
+        -- ======================================================
+        -- STEP 3: SPLIT NET BALANCES INTO DEBIT AND CREDIT
+        -- ======================================================
+
+        SELECT
+            account_id,
+            code,
+            name,
+            account_type,
+            is_active,
+
+            -- ==================================================
+            -- DEBIT BALANCE
+            -- ==================================================
+
+            -- A positive net amount belongs on the Debit side.
+            -- Otherwise, the Debit balance is zero.
+
+            GREATEST(
+                net_debit_balance,
+                0::NUMERIC
+            ) AS debit_balance,
+
+            -- ==================================================
+            -- CREDIT BALANCE
+            -- ==================================================
+
+            -- A negative net amount represents a credit balance.
+            -- Negate it to display a positive credit amount.
+
+            GREATEST(
+                -net_debit_balance,
+                0::NUMERIC
+            ) AS credit_balance
+
+        FROM account_net
+
+        -- ======================================================
+        -- STEP 4: SORT BY ACCOUNT CODE
+        -- ======================================================
+
+        ORDER BY code, account_id
+
+    </select>
+
+</mapper>

@@ -1,0 +1,89 @@
+# ============================================================
+# LEDGERBASE — API GATEWAY CONFIGURATION
+# ============================================================
+#
+# Standalone HTTP entry point for LedgerBase services.
+#
+# Initially, all /api/v1/** requests are forwarded to
+# the existing accounting backend.
+#
+# No frontend or backend endpoint changes are required.
+#
+# The default backend address is for local development.
+# It can be overridden by an environment variable
+# when services are containerized later.
+
+spring:
+
+  application:
+    name: ledgerbase-gateway
+
+  # ==========================================================
+  # SPRING CLOUD GATEWAY ROUTING
+  # ==========================================================
+
+  cloud:
+    gateway:
+      server:
+        webmvc:
+          routes:
+
+            # ------------------------------------------------
+            # EXISTING LEDGERBASE BACKEND
+            # ------------------------------------------------
+            #
+            # All existing API endpoints remain available.
+            #
+            # Examples:
+            #
+            # /api/v1/health/database
+            # /api/v1/accounts
+            # /api/v1/transactions
+            #
+            # No path rewriting is applied.
+            #
+            # JWT Authorization headers are forwarded.
+            # The backend remains responsible for
+            # enforcing authentication and RBAC.
+
+            - id: ledgerbase-core
+              uri: "${LEDGERBASE_CORE_URL:http://127.0.0.1:8080}"
+
+              predicates:
+                - Path=/api/v1/**
+
+# ============================================================
+# HTTP SERVER
+# ============================================================
+
+server:
+
+  # Separate from the accounting backend (8080).
+  port: 8081
+
+  # Bind locally during initial development.
+  # Container deployment will use separate networking.
+  address: 127.0.0.1
+
+# ============================================================
+# ACTUATOR HEALTH CHECKS
+# ============================================================
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+  endpoint:
+    health:
+      show-details: never
+
+# ============================================================
+# LOGGING
+# ============================================================
+
+logging:
+  level:
+    org.springframework.cloud.gateway: INFO
+    com.ledgerbase.gateway: INFO
