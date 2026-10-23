@@ -91,3 +91,55 @@ mybatis:
     # Map PostgreSQL snake_case columns to
     # Java camelCase properties when appropriate.
     map-underscore-to-camel-case: true
+
+# ============================================================
+# JWT AUTHENTICATION CONFIGURATION
+# ============================================================
+
+# The Reporting Service validates JWT access tokens
+# issued by the existing LedgerBase Accounting Core.
+#
+# Both services must use the same:
+#
+# - HS256 signing secret
+# - JWT issuer
+# - JWT audience
+#
+# Reporting Service does not issue access tokens.
+#
+# Authentication sessions and business permissions
+# will be verified through Accounting Core.
+#
+# IMPORTANT:
+#
+# The signing secret is loaded from the environment.
+# Missing or invalid secrets must prevent startup.
+
+ledgerbase:
+  jwt:
+
+    # Same signing secret used by Accounting Core.
+    secret-base64: ${JWT_SECRET_BASE64:}
+
+    # Must match the issuer in Accounting Core.
+    issuer: ledgerbase
+
+    # Must match the audience in Accounting Core.
+    audience: ledgerbase-api
+  
+  # ==========================================================
+  # ACCOUNTING CORE AUTHORIZATION SERVICE
+  # ==========================================================
+
+  accounting-core:
+
+    # Trusted Accounting Core service address.
+    #
+    # Reporting Service calls Accounting Core directly
+    # to verify active sessions and business membership.
+    #
+    # Do not route these checks back through Gateway.
+    #
+    # Override this URL for Docker or Kubernetes,
+    # where localhost refers to the current container.
+    base-url: ${ACCOUNTING_CORE_BASE_URL:http://127.0.0.1:8080}

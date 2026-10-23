@@ -132,6 +132,25 @@
             <version>4.0.1</version>
         </dependency>
 
+        <!-- ======================================================== -->
+        <!-- SECURITY — JWT AUTHENTICATION AND AUTHORIZATION -->
+        <!-- ======================================================== -->
+
+        <!--
+            Spring Security OAuth2 Resource Server:
+
+            Validates JWT bearer tokens issued by Accounting Core.
+
+            Reporting Service must verify token signatures
+            independently and enforce business-scoped permissions.
+
+            It does not issue JWTs or manage user passwords.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security-oauth2-resource-server</artifactId>
+        </dependency>
+
     </dependencies>
 
     <build>
