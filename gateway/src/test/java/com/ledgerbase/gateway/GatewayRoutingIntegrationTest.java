@@ -3,8 +3,6 @@ package com.ledgerbase.gateway;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
-import main.java.com.ledgerbase.gateway.GatewayApplication;
-
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 
