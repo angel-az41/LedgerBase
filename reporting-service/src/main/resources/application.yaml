@@ -1,0 +1,145 @@
+# ============================================================
+# LEDGERBASE — FINANCIAL REPORTING SERVICE
+# ============================================================
+#
+# Independent Spring Boot service for financial reporting.
+#
+# This service connects exclusively to the PostgreSQL
+# read replica using the restricted ledgerbase_reader role.
+#
+# Financial writes, schema migrations, and accounting
+# transaction management remain in Accounting Core.
+
+spring:
+
+  application:
+    name: ledgerbase-reporting-service
+
+  # ==========================================================
+  # POSTGRESQL READ REPLICA DATASOURCE
+  # ==========================================================
+
+  datasource:
+
+    # Local PostgreSQL standby.
+    url: jdbc:postgresql://127.0.0.1:5435/ledgerbase
+
+    # Dedicated restricted database login.
+    username: ledgerbase_reader
+
+    # Load from the root .env file.
+    # Never commit actual passwords.
+    password: ${POSTGRES_REPLICA_PASSWORD}
+
+    # HikariCP connection pool configuration.
+    hikari:
+
+      pool-name: ledgerbase-reporting-replica-pool
+
+      # Separate connection pool for reporting workloads.
+      maximum-pool-size: 4
+      minimum-idle: 0
+
+      # Report queries should never perform writes.
+      read-only: true
+
+      # Fail promptly when the replica is unreachable.
+      connection-timeout: 5000
+      validation-timeout: 2000
+
+# ============================================================
+# REPORTING HTTP SERVER
+# ============================================================
+
+server:
+  port: 8082
+  address: 127.0.0.1
+
+# ============================================================
+# ACTUATOR HEALTH MONITORING
+# ============================================================
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+  endpoint:
+    health:
+      show-details: never
+
+# ============================================================
+# LOGGING
+# ============================================================
+
+logging:
+  level:
+    com.ledgerbase.reporting: INFO
+
+# ============================================================
+# MYBATIS FINANCIAL REPORTING CONFIGURATION
+# ============================================================
+
+mybatis:
+
+  # Load XML statements for financial reporting.
+  mapper-locations: classpath*:mapper/*.xml
+
+  configuration:
+
+    # Map PostgreSQL snake_case columns to
+    # Java camelCase properties when appropriate.
+    map-underscore-to-camel-case: true
+
+# ============================================================
+# JWT AUTHENTICATION CONFIGURATION
+# ============================================================
+
+# The Reporting Service validates JWT access tokens
+# issued by the existing LedgerBase Accounting Core.
+#
+# Both services must use the same:
+#
+# - HS256 signing secret
+# - JWT issuer
+# - JWT audience
+#
+# Reporting Service does not issue access tokens.
+#
+# Authentication sessions and business permissions
+# will be verified through Accounting Core.
+#
+# IMPORTANT:
+#
+# The signing secret is loaded from the environment.
+# Missing or invalid secrets must prevent startup.
+
+ledgerbase:
+  jwt:
+
+    # Same signing secret used by Accounting Core.
+    secret-base64: ${JWT_SECRET_BASE64:}
+
+    # Must match the issuer in Accounting Core.
+    issuer: ledgerbase
+
+    # Must match the audience in Accounting Core.
+    audience: ledgerbase-api
+  
+  # ==========================================================
+  # ACCOUNTING CORE AUTHORIZATION SERVICE
+  # ==========================================================
+
+  accounting-core:
+
+    # Trusted Accounting Core service address.
+    #
+    # Reporting Service calls Accounting Core directly
+    # to verify active sessions and business membership.
+    #
+    # Do not route these checks back through Gateway.
+    #
+    # Override this URL for Docker or Kubernetes,
+    # where localhost refers to the current container.
+    base-url: ${ACCOUNTING_CORE_BASE_URL:http://127.0.0.1:8080}

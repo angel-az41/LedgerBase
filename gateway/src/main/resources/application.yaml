@@ -1,0 +1,146 @@
+# ============================================================
+# LEDGERBASE — API GATEWAY CONFIGURATION
+# ============================================================
+#
+# Standalone HTTP entry point for LedgerBase services.
+#
+# ARCHITECTURE:
+#
+# React Frontend
+#       |
+#       v
+# Spring Cloud Gateway (8081)
+#       |
+#       +----> Accounting Core (8080)
+#       |
+#       +----> Reporting Service (8082)
+#
+# Accounting Core handles:
+# - Authentication and user sessions
+# - Business authorization
+# - Accounts and financial transactions
+# - Accounting periods and fiscal years
+# - Financial operations and posting
+# - Reports not yet migrated
+#
+# Reporting Service handles:
+# - Trial Balance reporting
+# - Read-only PostgreSQL replica queries
+#
+# Requests retain their original API paths.
+# JWT Authorization headers are forwarded unchanged.
+
+spring:
+
+  application:
+    name: ledgerbase-gateway
+
+  # ==========================================================
+  # SPRING CLOUD GATEWAY — WEB MVC ROUTING
+  # ==========================================================
+
+  cloud:
+    gateway:
+      server:
+        webmvc:
+          routes:
+
+            # ==================================================
+            # FINANCIAL REPORTING SERVICE — TRIAL BALANCE
+            # ==================================================
+
+            # Route Trial Balance GET requests to the
+            # independent Reporting Service.
+            #
+            # Preserve:
+            # - Original URL path
+            # - asOfDate query parameter
+            # - Authorization Bearer header
+            #
+            # Reporting Service validates JWT signatures
+            # and checks active session and business access
+            # through Accounting Core.
+            #
+            # Financial queries use PostgreSQL's read replica.
+            #
+            # This specific route must precede the
+            # general Accounting Core catch-all route.
+
+            - id: ledgerbase-trial-balance
+
+              uri: "${LEDGERBASE_REPORTING_URL:http://127.0.0.1:8082}"
+
+              order: -10
+
+              predicates:
+                - Path=/api/v1/businesses/{businessId}/reports/trial-balance
+                - Method=GET
+
+            # ==================================================
+            # ACCOUNTING CORE — DEFAULT API ROUTE
+            # ==================================================
+
+            # All remaining /api/v1/** requests go to the
+            # existing Accounting Core service.
+            #
+            # Examples:
+            #
+            # /api/v1/auth/login
+            # /api/v1/auth/refresh
+            # /api/v1/businesses
+            # /api/v1/health/database
+            # /api/v1/businesses/2/accounts
+            # /api/v1/businesses/2/transactions
+            #
+            # Income Statement and Balance Sheet remain
+            # on Accounting Core until their migration.
+            #
+            # No path rewriting is applied.
+            #
+            # Accounting Core independently enforces
+            # JWT authentication and business-scoped RBAC.
+
+            - id: ledgerbase-core
+
+              uri: "${LEDGERBASE_CORE_URL:http://127.0.0.1:8080}"
+
+              order: 0
+
+              predicates:
+                - Path=/api/v1/**
+
+# ============================================================
+# HTTP SERVER
+# ============================================================
+
+server:
+
+  # Gateway runs independently of both backend services.
+  port: 8081
+
+  # Bind locally during development.
+  # Container deployments will require suitable networking.
+  address: 127.0.0.1
+
+# ============================================================
+# ACTUATOR HEALTH MONITORING
+# ============================================================
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+  endpoint:
+    health:
+      show-details: never
+
+# ============================================================
+# LOGGING
+# ============================================================
+
+logging:
+  level:
+    org.springframework.cloud.gateway: INFO
+    com.ledgerbase.gateway: INFO

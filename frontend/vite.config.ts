@@ -1,4 +1,3 @@
-
 // ============================================================
 // IMPORTS
 // ============================================================
@@ -28,16 +27,35 @@ export default defineConfig({
     strictPort: true,
 
     // ============================================================
-    // SPRING BOOT API PROXY
+    // SPRING CLOUD API GATEWAY PROXY
     // ============================================================
 
     /**
-     * Forward requests starting with /api
-     * to our existing Spring Boot backend.
-     */
+    * Forward all requests starting with /api
+    * to the Spring Cloud API Gateway.
+    *
+    * Request flow:
+    *
+    * React frontend (5173)
+    *       |
+    *       v
+    * Spring Cloud Gateway (8081)
+    *       |
+    *       v
+    * LedgerBase backend (8080)
+    *       |
+    *       v
+    * PostgreSQL primary / read replica
+    *
+    * The gateway handles API routing.
+    * The backend continues handling
+    * authentication, RBAC, and accounting logic.
+    *
+    * No URL path rewriting is needed.
+    */
     proxy: {
       '/api': {
-        target: 'http://localhost:8080',
+        target: 'http://127.0.0.1:8081',
         changeOrigin: true,
       },
     },
