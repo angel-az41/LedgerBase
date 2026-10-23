@@ -1,47 +1,70 @@
 package com.ledgerbase.backend.dto;
 
-import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Positive;
-
 // ============================================================
 // LEDGERBASE — ACCOUNTING PERIOD ACTION REQUEST
 // ============================================================
 
 /**
- * Request body for accounting-period status changes.
+ * Legacy request DTO for accounting-period status changes.
  *
- * Used by both:
+ * Used by:
  *
  * POST /accounting-periods/{periodId}/close
  * POST /accounting-periods/{periodId}/reopen
  *
- * actorId identifies the user performing the action.
+ * AUTHENTICATION:
  *
- * The service records this ID in the audit_events table
- * to preserve a history of accounting-period changes.
+ * Spring Security authenticates the user through JWT.
  *
- * IMPORTANT:
+ * AccountingPeriodController obtains the actual actor
+ * from the verified JWT subject.
  *
- * Until authentication is implemented, actorId is
- * supplied by the API client for development purposes.
+ * SECURITY:
  *
- * In production, we must obtain the actor identity
- * from an authenticated session or security context
- * rather than trusting a client-supplied ID.
+ * The browser must not determine which user is
+ * recorded in financial audit events.
+ *
+ * The incoming actorId is therefore ignored.
+ *
+ * BACKWARD COMPATIBILITY:
+ *
+ * Older frontend requests may still contain:
+ *
+ * {
+ *     "actorId": 1
+ * }
+ *
+ * This record temporarily retains the field
+ * so those requests can continue to deserialize.
+ *
+ * The field is not required or validated because
+ * its value is never used to determine identity.
+ *
+ * New frontend requests may submit an empty
+ * JSON object or omit the body entirely.
+ *
+ * AccountingPeriodService continues to receive
+ * the trusted, validated actor ID supplied by
+ * AccountingPeriodController.
+ *
+ * Once all legacy clients and tests have migrated,
+ * this DTO can be removed from the HTTP contract.
  */
 public record AccountingPeriodActionRequest(
 
     // ========================================================
-    // ACTOR ID
+    // LEGACY ACTOR ID — UNTRUSTED
     // ========================================================
 
     /**
-     * ID of the user requesting the state change.
+     * Optional legacy actor ID.
      *
-     * Must be provided and must be a positive integer.
+     * This value is not used by the controller
+     * or passed into AccountingPeriodService.
+     *
+     * Only the authenticated JWT subject determines
+     * the actor recorded in the database audit log.
      */
-    @NotNull(message = "Actor ID is required")
-    @Positive(message = "Actor ID must be positive")
     Long actorId
 
 ) {

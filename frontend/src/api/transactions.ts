@@ -8,23 +8,38 @@ import {
 // ============================================================
 
 /**
- * This module defines the TypeScript data structures
- * and API functions for financial transactions.
+ * TypeScript data structures and API functions for
+ * LedgerBase financial transactions.
  *
- * All requests communicate with our existing
+ * All requests communicate with the existing
  * Spring Boot transaction endpoints.
  *
- * The backend remains responsible for:
- * - Validating journal entries
- * - Enforcing double-entry bookkeeping
- * - Verifying account ownership and eligibility
- * - Managing transaction lifecycle states
- * - Protecting posted financial records
- * - Assigning business-specific journal numbers
+ * The backend is responsible for:
  *
- * React is responsible for displaying data and
- * collecting user input, not enforcing accounting
- * integrity on its own.
+ * - JWT authentication.
+ * - Business membership and role authorization.
+ * - Trusted creator and posting actor identities.
+ * - Double-entry accounting validation.
+ * - Account ownership and posting eligibility.
+ * - Transaction lifecycle management.
+ * - PostgreSQL journal numbering.
+ * - Posted-transaction immutability.
+ * - Financial audit logging.
+ *
+ * SECURITY:
+ *
+ * React must never determine the authenticated
+ * user by submitting createdBy or actorId values.
+ *
+ * The backend extracts the authenticated identity
+ * from Spring Security's verified JWT principal.
+ *
+ * The API client continues to handle authentication
+ * headers using the existing login session.
+ *
+ * React collects transaction data and displays
+ * results; it does not determine accounting
+ * authorization or financial correctness.
  */
 
 // ============================================================
@@ -34,14 +49,11 @@ import {
 /**
  * Represents a financial transaction header.
  *
- * Matches LedgerTransaction.java in our backend.
+ * Matches LedgerTransaction.java.
  *
- * A transaction contains general information,
- * while its individual debit and credit lines
- * are represented by separate LedgerEntry objects.
- *
- * Java LocalDate and OffsetDateTime values are
- * serialized as strings in JSON.
+ * Transactions contain general accounting metadata.
+ * Individual debit and credit lines are represented
+ * by separate LedgerEntry objects.
  *
  * IMPORTANT — TWO DIFFERENT IDENTIFIERS:
  *
@@ -49,9 +61,9 @@ import {
  *   Globally unique internal PostgreSQL identifier.
  *
  * journalReference:
- *   Business-specific, user-facing journal reference.
+ *   Business-specific journal reference.
  *
- * Example:
+ * For example:
  *
  * Business A:
  *   Internal ID 1 -> JE-0001
@@ -60,10 +72,11 @@ import {
  * Business B:
  *   Internal ID 2 -> JE-0001
  *
- * Different businesses can have the same journal
+ * Different businesses may share the same journal
  * reference because numbering is business-scoped.
  *
- * All API requests must continue using id.
+ * All API requests must continue using the
+ * internal transaction ID.
  */
 export interface LedgerTransaction {
 
@@ -72,134 +85,180 @@ export interface LedgerTransaction {
   // ==========================================================
 
   /**
-   * Globally unique PostgreSQL transaction ID.
+   * Globally unique database transaction ID.
    *
-   * Used for API requests and database relationships.
+   * Used for API calls and database relationships.
    *
-   * This must NOT be replaced by journalNumber.
+   * Must not be confused with journalNumber.
    */
   id: number
 
-  // Business that owns the transaction.
+  /**
+   * Business that owns this transaction.
+   */
   businessId: number
 
-  // Temporary creator identifier.
+  /**
+   * Verified creator identity stored by the backend.
+   *
+   * IMPORTANT:
+   *
+   * This is a RESPONSE field, not a request field.
+   *
+   * The backend determines this ID from the JWT
+   * when the transaction is created.
+   *
+   * React may display this value for audit purposes.
+   */
   createdBy: number
+
 
   // ==========================================================
   // BUSINESS-SPECIFIC JOURNAL NUMBERING
   // ==========================================================
 
   /**
-   * Numeric journal sequence within this business.
+   * Sequential journal number within one business.
    *
    * Examples:
+   *
    * 1, 2, 3, ...
    *
-   * PostgreSQL assigns this automatically through
-   * the journal-numbering trigger introduced in V8.
+   * PostgreSQL allocates this number through the
+   * existing journal-numbering mechanism.
    *
-   * The backend exposes this value through
-   * LedgerTransaction.getJournalNumber().
-   *
-   * The Java field is nullable, so the TypeScript
-   * model reflects that possibility. Normally,
-   * migrated and newly created transactions
-   * should always have an assigned number.
+   * Nullable for compatibility with the Java model.
    */
   journalNumber: number | null
 
   /**
-   * Formatted journal reference displayed to users.
+   * Formatted business-specific journal reference.
    *
    * Examples:
+   *
    * JE-0001
    * JE-0002
    * JE-0125
    *
-   * Generated by the backend from journalNumber.
+   * This is generated by the backend.
    *
-   * React should use this field for display rather
-   * than reconstructing the reference from id.
-   *
-   * This can be null if journalNumber is unavailable.
+   * React must not reconstruct journal references
+   * from the globally unique transaction ID.
    */
   journalReference: string | null
+
 
   // ==========================================================
   // TRANSACTION CLASSIFICATION
   // ==========================================================
 
-  // Optional classification and related entities.
+  /**
+   * Optional classification and counterparty links.
+   */
   categoryId: number | null
   customerId: number | null
   vendorId: number | null
+
 
   // ==========================================================
   // TRANSACTION DETAILS
   // ==========================================================
 
-  // Human-readable transaction description.
+  /**
+   * Human-readable explanation of the transaction.
+   */
   description: string
 
-  // Accounting date in YYYY-MM-DD format.
+  /**
+   * Accounting date in YYYY-MM-DD format.
+   *
+   * This determines the relevant accounting period.
+   */
   transactionDate: string
 
-  // Backend lifecycle state, such as DRAFT or POSTED.
+  /**
+   * Transaction lifecycle status.
+   *
+   * Currently includes:
+   *
+   * DRAFT
+   * POSTED
+   */
   status: string
 
-  // Timestamp when the transaction was created.
+  /**
+   * Database-generated transaction timestamp.
+   */
   createdAt: string
 }
+
 
 // ============================================================
 // LEDGER ENTRY MODEL
 // ============================================================
 
 /**
- * Represents one debit or credit line.
+ * Represents one debit or credit entry.
  *
- * Matches LedgerEntry.java in our backend.
+ * Matches LedgerEntry.java.
  *
  * Example:
  *
  * Account 5000: Debit  250.00, Credit   0.00
  * Account 1010: Debit    0.00, Credit 250.00
  *
- * PostgreSQL and Java use exact decimal types
- * for financial amounts.
+ * PostgreSQL stores monetary amounts as NUMERIC.
+ * Java uses BigDecimal for exact calculations.
  *
- * The current Spring Boot API serializes
- * BigDecimal values as JSON numbers.
+ * Current JSON responses represent BigDecimal
+ * values as JSON numbers.
  *
- * JavaScript numbers are NOT exact decimal
- * arithmetic types. We must avoid treating
- * frontend floating-point sums as authoritative
- * accounting calculations.
+ * IMPORTANT:
+ *
+ * JavaScript floating-point arithmetic is not
+ * authoritative for financial accounting.
+ *
+ * The backend verifies debit/credit balance and
+ * performs database operations using exact decimals.
  */
 export interface LedgerEntry {
 
-  // Unique ledger entry identifier.
+  /**
+   * Unique ledger entry identifier.
+   */
   id: number
 
-  // Owning business.
+  /**
+   * Business owning this ledger entry.
+   */
   businessId: number
 
-  // Parent transaction's internal database ID.
+  /**
+   * Parent transaction's internal database ID.
+   */
   transactionId: number
 
-  // General ledger account affected.
+  /**
+   * General ledger account being debited or credited.
+   */
   accountId: number
 
-  // Debit amount returned by the backend.
+  /**
+   * Debit amount returned by Spring Boot.
+   */
   debit: number
 
-  // Credit amount returned by the backend.
+  /**
+   * Credit amount returned by Spring Boot.
+   */
   credit: number
 
-  // Entry creation timestamp.
+  /**
+   * Database-generated creation timestamp.
+   */
   createdAt: string
 }
+
 
 // ============================================================
 // TRANSACTION DETAIL RESPONSE
@@ -209,11 +268,12 @@ export interface LedgerEntry {
  * Matches TransactionDetailResponse.java.
  *
  * The backend combines:
- * - One transaction header
- * - Its associated ledger entries
  *
- * The transaction header includes journalNumber
- * and journalReference through LedgerTransaction.
+ * - One transaction header.
+ * - Its corresponding debit/credit entries.
+ *
+ * The transaction header includes business-specific
+ * journal numbering and the trusted creator ID.
  */
 export interface TransactionDetailResponse {
 
@@ -222,6 +282,7 @@ export interface TransactionDetailResponse {
   entries: LedgerEntry[]
 }
 
+
 // ============================================================
 // CREATE LEDGER ENTRY REQUEST
 // ============================================================
@@ -229,79 +290,92 @@ export interface TransactionDetailResponse {
 /**
  * Monetary amounts are submitted as decimal strings.
  *
- * This preserves the exact decimal representation
- * produced by our money.ts utility.
- *
  * Examples:
  *
  * "250.00"
  * "0.00"
  * "1250.75"
  *
- * Spring Boot uses BigDecimal for these fields.
+ * This preserves the decimal representation produced
+ * by the frontend money utilities.
  *
- * We will verify this JSON representation against
- * the backend when testing journal entry creation.
+ * Spring Boot deserializes these strings into
+ * BigDecimal values.
+ *
+ * TransactionService independently checks:
+ *
+ * - Valid account identifiers.
+ * - Active posting accounts.
+ * - Nonnegative debit and credit amounts.
+ * - Valid monetary precision.
+ * - Exactly one positive side per entry.
+ * - Balanced total debits and credits.
  */
 export interface CreateLedgerEntryRequest {
+
   accountId: number
+
   debit: string
+
   credit: string
 }
+
 
 // ============================================================
 // CREATE TRANSACTION REQUEST
 // ============================================================
 
 /**
- * Matches CreateTransactionRequest.java.
+ * Matches the HTTP-facing fields of
+ * CreateTransactionRequest.java.
  *
- * A transaction requires:
- * - The creator's user ID
- * - A description
- * - An accounting date
- * - At least two ledger entry lines
+ * The frontend supplies:
+ *
+ * - Description.
+ * - Accounting date.
+ * - Two or more debit/credit entries.
  *
  * The business ID is supplied in the API URL.
  *
- * createdBy is temporary until authentication
- * is implemented.
+ * SECURITY:
  *
- * IMPORTANT:
+ * There is intentionally NO createdBy property.
  *
- * Neither journalNumber nor journalReference
- * should be included in this request.
+ * Spring Security authenticates the current user.
+ * TransactionController reads the verified JWT subject
+ * and constructs the trusted service request.
  *
- * PostgreSQL assigns the journal number
- * automatically when the transaction is inserted.
+ * The temporary legacy createdBy field remains in the
+ * Java DTO for compatibility with existing backend tests,
+ * but React no longer sends it.
+ *
+ * PostgreSQL assigns journalNumber automatically.
+ *
+ * Neither journalNumber nor journalReference belongs
+ * in this request.
  */
 export interface CreateTransactionRequest {
-  createdBy: number
+
+  /**
+   * Human-readable financial event description.
+   */
   description: string
+
+  /**
+   * Transaction accounting date.
+   *
+   * Format: YYYY-MM-DD
+   */
   transactionDate: string
+
+  /**
+   * Balanced debit/credit journal lines.
+   *
+   * At least two entries are required.
+   */
   entries: CreateLedgerEntryRequest[]
 }
 
-// ============================================================
-// POST TRANSACTION REQUEST
-// ============================================================
-
-/**
- * Matches PostTransactionRequest.java.
- *
- * actorId identifies the user posting a draft.
- *
- * This is a temporary development mechanism.
- * Production authentication must determine
- * the trusted user identity on the backend.
- *
- * Posting must preserve the existing journal
- * number and journal reference.
- */
-export interface PostTransactionRequest {
-
-  actorId: number
-}
 
 // ============================================================
 // TRANSACTIONS API — LIST
@@ -315,12 +389,20 @@ export interface PostTransactionRequest {
  * getTransactions(1)
  *
  * Sends:
+ *
  * GET /api/v1/businesses/1/transactions
  *
- * Returns an array of transaction headers.
+ * AUTHORIZATION:
  *
- * Each transaction should include its own
- * journalNumber and journalReference.
+ * The backend requires a valid JWT and business
+ * read permission.
+ *
+ * Results are scoped to the requested business.
+ *
+ * Returns:
+ *
+ * An array of transaction headers, including
+ * their journal numbers and references.
  */
 export async function getTransactions(
   businessId: number,
@@ -331,33 +413,32 @@ export async function getTransactions(
   )
 }
 
+
 // ============================================================
 // TRANSACTIONS API — DETAILS
 // ============================================================
 
 /**
- * Retrieve a transaction and its journal entry lines.
+ * Retrieve one transaction and its ledger entries.
  *
  * Example:
  *
  * getTransactionDetails(1, 10)
  *
  * Sends:
+ *
  * GET /api/v1/businesses/1/transactions/10
  *
- * Returns both the transaction header and entries.
+ * The second parameter is the globally unique
+ * internal transaction ID.
  *
- * IMPORTANT:
+ * It is not the journal reference or sequence number.
  *
- * The second argument is the internal database ID,
- * not the company's formatted journal reference.
+ * AUTHORIZATION:
  *
- * For example:
- *
- * Internal ID: 10
- * Journal reference: JE-0003
- *
- * The API URL still uses 10.
+ * The backend requires business read permission
+ * and verifies that the transaction belongs to
+ * the requested business.
  */
 export async function getTransactionDetails(
   businessId: number,
@@ -369,44 +450,62 @@ export async function getTransactionDetails(
   )
 }
 
+
 // ============================================================
 // TRANSACTIONS API — CREATE DRAFT
 // ============================================================
 
 /**
- * Create a new draft financial transaction.
+ * Create a new DRAFT financial transaction.
  *
  * Example:
  *
  * createDraftTransaction(1, {
- *   createdBy: 1,
  *   description: 'Office supplies purchase',
  *   transactionDate: '2026-10-13',
  *   entries: [
- *     { accountId: 5, debit: '250.00', credit: '0.00' },
- *     { accountId: 2, debit: '0.00', credit: '250.00' },
+ *     {
+ *       accountId: 5,
+ *       debit: '250.00',
+ *       credit: '0.00',
+ *     },
+ *     {
+ *       accountId: 2,
+ *       debit: '0.00',
+ *       credit: '250.00',
+ *     },
  *   ],
  * })
  *
- * Account IDs above are illustrative only.
+ * Account IDs are illustrative only.
  *
  * Sends:
+ *
  * POST /api/v1/businesses/1/transactions
  *
- * Returns HTTP 201 and the new draft header.
+ * SECURITY:
  *
- * PostgreSQL automatically assigns the next
- * journal number within the selected business.
+ * The request does NOT include createdBy.
  *
- * The returned transaction includes:
- * - Internal ID
- * - Business ID
- * - Journal number
- * - Formatted journal reference
- * - Transaction lifecycle status
+ * The existing authenticated API client provides
+ * the JWT through the normal request flow.
  *
- * The backend checks accounting requirements
- * and saves the journal entry in PostgreSQL.
+ * TransactionController determines the actual
+ * creator from the JWT subject.
+ *
+ * ACCOUNTING:
+ *
+ * The backend:
+ *
+ * - Checks business write permission.
+ * - Validates ledger entries.
+ * - Verifies account eligibility.
+ * - Creates the DRAFT transaction atomically.
+ * - Assigns the business journal number.
+ * - Records the authenticated creator.
+ * - Saves a TRANSACTION_CREATED audit event.
+ *
+ * Returns HTTP 201 and the saved transaction header.
  */
 export async function createDraftTransaction(
   businessId: number,
@@ -422,53 +521,101 @@ export async function createDraftTransaction(
   )
 }
 
+
 // ============================================================
 // TRANSACTIONS API — POST
 // ============================================================
 
 /**
- * Finalize an existing draft transaction.
+ * Finalize an existing DRAFT transaction.
  *
  * Example:
  *
- * postTransaction(1, 10, { actorId: 1 })
+ * postTransaction(1, 10)
  *
  * Sends:
+ *
  * POST /api/v1/businesses/1/transactions/10/post
  *
- * Returns the updated transaction header.
+ * SECURITY:
  *
- * Once posted, the transaction is protected
- * against modification by backend and
- * database-level accounting safeguards.
+ * The frontend does NOT send actorId.
+ *
+ * TransactionController obtains the authenticated
+ * posting actor from Spring Security's JWT principal.
+ *
+ * BusinessAuthorizationManager requires write access.
+ *
+ * BACKWARD COMPATIBILITY:
+ *
+ * The backend temporarily accepts a legacy
+ * PostTransactionRequest with optional actorId.
+ *
+ * However, it ignores that field completely.
+ *
+ * Sending an empty JSON object is supported:
+ *
+ * {}
+ *
+ * ACCOUNTING:
+ *
+ * The backend:
+ *
+ * - Locks the transaction row.
+ * - Verifies the transaction is DRAFT.
+ * - Validates journal balance.
+ * - Verifies account eligibility.
+ * - Locks and validates the accounting period.
+ * - Updates the transaction status to POSTED.
+ * - Preserves the journal reference.
+ * - Records the trusted posting actor in the audit log.
  *
  * Posting changes:
- * - status: DRAFT -> POSTED
+ *
+ * status: DRAFT -> POSTED
  *
  * Posting must NOT change:
+ *
  * - id
  * - businessId
  * - journalNumber
  * - journalReference
  *
- * IMPORTANT:
+ * A posting conflict may return HTTP 409.
  *
- * transactionId is the internal database ID.
- *
- * The backend may return HTTP 409 if
- * posting conflicts with the current state.
+ * @param businessId owning business
+ * @param transactionId internal transaction ID
+ * @returns updated POSTED transaction header
  */
 export async function postTransaction(
   businessId: number,
   transactionId: number,
-  request: PostTransactionRequest,
 ): Promise<LedgerTransaction> {
+
+  // ----------------------------------------------------------
+  // EMPTY REQUEST BODY
+  // ----------------------------------------------------------
+
+  /**
+   * Our shared postJson helper expects a request body.
+   *
+   * An empty JSON object keeps the existing API
+   * transport behavior consistent.
+   *
+   * No user identifier is included.
+   */
+  const requestBody: Record<string, never> = {}
+
+
+  // ----------------------------------------------------------
+  // POST THROUGH AUTHENTICATED API CLIENT
+  // ----------------------------------------------------------
 
   return postJson<
     LedgerTransaction,
-    PostTransactionRequest
+    Record<string, never>
   >(
     `/api/v1/businesses/${businessId}/transactions/${transactionId}/post`,
-    request,
+    requestBody,
   )
 }

@@ -15,41 +15,38 @@ import java.util.Locale;
 // ============================================================
 
 /**
- * Business logic for managing LedgerBase businesses.
+ * Business logic for LedgerBase business management.
  *
  * RESPONSIBILITIES:
  *
- * 1. List businesses belonging to an owner.
- * 2. Retrieve one business with an owner filter.
- * 3. Validate new business information.
- * 4. Create businesses through BusinessMapper.
- * 5. Return the newly created business.
+ * - Preserve existing owner-scoped operations.
+ * - List businesses accessible through membership.
+ * - Retrieve an individual accessible business.
+ * - Validate and normalize new business information.
+ * - Create businesses with OWNER membership.
  *
- * DATABASE ACCESS:
+ * DATABASE:
  *
- * All SQL operations are delegated to BusinessMapper.
+ * - businesses
+ * - business_memberships
  *
- * SECURITY NOTE:
+ * SECURITY:
  *
- * ownerId must eventually come from the authenticated
- * user's identity, NOT directly from an HTTP request.
+ * User IDs must come from a trusted authenticated
+ * identity at the HTTP boundary.
  *
- * Until authentication is implemented, this service
- * is intended for our local development workflow.
+ * This service expects callers to supply those IDs.
  *
- * Owner-scoped SQL queries alone do not provide
- * complete authentication or authorization.
+ * Business-specific accounting operations will receive
+ * separate permission checks in the RBAC layer.
  */
 @Service
 public class BusinessService {
 
     // ========================================================
-    // DEPENDENCIES
+    // DATABASE DEPENDENCY
     // ========================================================
 
-    /**
-     * MyBatis mapper responsible for business queries.
-     */
     private final BusinessMapper businessMapper;
 
 
@@ -58,77 +55,56 @@ public class BusinessService {
     // ========================================================
 
     /**
-     * Spring Boot automatically supplies BusinessMapper.
+     * Preserve the original single-dependency constructor.
      *
-     * Constructor injection makes dependencies explicit
-     * and simplifies testing.
+     * This avoids unnecessary changes to existing
+     * BusinessService unit-test setup.
      */
-    public BusinessService(BusinessMapper businessMapper) {
+    public BusinessService(
+        BusinessMapper businessMapper
+    ) {
+
         this.businessMapper = businessMapper;
     }
 
 
     // ========================================================
-    // 1. LIST BUSINESSES BELONGING TO AN OWNER
+    // EXISTING OWNER-SCOPED BUSINESS LIST
     // ========================================================
 
     /**
-     * Return all businesses belonging to an owner.
+     * Retrieve businesses whose owner_id matches
+     * the specified owner.
      *
-     * Example:
+     * Preserved for existing internal callers and tests.
      *
-     * ownerId = 1
-     *
-     * Possible result:
-     *
-     * - LedgerBase Demo Business
-     * - ABC Consulting LLC
-     *
-     * If the owner has no businesses, an empty list
-     * is returned.
-     *
-     * @Transactional(readOnly = true) indicates that
-     * this operation does not modify the database.
-     *
-     * @param ownerId owner whose businesses are requested
-     * @return list of businesses owned by that user
+     * For the authenticated business directory,
+     * use getBusinessesForUser() instead.
      */
     @Transactional(readOnly = true)
-    public List<Business> getBusinessesByOwner(Long ownerId) {
-
-        // ====================================================
-        // VALIDATE OWNER ID
-        // ====================================================
+    public List<Business> getBusinessesByOwner(
+        Long ownerId
+    ) {
 
         validateOwnerId(ownerId);
 
-        // ====================================================
-        // QUERY DATABASE
-        // ====================================================
-
-        return businessMapper.findAllByOwnerId(ownerId);
+        return businessMapper.findAllByOwnerId(
+            ownerId
+        );
     }
 
 
     // ========================================================
-    // 2. RETRIEVE ONE BUSINESS
+    // EXISTING OWNER-SCOPED BUSINESS LOOKUP
     // ========================================================
 
     /**
-     * Retrieve a business only if the owner matches.
+     * Retrieve one business by ID and canonical owner.
      *
-     * Both businessId and ownerId are required.
+     * Preserved for existing internal operations.
      *
-     * If the business does not exist OR belongs to
-     * another owner, throw BusinessNotFoundException.
-     *
-     * Using the same exception for both situations
-     * avoids revealing whether another owner's
-     * business exists.
-     *
-     * @param businessId requested business ID
-     * @param ownerId expected owner ID
-     * @return matching business
+     * Missing businesses or owner mismatches produce
+     * the existing BusinessNotFoundException.
      */
     @Transactional(readOnly = true)
     public Business getBusinessById(
@@ -136,17 +112,9 @@ public class BusinessService {
         Long ownerId
     ) {
 
-        // ====================================================
-        // VALIDATE IDENTIFIERS
-        // ====================================================
-
         validateBusinessId(businessId);
 
         validateOwnerId(ownerId);
-
-        // ====================================================
-        // QUERY BUSINESS USING BOTH IDS
-        // ====================================================
 
         Business business =
             businessMapper.findByIdAndOwnerId(
@@ -154,61 +122,179 @@ public class BusinessService {
                 ownerId
             );
 
-        // ====================================================
-        // HANDLE MISSING OR NONMATCHING BUSINESS
-        // ====================================================
-
         if (business == null) {
-            throw new BusinessNotFoundException(businessId);
-        }
 
-        // ====================================================
-        // RETURN MATCHING BUSINESS
-        // ====================================================
+            throw new BusinessNotFoundException(
+                businessId
+            );
+        }
 
         return business;
     }
 
 
     // ========================================================
-    // 3. CREATE A NEW BUSINESS
+    // LIST AUTHENTICATED USER'S BUSINESSES
     // ========================================================
 
     /**
-     * Create a new business for an existing owner.
+     * Retrieve all businesses for which the user
+     * has a business_memberships record.
      *
-     * Example:
+     * Supported membership roles:
      *
-     * ownerId = 1
-     * name = "ABC Consulting LLC"
-     * currency = "USD"
-     * fiscalYearStartMonth = 1
+     * - OWNER
+     * - ADMIN
+     * - ACCOUNTANT
+     * - VIEWER
+     *
+     * A user with no memberships receives
+     * an empty list.
+     *
+     * The database determines membership.
+     *
+     * The frontend's selected business ID does not
+     * grant access to a business.
+     *
+     * @param userId authenticated user's ID
+     * @return accessible businesses
+     */
+    @Transactional(readOnly = true)
+    public List<Business> getBusinessesForUser(
+        Long userId
+    ) {
+
+        // ----------------------------------------------------
+        // VALIDATE AUTHENTICATED USER ID
+        // ----------------------------------------------------
+
+        validateUserId(userId);
+
+
+        // ----------------------------------------------------
+        // QUERY MEMBERSHIP-SCOPED BUSINESS LIST
+        // ----------------------------------------------------
+
+        return businessMapper.findAllByMemberUserId(
+            userId
+        );
+    }
+
+
+    // ========================================================
+    // RETRIEVE BUSINESS FOR AUTHENTICATED USER
+    // ========================================================
+
+    /**
+     * Retrieve a business only if the authenticated
+     * user belongs to it.
+     *
+     * The user may have any supported membership role.
+     *
+     * This is a read-access membership check.
+     *
+     * Role-specific write permissions will be handled
+     * by separate authorization methods.
+     *
+     * Missing businesses and missing memberships
+     * both result in BusinessNotFoundException.
+     *
+     * @param businessId requested business ID
+     * @param userId authenticated user's ID
+     * @return business accessible to the user
+     */
+    @Transactional(readOnly = true)
+    public Business getBusinessForUser(
+        Long businessId,
+        Long userId
+    ) {
+
+        // ----------------------------------------------------
+        // VALIDATE IDENTIFIERS
+        // ----------------------------------------------------
+
+        validateBusinessId(businessId);
+
+        validateUserId(userId);
+
+
+        // ----------------------------------------------------
+        // QUERY BUSINESS AND MEMBERSHIP TOGETHER
+        // ----------------------------------------------------
+
+        Business business =
+            businessMapper.findByIdAndMemberUserId(
+                businessId,
+                userId
+            );
+
+
+        // ----------------------------------------------------
+        // HIDE OTHER BUSINESSES FROM NONMEMBERS
+        // ----------------------------------------------------
+
+        /**
+         * Return the same application exception when:
+         *
+         * - The business does not exist.
+         * - The user is not a member.
+         *
+         * This avoids disclosing the existence
+         * of other users' businesses.
+         */
+        if (business == null) {
+
+            throw new BusinessNotFoundException(
+                businessId
+            );
+        }
+
+
+        // ----------------------------------------------------
+        // RETURN AUTHORIZED BUSINESS
+        // ----------------------------------------------------
+
+        return business;
+    }
+
+
+    // ========================================================
+    // CREATE BUSINESS AND OWNER MEMBERSHIP
+    // ========================================================
+
+    /**
+     * Create a business and assign its creator the
+     * OWNER membership role.
      *
      * VALIDATION:
      *
      * - Owner ID must be positive.
-     * - Business name must not be blank.
-     * - Business name must contain at most 200 characters.
-     * - Currency must be a three-letter code.
-     * - Fiscal-year starting month must be 1 through 12.
+     * - Name must not be blank.
+     * - Name length must not exceed 200 characters.
+     * - Currency must be three alphabetic characters.
+     * - Fiscal-year start must be between 1 and 12.
      *
-     * DEFAULT VALUES:
+     * DEFAULTS:
      *
-     * - Null currency becomes USD.
-     * - Null fiscal-year start becomes January (1).
+     * - Currency: USD.
+     * - Fiscal-year starting month: January.
      *
-     * DATABASE SAFEGUARDS:
+     * ATOMICITY:
      *
-     * PostgreSQL generates the business ID.
+     * The businesses INSERT and the membership INSERT
+     * execute inside one Spring transaction.
      *
-     * PostgreSQL also enforces the owner foreign key,
-     * so the owner must exist in users.
+     * If membership creation fails, the newly inserted
+     * business is rolled back as well.
      *
-     * @Transactional ensures that the INSERT and
-     * subsequent SELECT run within one transaction.
+     * The caller must supply the authenticated user ID
+     * as ownerId, never an HTTP request-body owner field.
      *
-     * @return newly created business, including its
-     *         database-generated ID and creation time
+     * @param ownerId authenticated creator's user ID
+     * @param name new business name
+     * @param currency requested currency
+     * @param fiscalYearStartMonth optional fiscal-year month
+     * @return complete newly created business
      */
     @Transactional
     public Business createBusiness(
@@ -218,31 +304,32 @@ public class BusinessService {
         Integer fiscalYearStartMonth
     ) {
 
-        // ====================================================
-        // VALIDATE OWNER
-        // ====================================================
+        // ----------------------------------------------------
+        // VALIDATE OWNER ID
+        // ----------------------------------------------------
 
         validateOwnerId(ownerId);
 
 
-        // ====================================================
+        // ----------------------------------------------------
         // VALIDATE BUSINESS NAME
-        // ====================================================
+        // ----------------------------------------------------
 
-        String validatedName = validateBusinessName(name);
+        String validatedName =
+            validateBusinessName(name);
 
 
-        // ====================================================
-        // VALIDATE AND NORMALIZE CURRENCY
-        // ====================================================
+        // ----------------------------------------------------
+        // NORMALIZE CURRENCY
+        // ----------------------------------------------------
 
         String validatedCurrency =
             validateCurrency(currency);
 
 
-        // ====================================================
-        // VALIDATE FISCAL-YEAR STARTING MONTH
-        // ====================================================
+        // ----------------------------------------------------
+        // VALIDATE FISCAL-YEAR START
+        // ----------------------------------------------------
 
         int validatedStartMonth =
             validateFiscalYearStartMonth(
@@ -250,11 +337,12 @@ public class BusinessService {
             );
 
 
-        // ====================================================
-        // CONSTRUCT BUSINESS MODEL
-        // ====================================================
+        // ----------------------------------------------------
+        // CONSTRUCT BUSINESS ENTITY
+        // ----------------------------------------------------
 
-        Business business = new Business();
+        Business business =
+            new Business();
 
         business.setOwnerId(ownerId);
         business.setName(validatedName);
@@ -264,22 +352,26 @@ public class BusinessService {
         );
 
 
-        // ====================================================
-        // INSERT BUSINESS THROUGH MYBATIS
-        // ====================================================
+        // ----------------------------------------------------
+        // INSERT BUSINESS
+        // ----------------------------------------------------
 
         /**
-         * MyBatis uses PostgreSQL-generated keys
-         * to populate business.id.
+         * MyBatis populates business.id using the
+         * PostgreSQL-generated identity value.
          */
-        int insertedRows = businessMapper.insert(business);
+        int insertedBusinessRows =
+            businessMapper.insert(business);
 
 
-        // ====================================================
-        // VERIFY INSERT SUCCESS
-        // ====================================================
+        // ----------------------------------------------------
+        // VERIFY BUSINESS INSERT
+        // ----------------------------------------------------
 
-        if (insertedRows != 1 || business.getId() == null) {
+        if (
+            insertedBusinessRows != 1 ||
+            business.getId() == null
+        ) {
 
             throw new IllegalStateException(
                 "Failed to create business"
@@ -287,17 +379,52 @@ public class BusinessService {
         }
 
 
-        // ====================================================
-        // RETRIEVE COMPLETE CREATED BUSINESS
-        // ====================================================
+        // ----------------------------------------------------
+        // INSERT OWNER MEMBERSHIP
+        // ----------------------------------------------------
 
         /**
-         * The inserted Business object contains its
-         * generated ID, but createdAt is generated
-         * by PostgreSQL.
+         * Every new business must immediately have
+         * an OWNER membership.
          *
-         * Retrieve the row again to return all fields,
-         * including the creation timestamp.
+         * The ownerId is the same authenticated
+         * user ID stored in businesses.owner_id.
+         */
+        int insertedMembershipRows =
+            businessMapper.insertOwnerMembership(
+                business.getId(),
+                ownerId
+            );
+
+
+        // ----------------------------------------------------
+        // VERIFY OWNER MEMBERSHIP INSERT
+        // ----------------------------------------------------
+
+        /**
+         * Throwing an unchecked exception causes
+         * Spring's @Transactional interceptor to
+         * roll back both INSERT statements.
+         */
+        if (insertedMembershipRows != 1) {
+
+            throw new IllegalStateException(
+                "Failed to create business owner membership"
+            );
+        }
+
+
+        // ----------------------------------------------------
+        // RETRIEVE COMPLETE CREATED BUSINESS
+        // ----------------------------------------------------
+
+        /**
+         * PostgreSQL generates created_at.
+         *
+         * Retrieve the row again to return all
+         * database-generated fields.
+         *
+         * Reuse the existing owner-scoped lookup.
          */
         Business createdBusiness =
             businessMapper.findByIdAndOwnerId(
@@ -306,9 +433,9 @@ public class BusinessService {
             );
 
 
-        // ====================================================
-        // VERIFY CREATED BUSINESS CAN BE RETRIEVED
-        // ====================================================
+        // ----------------------------------------------------
+        // VERIFY CREATED BUSINESS
+        // ----------------------------------------------------
 
         if (createdBusiness == null) {
 
@@ -317,24 +444,30 @@ public class BusinessService {
             );
         }
 
+
+        // ----------------------------------------------------
+        // RETURN CREATED BUSINESS
+        // ----------------------------------------------------
+
         return createdBusiness;
     }
 
 
     // ========================================================
-    // 4. VALIDATE OWNER ID
+    // VALIDATE OWNER ID
     // ========================================================
 
     /**
-     * Owner IDs must be positive database identifiers.
+     * Validate a canonical business owner ID.
      *
-     * This validation does not prove that the owner
-     * exists or is authenticated.
+     * This validates the numeric format, not identity.
      *
-     * The database foreign key enforces existence
-     * when a new business is inserted.
+     * Spring Security establishes the authenticated
+     * identity before the controller calls this service.
      */
-    private void validateOwnerId(Long ownerId) {
+    private void validateOwnerId(
+        Long ownerId
+    ) {
 
         if (ownerId == null || ownerId <= 0) {
 
@@ -346,13 +479,36 @@ public class BusinessService {
 
 
     // ========================================================
-    // 5. VALIDATE BUSINESS ID
+    // VALIDATE AUTHENTICATED USER ID
     // ========================================================
 
     /**
-     * Reject null or nonpositive business IDs.
+     * Reject invalid user identifiers before
+     * executing membership-scoped queries.
      */
-    private void validateBusinessId(Long businessId) {
+    private void validateUserId(
+        Long userId
+    ) {
+
+        if (userId == null || userId <= 0) {
+
+            throw new IllegalArgumentException(
+                "User ID must be a positive number"
+            );
+        }
+    }
+
+
+    // ========================================================
+    // VALIDATE BUSINESS ID
+    // ========================================================
+
+    /**
+     * Business IDs must be positive database identifiers.
+     */
+    private void validateBusinessId(
+        Long businessId
+    ) {
 
         if (businessId == null || businessId <= 0) {
 
@@ -364,22 +520,21 @@ public class BusinessService {
 
 
     // ========================================================
-    // 6. VALIDATE BUSINESS NAME
+    // VALIDATE BUSINESS NAME
     // ========================================================
 
     /**
-     * Remove leading and trailing spaces.
+     * Validate and normalize a new business name.
      *
-     * PostgreSQL defines:
-     *
-     * name VARCHAR(200) NOT NULL
-     *
-     * It also rejects empty or whitespace-only names.
-     *
-     * We validate the same basic requirements
-     * before sending data to PostgreSQL.
+     * PostgreSQL stores the value in VARCHAR(200).
      */
-    private String validateBusinessName(String name) {
+    private String validateBusinessName(
+        String name
+    ) {
+
+        // ----------------------------------------------------
+        // REQUIRE NONBLANK NAME
+        // ----------------------------------------------------
 
         if (name == null || name.isBlank()) {
 
@@ -388,7 +543,18 @@ public class BusinessService {
             );
         }
 
-        String trimmedName = name.trim();
+
+        // ----------------------------------------------------
+        // REMOVE SURROUNDING WHITESPACE
+        // ----------------------------------------------------
+
+        String trimmedName =
+            name.trim();
+
+
+        // ----------------------------------------------------
+        // ENFORCE MAXIMUM LENGTH
+        // ----------------------------------------------------
 
         if (trimmedName.length() > 200) {
 
@@ -402,44 +568,43 @@ public class BusinessService {
 
 
     // ========================================================
-    // 7. VALIDATE CURRENCY
+    // VALIDATE CURRENCY
     // ========================================================
 
     /**
-     * The database requires exactly three uppercase
-     * alphabetic characters.
+     * Normalize currency to a three-letter uppercase code.
      *
-     * Examples:
+     * This validates format only.
      *
-     * USD
-     * GBP
-     * EUR
-     *
-     * This checks the three-letter format.
-     *
-     * It does not verify that a code is an officially
-     * assigned ISO 4217 currency.
+     * It does not verify whether the code is an
+     * officially assigned ISO 4217 currency.
      */
-    private String validateCurrency(String currency) {
+    private String validateCurrency(
+        String currency
+    ) {
 
-        // ====================================================
-        // APPLY DEFAULT
-        // ====================================================
+        // ----------------------------------------------------
+        // USE DEFAULT CURRENCY
+        // ----------------------------------------------------
 
         if (currency == null) {
             return "USD";
         }
 
-        // ====================================================
+
+        // ----------------------------------------------------
         // NORMALIZE INPUT
-        // ====================================================
+        // ----------------------------------------------------
 
         String normalizedCurrency =
-            currency.trim().toUpperCase(Locale.ROOT);
+            currency.trim().toUpperCase(
+                Locale.ROOT
+            );
 
-        // ====================================================
+
+        // ----------------------------------------------------
         // VALIDATE THREE-LETTER FORMAT
-        // ====================================================
+        // ----------------------------------------------------
 
         if (!normalizedCurrency.matches("[A-Z]{3}")) {
 
@@ -453,11 +618,11 @@ public class BusinessService {
 
 
     // ========================================================
-    // 8. VALIDATE FISCAL-YEAR STARTING MONTH
+    // VALIDATE FISCAL-YEAR STARTING MONTH
     // ========================================================
 
     /**
-     * Valid months are 1 through 12.
+     * Validate a fiscal-year starting month.
      *
      * Examples:
      *
@@ -466,28 +631,28 @@ public class BusinessService {
      * 7  = July
      * 10 = October
      *
-     * If the caller does not specify a month,
-     * LedgerBase uses January.
+     * A null month defaults to January.
      */
     private int validateFiscalYearStartMonth(
         Integer fiscalYearStartMonth
     ) {
 
-        // ====================================================
-        // APPLY DEFAULT
-        // ====================================================
+        // ----------------------------------------------------
+        // DEFAULT TO JANUARY
+        // ----------------------------------------------------
 
         if (fiscalYearStartMonth == null) {
             return 1;
         }
 
-        // ====================================================
-        // VALIDATE MONTH RANGE
-        // ====================================================
+
+        // ----------------------------------------------------
+        // CHECK VALID MONTH RANGE
+        // ----------------------------------------------------
 
         if (
-            fiscalYearStartMonth < 1
-            || fiscalYearStartMonth > 12
+            fiscalYearStartMonth < 1 ||
+            fiscalYearStartMonth > 12
         ) {
 
             throw new IllegalArgumentException(

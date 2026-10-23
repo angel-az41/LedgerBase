@@ -75,6 +75,20 @@ interface TransactionDetailsProps {
   businessId: number
 
   /**
+   * Whether the authenticated user has permission
+   * to perform accounting write operations.
+   *
+   * OWNER / ADMIN / ACCOUNTANT: true
+   * VIEWER: false
+   *
+   * This permission comes from App.tsx through
+   * TransactionsPage.tsx.
+   *
+   * Backend RBAC remains authoritative.
+   */
+  canWrite: boolean
+
+  /**
    * Globally unique internal database transaction ID.
    *
    * The parent passes this ID when opening the panel.
@@ -94,18 +108,6 @@ interface TransactionDetailsProps {
    */
   onPosted?: (transaction: LedgerTransaction) => void
 }
-
-// ============================================================
-// TEMPORARY DEVELOPMENT ACTOR
-// ============================================================
-
-/**
- * Authentication has not been implemented yet.
- *
- * We verified that developer user #1 exists
- * in our PostgreSQL development database.
- */
-const DEMO_ACTOR_ID = 1
 
 // ============================================================
 // ACCOUNTING DATE FORMATTING
@@ -170,6 +172,7 @@ function formatEntryAmount(amount: number): string {
 
 function TransactionDetails({
   businessId,
+  canWrite,
   transactionId,
   onClose,
   onPosted,
@@ -365,12 +368,23 @@ function TransactionDetails({
   // ============================================================
 
   /**
-   * Only DRAFT transactions may be posted.
+   * A transaction can be posted only when:
    *
-   * The backend repeats this validation
-   * before changing the database status.
+   * - The authenticated user has write permission.
+   * - Transaction data has finished loading.
+   * - No posting request is already in progress.
+   * - The transaction is still in DRAFT status.
+   * - Debit and credit totals are available.
+   * - Total debits equal total credits.
+   *
+   * VIEWER users must never be able to initiate
+   * posting through the React interface.
+   *
+   * Spring Security independently verifies the
+   * membership role when the posting API is called.
    */
   const canPost =
+    canWrite &&
     !isLoading &&
     !isPosting &&
     details?.transaction.status === 'DRAFT' &&
@@ -415,36 +429,13 @@ function TransactionDetails({
   // ============================================================
 
   /**
-   * Send:
+   * Finalize the selected draft transaction.
    *
-   * POST /api/v1/businesses/{businessId}/transactions/
-   *      {transactionId}/post
+   * The backend obtains the posting actor from the
+   * authenticated JWT instead of trusting a browser ID.
    *
-   * Body:
-   *
-   * {
-   *   "actorId": 1
-   * }
-   *
-   * Spring Boot will:
-   *
-   * - Verify the transaction belongs to the business
-   * - Verify its status is DRAFT
-   * - Perform its posting validation
-   * - Change its status to POSTED
-   * - Create an audit event
-   * - Preserve its assigned journal number
-   *
-   * PostgreSQL rules protect posted entries.
-   *
-   * IMPORTANT:
-   *
-   * The POST request uses the internal transactionId.
-   *
-   * For example, JE-0001 might have internal ID 2.
-   *
-   * Sending JE-0001 in place of the numeric ID would
-   * not match the existing backend API.
+   * PostgreSQL preserves the original journal reference
+   * and records the posting event in the audit log.
    */
   async function handleConfirmPost(): Promise<void> {
 
@@ -464,9 +455,6 @@ function TransactionDetails({
       const postedTransaction = await postTransaction(
         businessId,
         transactionId,
-        {
-          actorId: DEMO_ACTOR_ID,
-        },
       )
 
       // ========================================================
@@ -753,7 +741,8 @@ function TransactionDetails({
           {/* POSTING ACTIONS */}
           {/* ================================================== */}
 
-          {details.transaction.status === 'DRAFT' &&
+          {canWrite && 
+            details.transaction.status === 'DRAFT' &&
             !isConfirmingPost && (
 
               <div className="transaction-details-actions">

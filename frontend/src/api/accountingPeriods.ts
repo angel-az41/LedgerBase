@@ -5,25 +5,29 @@ import { getJson, postJson } from './client'
 // ============================================================
 
 /**
- * Defines the TypeScript data structures and API
- * functions for managing accounting periods.
- *
- * This module communicates with the existing
- * Spring Boot AccountingPeriodController.
+ * TypeScript models and API functions for managing
+ * LedgerBase accounting periods.
  *
  * The backend is responsible for:
  *
- * - Validating business and period ownership
- * - Enforcing OPEN/CLOSED status transitions
- * - Preventing posting into CLOSED periods
- * - Recording accounting-period audit events
+ * - Authenticating requests through JWT.
+ * - Enforcing business-scoped RBAC.
+ * - Validating business and period ownership.
+ * - Enforcing OPEN/CLOSED status transitions.
+ * - Preventing posting into CLOSED periods.
+ * - Coordinating PostgreSQL row-level locks.
+ * - Recording accounting-period audit events.
  *
- * React is responsible for:
+ * SECURITY:
  *
- * - Displaying accounting periods
- * - Showing current period statuses
- * - Requesting close/reopen operations
- * - Handling confirmation and error messages
+ * React never supplies the acting user's ID.
+ *
+ * Spring Security authenticates the JWT, and
+ * AccountingPeriodController extracts the trusted
+ * actor ID from the verified JWT subject.
+ *
+ * React only initiates the requested operation
+ * and displays the authoritative backend response.
  */
 
 // ============================================================
@@ -34,10 +38,10 @@ import { getJson, postJson } from './client'
  * Accounting periods support two statuses.
  *
  * OPEN:
- *   Journal transactions can be posted into the period.
+ *   Eligible transactions may be posted into the period.
  *
  * CLOSED:
- *   Journal posting is blocked until the period reopens.
+ *   Journal posting is blocked until reopening.
  *
  * These values match AccountingPeriod.Status in Java.
  */
@@ -52,7 +56,7 @@ export type AccountingPeriodStatus =
 /**
  * Represents one monthly accounting period.
  *
- * This interface matches AccountingPeriod.java.
+ * Matches AccountingPeriod.java.
  *
  * Dates are returned as ISO-formatted strings.
  *
@@ -66,47 +70,26 @@ export interface AccountingPeriod {
   // Business that owns the accounting period.
   businessId: number
 
-  // Fiscal year containing this period.
+  // Fiscal year containing the accounting period.
   fiscalYearId: number
 
-  // Period number within the fiscal year (1–12).
+  // Period number within the fiscal year.
   periodNumber: number
 
-  // First accounting date included in this period.
+  // First accounting date included in the period.
   startDate: string
 
-  // Last accounting date included in this period.
+  // Last accounting date included in the period.
   endDate: string
 
-  // Whether new journal postings are permitted.
+  // Current OPEN/CLOSED status.
   status: AccountingPeriodStatus
 
-  // Timestamp of the most recent closing, if closed.
+  // Closing timestamp, or null when OPEN.
   closedAt: string | null
 
-  // Timestamp when the period was created.
+  // Database-generated creation timestamp.
   createdAt: string
-}
-
-// ============================================================
-// ACCOUNTING PERIOD ACTION REQUEST
-// ============================================================
-
-/**
- * Request body used for closing and reopening periods.
- *
- * Matches AccountingPeriodActionRequest.java.
- *
- * IMPORTANT:
- *
- * actorId is temporary until Spring Security
- * authentication is implemented.
- *
- * Once users can log in, the backend must identify
- * the actor through the authenticated session.
- */
-export interface AccountingPeriodActionRequest {
-  actorId: number
 }
 
 // ============================================================
@@ -114,7 +97,7 @@ export interface AccountingPeriodActionRequest {
 // ============================================================
 
 /**
- * Retrieve all monthly periods belonging to a fiscal year.
+ * Retrieve the accounting periods of a fiscal year.
  *
  * Example:
  *
@@ -124,8 +107,12 @@ export interface AccountingPeriodActionRequest {
  *
  * GET /api/v1/businesses/1/fiscal-years/5/periods
  *
- * Returns the fiscal year's accounting periods,
- * ordered by period number.
+ * SECURITY:
+ *
+ * The backend requires authentication and
+ * business read permission.
+ *
+ * Returns accounting periods ordered by period number.
  */
 export async function getAccountingPeriods(
   businessId: number,
@@ -142,7 +129,7 @@ export async function getAccountingPeriods(
 // ============================================================
 
 /**
- * Retrieve a particular accounting period.
+ * Retrieve an individual accounting period.
  *
  * Example:
  *
@@ -152,8 +139,10 @@ export async function getAccountingPeriods(
  *
  * GET /api/v1/businesses/1/accounting-periods/10
  *
- * Returns HTTP 404 when the period does not exist
- * within the requested business.
+ * The service verifies that the period belongs
+ * to the requested business.
+ *
+ * An unavailable period returns HTTP 404.
  */
 export async function getAccountingPeriod(
   businessId: number,
@@ -174,35 +163,53 @@ export async function getAccountingPeriod(
  *
  * Example:
  *
- * closeAccountingPeriod(1, 10, { actorId: 1 })
+ * closeAccountingPeriod(1, 10)
  *
  * Sends:
  *
  * POST /api/v1/businesses/1/accounting-periods/10/close
  *
- * Body:
- * {
- *   "actorId": 1
- * }
+ * Request body:
  *
- * On success, the backend returns the updated
- * accounting period with status CLOSED.
+ * {}
  *
- * Attempting to close an already CLOSED period
- * returns HTTP 409 Conflict.
+ * SECURITY:
+ *
+ * No actorId is supplied by React.
+ *
+ * The existing authenticated API client sends
+ * the request using the current JWT session.
+ *
+ * AccountingPeriodController derives the actual
+ * user ID from Spring Security's JWT principal.
+ *
+ * The backend:
+ *
+ * - Verifies business write permission.
+ * - Validates the accounting period.
+ * - Coordinates database locking.
+ * - Changes OPEN to CLOSED.
+ * - Records the closing timestamp.
+ * - Writes an audit event with the trusted actor ID.
+ *
+ * A successful operation returns the updated period.
+ *
+ * An invalid status transition returns HTTP 409.
  */
 export async function closeAccountingPeriod(
   businessId: number,
   periodId: number,
-  request: AccountingPeriodActionRequest,
 ): Promise<AccountingPeriod> {
+
+  // No client-supplied actor identity is included.
+  const requestBody: Record<string, never> = {}
 
   return postJson<
     AccountingPeriod,
-    AccountingPeriodActionRequest
+    Record<string, never>
   >(
     `/api/v1/businesses/${businessId}/accounting-periods/${periodId}/close`,
-    request,
+    requestBody,
   )
 }
 
@@ -211,36 +218,48 @@ export async function closeAccountingPeriod(
 // ============================================================
 
 /**
- * Reopen a previously CLOSED accounting period.
+ * Reopen a CLOSED accounting period.
  *
  * Example:
  *
- * reopenAccountingPeriod(1, 10, { actorId: 1 })
+ * reopenAccountingPeriod(1, 10)
  *
  * Sends:
  *
  * POST /api/v1/businesses/1/accounting-periods/10/reopen
  *
+ * Request body:
+ *
+ * {}
+ *
+ * SECURITY:
+ *
+ * No actorId is accepted from React.
+ *
+ * The backend obtains the authenticated actor
+ * from the verified JWT subject.
+ *
  * On success:
  *
  * - Status becomes OPEN.
  * - closedAt becomes null.
- * - An audit event records the reopening.
+ * - An audit event records the authenticated actor.
  *
- * Attempting to reopen an OPEN period returns
- * HTTP 409 Conflict.
+ * An invalid status transition returns HTTP 409.
  */
 export async function reopenAccountingPeriod(
   businessId: number,
   periodId: number,
-  request: AccountingPeriodActionRequest,
 ): Promise<AccountingPeriod> {
+
+  // The authenticated JWT determines who reopens the period.
+  const requestBody: Record<string, never> = {}
 
   return postJson<
     AccountingPeriod,
-    AccountingPeriodActionRequest
+    Record<string, never>
   >(
     `/api/v1/businesses/${businessId}/accounting-periods/${periodId}/reopen`,
-    request,
+    requestBody,
   )
 }

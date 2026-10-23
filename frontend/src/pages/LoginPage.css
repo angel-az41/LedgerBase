@@ -1,0 +1,465 @@
+/* ============================================================
+   LEDGERBASE — LOGIN PAGE
+   ============================================================
+
+   Enterprise accounting sign-in interface.
+
+   DESIGN:
+   - Dark navy brand panel
+   - Restrained teal accents
+   - Spacious white sign-in panel
+   - Clear focus indicators
+   - Responsive desktop and mobile layout
+
+   All classes use the lb-login prefix to avoid
+   affecting existing accounting screens.
+*/
+
+
+/* ============================================================
+   PAGE BACKGROUND AND LAYOUT
+   ============================================================ */
+
+.lb-login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+
+  background: #edf1f5;
+  color: #172b43;
+}
+
+.lb-login-layout {
+  display: grid;
+  grid-template-columns: 1.05fr 1fr;
+
+  width: 100%;
+  max-width: 1080px;
+  min-height: 630px;
+
+  overflow: hidden;
+  border-radius: 16px;
+
+  background: #ffffff;
+  box-shadow: 0 22px 65px rgba(20, 39, 59, 0.10);
+}
+
+
+/* ============================================================
+   BRAND PANEL
+   ============================================================ */
+
+.lb-login-brand-panel {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+
+  padding: 42px;
+
+  background:
+    radial-gradient(
+      circle at 90% 85%,
+      rgba(57, 177, 157, 0.16),
+      transparent 45%
+    ),
+    #14273b;
+
+  color: #ffffff;
+}
+
+.lb-login-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.lb-login-logo {
+  width: 42px;
+  height: 42px;
+  object-fit: contain;
+}
+
+.lb-login-brand-name {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.lb-login-brand-name strong {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+}
+
+.lb-login-brand-name span {
+  color: #b6c8d7;
+  font-size: 12px;
+}
+
+.lb-login-brand-content {
+  max-width: 410px;
+}
+
+.lb-login-eyebrow {
+  margin-bottom: 22px;
+
+  color: #71d2c0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 2px;
+}
+
+.lb-login-brand-content h1 {
+  margin: 0;
+
+  color: #ffffff;
+  font-size: clamp(32px, 3.2vw, 46px);
+  font-weight: 700;
+  line-height: 1.18;
+  letter-spacing: -1.5px;
+}
+
+.lb-login-brand-content p {
+  max-width: 345px;
+  margin: 22px 0 0;
+
+  color: #bccbd9;
+  font-size: 15px;
+  line-height: 1.8;
+}
+
+.lb-login-brand-features {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+
+  margin-top: 32px;
+}
+
+.lb-login-brand-features span {
+  padding: 8px 11px;
+
+  border: 1px solid rgba(185, 209, 222, 0.22);
+  border-radius: 6px;
+
+  color: #dce9f0;
+  font-size: 11px;
+}
+
+.lb-login-brand-footer {
+  color: #8196a9;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 1.4px;
+}
+
+
+/* ============================================================
+   FORM PANEL
+   ============================================================ */
+
+.lb-login-form-panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  padding: 48px;
+
+  background: #ffffff;
+}
+
+.lb-login-form-content {
+  width: 100%;
+  max-width: 370px;
+}
+
+.lb-login-mobile-brand {
+  display: none;
+}
+
+.lb-login-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 48px;
+  height: 48px;
+
+  margin-bottom: 26px;
+
+  border-radius: 12px;
+  background: #e7f5f1;
+  color: #138278;
+}
+
+.lb-login-form-heading h2 {
+  margin: 0;
+
+  color: #172b43;
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.8px;
+}
+
+.lb-login-form-heading p {
+  margin: 12px 0 0;
+
+  color: #728194;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+
+/* ============================================================
+   FORM FIELDS
+   ============================================================ */
+
+.lb-login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+
+  margin-top: 38px;
+}
+
+.lb-login-field {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.lb-login-field label {
+  color: #35475c;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.lb-login-field input {
+  width: 100%;
+  min-height: 46px;
+  box-sizing: border-box;
+
+  padding: 0 14px;
+
+  border: 1px solid #d3dde6;
+  border-radius: 8px;
+
+  background: #ffffff;
+  color: #172b43;
+
+  font: inherit;
+  font-size: 14px;
+
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.lb-login-field input::placeholder {
+  color: #9aa8b6;
+}
+
+.lb-login-field input:focus {
+  outline: none;
+
+  border-color: #138278;
+  box-shadow: 0 0 0 3px rgba(19, 130, 120, 0.13);
+}
+
+.lb-login-field input:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+
+/* ============================================================
+   PASSWORD VISIBILITY BUTTON
+   ============================================================ */
+
+.lb-login-password-wrapper {
+  position: relative;
+}
+
+.lb-login-password-wrapper input {
+  padding-right: 52px;
+}
+
+.lb-login-password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 34px;
+  height: 34px;
+  padding: 0;
+
+  transform: translateY(-50%);
+
+  border: none;
+  border-radius: 6px;
+
+  background: transparent;
+  color: #798a9b;
+
+  cursor: pointer;
+}
+
+.lb-login-password-toggle:hover {
+  background: #f0f4f6;
+  color: #243a50;
+}
+
+.lb-login-password-toggle:focus-visible {
+  outline: 2px solid #138278;
+  outline-offset: 2px;
+}
+
+
+/* ============================================================
+   ERROR MESSAGE
+   ============================================================ */
+
+.lb-login-error {
+  margin: 0;
+  padding: 12px 14px;
+
+  border: 1px solid #efc6c6;
+  border-radius: 7px;
+
+  background: #fff4f4;
+  color: #a33535;
+
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+
+/* ============================================================
+   SIGN-IN BUTTON
+   ============================================================ */
+
+.lb-login-submit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+
+  width: 100%;
+  min-height: 48px;
+  padding: 12px 18px;
+
+  border: none;
+  border-radius: 8px;
+
+  background: #117f77;
+  color: #ffffff;
+
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+
+  cursor: pointer;
+
+  transition: background 150ms ease;
+}
+
+.lb-login-submit:hover:not(:disabled) {
+  background: #0b6862;
+}
+
+.lb-login-submit:focus-visible {
+  outline: 3px solid rgba(17, 127, 119, 0.35);
+  outline-offset: 3px;
+}
+
+.lb-login-submit:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+
+/* ============================================================
+   SESSION INFORMATION
+   ============================================================ */
+
+.lb-login-session-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+
+  margin-top: 32px;
+  padding-top: 20px;
+
+  border-top: 1px solid #edf1f4;
+  color: #8190a0;
+}
+
+.lb-login-session-note svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.lb-login-session-note p {
+  margin: 0;
+
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+
+/* ============================================================
+   RESPONSIVE LAYOUT
+   ============================================================ */
+
+@media (max-width: 850px) {
+
+  .lb-login-page {
+    padding: 20px;
+  }
+
+  .lb-login-layout {
+    grid-template-columns: 1fr;
+    max-width: 510px;
+    min-height: auto;
+  }
+
+  .lb-login-brand-panel {
+    display: none;
+  }
+
+  .lb-login-form-panel {
+    padding: 52px 32px;
+  }
+
+  .lb-login-mobile-brand {
+    display: block;
+
+    margin-bottom: 48px;
+
+    color: #172b43;
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+  }
+}
+
+@media (max-width: 480px) {
+
+  .lb-login-page {
+    padding: 12px;
+  }
+
+  .lb-login-form-panel {
+    padding: 36px 22px;
+  }
+
+  .lb-login-form-heading h2 {
+    font-size: 26px;
+  }
+}

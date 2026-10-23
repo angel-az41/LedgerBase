@@ -30,3 +30,21 @@ mybatis:
 
   configuration:
     map-underscore-to-camel-case: true
+
+# ============================================================
+# TEST-ONLY JWT CONFIGURATION
+# ============================================================
+
+# This fixed key is exclusively for automated tests.
+#
+# It must never be used in a deployed application.
+#
+# The test profile overrides the development signing
+# secret configured in application.yaml.
+#
+# A separate signing key keeps integration tests
+# independent of local authentication credentials.
+
+ledgerbase:
+  jwt:
+    secret-base64: TGVkZ2VyQmFzZUp3dFRlc3RLZXlPbmx5MDAwMDAwMDAwMDAx

@@ -86,6 +86,58 @@
         </dependency>
 
         <!--
+            Spring Security Crypto:
+            Provides secure password hashing and verification.
+
+            BCrypt uses a random salt and a configurable
+            work factor to resist offline password attacks.
+
+            IMPORTANT:
+
+            We are adding only the cryptography module
+            at this stage, not the complete Spring Security
+            web authentication starter.
+
+            This allows us to implement and test password
+            handling without changing existing API access.
+
+            Maven uses the dependency version managed by
+            the Spring Boot parent.
+        -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-crypto</artifactId>
+        </dependency>
+
+        <!-- ==================================
+             JWT SUPPORT
+             ================================== -->
+
+        <!--
+            Spring Security OAuth2 JOSE:
+            Provides JWT signing, decoding, and validation.
+
+            NimbusJwtEncoder:
+            Creates cryptographically signed JWTs.
+
+            NimbusJwtDecoder:
+            Verifies JWT signatures and token claims.
+
+            We are deliberately not adding the full
+            Spring Security web starter yet.
+
+            This lets us test token functionality
+            independently of HTTP authorization.
+
+            Dependency version is managed by the
+            Spring Boot parent.
+        -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-oauth2-jose</artifactId>
+        </dependency>
+
+        <!--
             Spring Boot Actuator:
             Expose application health and monitoring data.
 
@@ -155,6 +207,30 @@
             <artifactId>spring-boot-devtools</artifactId>
             <scope>runtime</scope>
             <optional>true</optional>
+        </dependency>
+
+        <!-- ==================================
+             HTTP AUTHENTICATION
+             ================================== -->
+
+        <!--
+            Spring Security OAuth2 Resource Server:
+
+            Integrates JWT Bearer authentication
+            with Spring Security's HTTP filter chain.
+
+            The resource server will use our existing
+            JwtDecoder bean to verify incoming tokens.
+
+            This starter also includes the core
+            Spring Security infrastructure.
+
+            Version management is provided by
+            the Spring Boot parent.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security-oauth2-resource-server</artifactId>
         </dependency>
 
         <!-- ==================================

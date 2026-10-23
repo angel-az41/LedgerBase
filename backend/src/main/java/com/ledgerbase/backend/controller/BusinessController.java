@@ -1,14 +1,24 @@
 package com.ledgerbase.backend.controller;
 
+import com.ledgerbase.backend.dto.BusinessRoleResponse;
 import com.ledgerbase.backend.dto.CreateBusinessRequest;
+
+import com.ledgerbase.backend.mapper.BusinessMembershipMapper;
+
 import com.ledgerbase.backend.model.Business;
+
 import com.ledgerbase.backend.service.BusinessService;
 
 import jakarta.validation.Valid;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
+
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 
@@ -23,279 +33,357 @@ import java.util.List;
  *
  * /api/v1/businesses
  *
- * RESPONSIBILITIES:
+ * AUTHENTICATION:
  *
- * 1. List businesses belonging to the development owner.
- * 2. Retrieve a specific business.
- * 3. Create a new business.
+ * Spring Security requires a valid Bearer JWT
+ * for all business management endpoints.
  *
- * ARCHITECTURE:
+ * The verified JWT subject identifies the
+ * authenticated PostgreSQL user.
  *
- * React Frontend
- *       |
- *       v
- * BusinessController
- *       |
- *       v
- * BusinessService
- *       |
- *       v
- * BusinessMapper
- *       |
- *       v
- * PostgreSQL
+ * SECURITY:
  *
- * The controller handles HTTP requests and responses.
+ * - Never trust ownerId submitted by the browser.
+ * - Never use a hardcoded development user ID.
+ * - List businesses through membership records.
+ * - Retrieve businesses through membership records.
+ * - Derive membership roles from PostgreSQL.
+ * - Assign OWNER membership to business creators.
  *
- * BusinessService handles validation, normalization,
- * business rules, and database transactions.
+ * BUSINESS ROLE ENDPOINT:
  *
- * IMPORTANT — LOCAL DEVELOPMENT ONLY:
+ * GET /api/v1/businesses/{businessId}/my-role
  *
- * Authentication and authorization have not yet
- * been implemented.
+ * React uses this endpoint to display accounting
+ * interfaces appropriate to the current role.
  *
- * We temporarily use the existing development
- * owner's user ID (1).
- *
- * This does NOT authenticate callers.
- *
- * Do not expose these business-management endpoints
- * to untrusted users or deploy them publicly until
- * authentication and ownership authorization exist.
- *
- * Later, the owner ID must be obtained from the
- * authenticated user's security context.
+ * The existing BusinessAuthorizationManager remains
+ * responsible for enforcing backend permissions.
  */
 @RestController
 @RequestMapping("/api/v1/businesses")
 public class BusinessController {
 
     // ========================================================
-    // DEVELOPMENT OWNER CONFIGURATION
+    // DEPENDENCIES
     // ========================================================
 
-    /**
-     * Temporary owner for local development.
-     *
-     * Our existing development business belongs
-     * to user ID 1.
-     *
-     * Both the existing LedgerBase Demo Business
-     * and the future ABC Consulting LLC demo business
-     * will belong to this user.
-     *
-     * This constant must be replaced when we
-     * implement authentication and authorization.
-     */
-    private static final Long DEVELOPMENT_OWNER_ID = 1L;
-
-
-    // ========================================================
-    // BUSINESS SERVICE
-    // ========================================================
-
-    /**
-     * BusinessService is responsible for:
-     *
-     * - Business creation
-     * - Input validation
-     * - Business retrieval
-     * - Owner-scoped database operations
-     */
     private final BusinessService businessService;
+
+    /**
+     * Retrieve the current membership role
+     * for one authenticated user and business.
+     */
+    private final BusinessMembershipMapper
+        businessMembershipMapper;
 
 
     // ========================================================
     // CONSTRUCTOR INJECTION
     // ========================================================
 
-    /**
-     * Spring Boot automatically supplies BusinessService.
-     *
-     * Constructor injection keeps dependencies explicit
-     * and makes the controller easier to test.
-     */
     public BusinessController(
-        BusinessService businessService
+        BusinessService businessService,
+        BusinessMembershipMapper businessMembershipMapper
     ) {
 
         this.businessService = businessService;
+
+        this.businessMembershipMapper =
+            businessMembershipMapper;
     }
 
 
     // ========================================================
-    // 1. GET ALL BUSINESSES
+    // GET AUTHENTICATED USER'S BUSINESSES
     // ========================================================
 
     /**
      * GET /api/v1/businesses
      *
-     * Retrieve businesses belonging to the
-     * development owner.
+     * Return businesses for which the authenticated
+     * user has a PostgreSQL membership.
      *
-     * EXAMPLE RESPONSE:
+     * Supported membership roles:
      *
-     * [
-     *     {
-     *         "id": 1,
-     *         "ownerId": 1,
-     *         "name": "LedgerBase Demo Business",
-     *         "currency": "USD",
-     *         "fiscalYearStartMonth": 1,
-     *         "createdAt": "..."
-     *     }
-     * ]
+     * OWNER, ADMIN, ACCOUNTANT, VIEWER.
      *
-     * RETURNS:
+     * Users without memberships receive
+     * an empty JSON array.
      *
-     * HTTP 200 — List of businesses.
-     *
-     * If the owner has no businesses, the API
-     * returns an empty JSON array.
-     *
-     * Later, this method will retrieve the owner
-     * identity from the authenticated user.
+     * @param jwt verified JWT principal
+     * @return accessible businesses
      */
     @GetMapping
-    public List<Business> getBusinesses() {
+    public List<Business> getBusinesses(
+        @AuthenticationPrincipal Jwt jwt
+    ) {
 
-        // ====================================================
-        // RETRIEVE OWNER'S BUSINESSES
-        // ====================================================
+        Long userId =
+            getAuthenticatedUserId(jwt);
 
-        return businessService.getBusinessesByOwner(
-            DEVELOPMENT_OWNER_ID
+        return businessService.getBusinessesForUser(
+            userId
         );
     }
 
 
     // ========================================================
-    // 2. GET ONE BUSINESS
+    // GET ONE AUTHORIZED BUSINESS
     // ========================================================
 
     /**
      * GET /api/v1/businesses/{businessId}
      *
-     * EXAMPLE:
+     * Retrieve business details only when the
+     * authenticated user has membership access.
      *
-     * GET /api/v1/businesses/1
+     * HTTP 200:
+     * Accessible business.
      *
-     * Retrieves the requested business only if it
-     * belongs to the development owner.
+     * HTTP 404:
+     * Missing or inaccessible business.
      *
-     * RETURNS:
-     *
-     * HTTP 200 — Business found.
-     *
-     * HTTP 400 — Invalid business ID.
-     *
-     * HTTP 404 — Business not found or owner mismatch.
-     *
-     * Missing businesses are handled through our
-     * existing BusinessNotFoundException and
-     * GlobalExceptionHandler.
+     * @param businessId requested business
+     * @param jwt verified JWT principal
+     * @return accessible business information
      */
     @GetMapping("/{businessId}")
     public Business getBusiness(
-        @PathVariable Long businessId
+        @PathVariable Long businessId,
+        @AuthenticationPrincipal Jwt jwt
     ) {
 
-        // ====================================================
-        // RETRIEVE BUSINESS THROUGH SERVICE
-        // ====================================================
+        Long userId =
+            getAuthenticatedUserId(jwt);
 
-        return businessService.getBusinessById(
+        return businessService.getBusinessForUser(
             businessId,
-            DEVELOPMENT_OWNER_ID
+            userId
         );
     }
 
 
     // ========================================================
-    // 3. CREATE A NEW BUSINESS
+    // GET CURRENT USER'S BUSINESS ROLE
+    // ========================================================
+
+    /**
+     * GET /api/v1/businesses/{businessId}/my-role
+     *
+     * Return the authenticated user's membership
+     * role for the requested business.
+     *
+     * The user ID comes from the verified JWT.
+     *
+     * The role comes from the current PostgreSQL
+     * business_memberships record.
+     *
+     * React cannot choose either value.
+     *
+     * SECURITY:
+     *
+     * SecurityConfig routes this nested business
+     * endpoint through BusinessAuthorizationManager.
+     *
+     * Therefore, a caller must already have
+     * recognized membership access to the business.
+     *
+     * This method also handles a missing membership
+     * defensively.
+     *
+     * HTTP 200:
+     * Returns the user's current business role.
+     *
+     * HTTP 401:
+     * Missing or invalid authentication.
+     *
+     * HTTP 403:
+     * No authorized membership.
+     *
+     * @param businessId selected business identifier
+     * @param jwt verified JWT principal
+     * @return authenticated user's business role
+     */
+    @GetMapping("/{businessId}/my-role")
+    public BusinessRoleResponse getMyBusinessRole(
+        @PathVariable Long businessId,
+        @AuthenticationPrincipal Jwt jwt
+    ) {
+
+        // ----------------------------------------------------
+        // RESOLVE TRUSTED USER ID
+        // ----------------------------------------------------
+
+        Long userId =
+            getAuthenticatedUserId(jwt);
+
+
+        // ----------------------------------------------------
+        // VALIDATE BUSINESS IDENTIFIER
+        // ----------------------------------------------------
+
+        if (businessId == null || businessId <= 0) {
+
+            throw new ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                "Invalid business ID"
+            );
+        }
+
+
+        // ----------------------------------------------------
+        // RETRIEVE CURRENT DATABASE MEMBERSHIP
+        // ----------------------------------------------------
+
+        String role =
+            businessMembershipMapper.findRole(
+                businessId,
+                userId
+            );
+
+
+        // ----------------------------------------------------
+        // REQUIRE AN EXISTING MEMBERSHIP
+        // ----------------------------------------------------
+
+        if (role == null) {
+
+            throw new ResponseStatusException(
+                HttpStatus.FORBIDDEN,
+                "Business membership required"
+            );
+        }
+
+
+        // ----------------------------------------------------
+        // RETURN CURRENT MEMBERSHIP ROLE
+        // ----------------------------------------------------
+
+        return new BusinessRoleResponse(role);
+    }
+
+
+    // ========================================================
+    // CREATE BUSINESS FOR AUTHENTICATED USER
     // ========================================================
 
     /**
      * POST /api/v1/businesses
      *
-     * EXAMPLE REQUEST:
+     * Create a business owned by the authenticated user.
      *
-     * {
-     *     "name": "ABC Consulting LLC",
-     *     "currency": "USD",
-     *     "fiscalYearStartMonth": 1
-     * }
+     * The browser supplies business attributes,
+     * but cannot select the owner ID.
      *
-     * REQUEST VALIDATION:
+     * BusinessService creates the business and
+     * its OWNER membership atomically.
      *
-     * @Valid activates the Jakarta Validation
-     * annotations in CreateBusinessRequest.
+     * HTTP 201:
+     * Business successfully created.
      *
-     * BusinessService performs additional validation
-     * and normalization.
-     *
-     * OWNERSHIP:
-     *
-     * The request body does not contain ownerId.
-     *
-     * During local development, ownerId is supplied
-     * by DEVELOPMENT_OWNER_ID.
-     *
-     * After authentication is implemented, it must
-     * come from a trusted authenticated identity.
-     *
-     * RETURNS:
-     *
-     * HTTP 201 — Business created successfully.
-     *
-     * HTTP 400 — Invalid request data.
-     *
-     * HTTP 409 — Database constraint conflict.
-     *
-     * The response includes the created business,
-     * including its generated ID and createdAt.
+     * @param request validated business attributes
+     * @param jwt verified JWT principal
+     * @return newly created business
      */
     @PostMapping
     public ResponseEntity<Business> createBusiness(
-        @Valid @RequestBody CreateBusinessRequest request
+        @Valid @RequestBody CreateBusinessRequest request,
+        @AuthenticationPrincipal Jwt jwt
     ) {
 
-        // ====================================================
-        // CREATE BUSINESS THROUGH SERVICE
-        // ====================================================
+        // ----------------------------------------------------
+        // RESOLVE AUTHENTICATED OWNER
+        // ----------------------------------------------------
 
-        /**
-         * We pass only the permitted request fields.
-         *
-         * The client cannot choose:
-         *
-         * - The owner ID
-         * - The generated database ID
-         * - The creation timestamp
-         */
+        Long ownerId =
+            getAuthenticatedUserId(jwt);
+
+
+        // ----------------------------------------------------
+        // CREATE BUSINESS
+        // ----------------------------------------------------
+
         Business createdBusiness =
             businessService.createBusiness(
-                DEVELOPMENT_OWNER_ID,
+                ownerId,
                 request.name(),
                 request.currency(),
                 request.fiscalYearStartMonth()
             );
 
 
-        // ====================================================
-        // RETURN HTTP 201 CREATED
-        // ====================================================
+        // ----------------------------------------------------
+        // RETURN CREATED BUSINESS
+        // ----------------------------------------------------
 
-        /**
-         * HTTP 201 indicates that a new resource
-         * was created successfully.
-         *
-         * The response body contains the complete
-         * created business.
-         */
         return ResponseEntity
             .status(HttpStatus.CREATED)
             .body(createdBusiness);
+    }
+
+
+    // ========================================================
+    // RESOLVE AUTHENTICATED USER ID
+    // ========================================================
+
+    /**
+     * Extract the PostgreSQL user ID from the
+     * JWT principal verified by Spring Security.
+     *
+     * Do not accept a browser-provided user ID.
+     *
+     * Invalid or missing identities are rejected.
+     *
+     * @param jwt verified JWT principal
+     * @return positive authenticated user ID
+     */
+    private Long getAuthenticatedUserId(
+        Jwt jwt
+    ) {
+
+        // ----------------------------------------------------
+        // REQUIRE AUTHENTICATED JWT
+        // ----------------------------------------------------
+
+        if (jwt == null) {
+
+            throw new ResponseStatusException(
+                HttpStatus.UNAUTHORIZED,
+                "Authentication required"
+            );
+        }
+
+
+        // ----------------------------------------------------
+        // PARSE JWT SUBJECT
+        // ----------------------------------------------------
+
+        try {
+
+            Long userId =
+                Long.parseLong(
+                    jwt.getSubject()
+                );
+
+            if (userId <= 0) {
+
+                throw new NumberFormatException(
+                    "Nonpositive JWT subject"
+                );
+            }
+
+            return userId;
+
+        } catch (
+            NumberFormatException
+            | NullPointerException exception
+        ) {
+
+            throw new ResponseStatusException(
+                HttpStatus.UNAUTHORIZED,
+                "Invalid authenticated identity"
+            );
+        }
     }
 }

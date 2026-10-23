@@ -4,10 +4,20 @@ import com.ledgerbase.backend.dto.AccountingPeriodActionRequest;
 import com.ledgerbase.backend.model.AccountingPeriod;
 import com.ledgerbase.backend.service.AccountingPeriodService;
 
-import jakarta.validation.Valid;
-
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
+
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 
@@ -18,40 +28,60 @@ import java.util.List;
 /**
  * REST API for accounting-period management.
  *
- * Base URL:
+ * BASE URL:
  *
  * /api/v1/businesses/{businessId}
  *
- * Responsibilities:
+ * RESPONSIBILITIES:
  *
- * 1. Retrieve the accounting periods of a fiscal year.
- * 2. Retrieve one accounting period.
- * 3. Close an OPEN accounting period.
- * 4. Reopen a CLOSED accounting period.
+ * - Retrieve accounting periods for a fiscal year.
+ * - Retrieve one accounting period.
+ * - Close an OPEN accounting period.
+ * - Reopen a CLOSED accounting period.
  *
- * Each fiscal year normally has 12 monthly periods.
+ * Each fiscal year normally contains 12 monthly
+ * accounting periods.
  *
- * Example:
+ * AUTHENTICATION:
  *
- * FY2026:
+ * Spring Security validates incoming JWT access tokens.
  *
- * Period 1  = January 2026
- * Period 2  = February 2026
- * ...
- * Period 12 = December 2026
+ * AUTHORIZATION:
  *
- * This controller currently provides READ-ONLY access.
+ * BusinessAuthorizationManager checks the user's
+ * business membership and role before allowing
+ * access to business-scoped endpoints.
  *
- * Closing and reopening endpoints will be introduced
- * after we implement the journal-posting restrictions.
+ * READ OPERATIONS:
  *
- * The controller handles HTTP requests and responses.
- * AccountingPeriodService handles business logic.
+ * Authorized business members can retrieve
+ * accounting-period information.
  *
- * IMPORTANT:
+ * WRITE OPERATIONS:
  *
- * Authentication and business ownership authorization
- * must be implemented before public deployment.
+ * Closing and reopening require business write
+ * permission under the current RBAC configuration.
+ *
+ * ACTOR IDENTITY:
+ *
+ * The actual user performing a state change is
+ * derived from the verified JWT subject.
+ *
+ * Client-supplied actorId values are never trusted.
+ *
+ * ACCOUNTING SAFEGUARDS:
+ *
+ * AccountingPeriodService remains responsible for:
+ *
+ * - Validating business and period ownership.
+ * - Checking valid OPEN/CLOSED transitions.
+ * - Coordinating PostgreSQL row-level locks.
+ * - Preventing conflicts with journal posting.
+ * - Updating status and closing timestamps.
+ * - Creating transactional accounting audit events.
+ *
+ * The controller handles HTTP input and output,
+ * while the service enforces accounting rules.
  */
 @RestController
 @RequestMapping("/api/v1/businesses/{businessId}")
@@ -62,19 +92,24 @@ public class AccountingPeriodController {
     // ========================================================
 
     /**
-     * Service responsible for retrieving accounting periods
-     * and validating business ownership of fiscal years.
+     * Existing accounting-period business logic.
+     *
+     * We preserve the service so authentication
+     * changes do not disturb transaction management
+     * or the PostgreSQL accounting safeguards.
      */
     private final AccountingPeriodService accountingPeriodService;
 
 
     // ========================================================
-    // CONSTRUCTOR
+    // CONSTRUCTOR INJECTION
     // ========================================================
 
     /**
-     * Spring automatically injects the service
-     * through constructor injection.
+     * Spring injects AccountingPeriodService.
+     *
+     * Constructor injection keeps dependencies
+     * explicit and supports unit testing.
      */
     public AccountingPeriodController(
             AccountingPeriodService accountingPeriodService) {
@@ -88,9 +123,10 @@ public class AccountingPeriodController {
     // ========================================================
 
     /**
-     * GET /api/v1/businesses/1/fiscal-years/5/periods
+     * GET
+     * /api/v1/businesses/{businessId}/fiscal-years/{fiscalYearId}/periods
      *
-     * Retrieve the 12 monthly accounting periods
+     * Retrieve the monthly accounting periods
      * belonging to a specific fiscal year.
      *
      * Results are ordered by period number.
@@ -110,23 +146,33 @@ public class AccountingPeriodController {
      *   }
      * ]
      *
+     * SECURITY:
+     *
+     * The existing Spring Security configuration
+     * verifies the authenticated user's business
+     * read permission before invoking this method.
+     *
      * Returns:
      *
-     * HTTP 200 — Fiscal year exists; returns its periods.
-     * HTTP 404 — Fiscal year does not exist or belongs
-     *            to another business.
-     *
-     * A missing business also produces HTTP 404 through
-     * the existing BusinessNotFoundException handler.
+     * HTTP 200 — Fiscal year found; periods returned.
+     * HTTP 401 — Authentication required.
+     * HTTP 403 — Business access denied.
+     * HTTP 404 — Fiscal year does not exist in business.
      */
     @GetMapping("/fiscal-years/{fiscalYearId}/periods")
     public ResponseEntity<List<AccountingPeriod>> getPeriodsForFiscalYear(
-            @PathVariable Long businessId,
-            @PathVariable Long fiscalYearId) {
 
-        // ====================================================
-        // LOAD ACCOUNTING PERIODS
-        // ====================================================
+        @PathVariable("businessId")
+        Long businessId,
+
+        @PathVariable("fiscalYearId")
+        Long fiscalYearId
+
+    ) {
+
+        // ----------------------------------------------------
+        // LOAD BUSINESS-SCOPED ACCOUNTING PERIODS
+        // ----------------------------------------------------
 
         List<AccountingPeriod> periods =
             accountingPeriodService.getPeriodsForFiscalYear(
@@ -135,26 +181,28 @@ public class AccountingPeriodController {
             );
 
 
-        // ====================================================
+        // ----------------------------------------------------
         // HANDLE MISSING FISCAL YEAR
-        // ====================================================
+        // ----------------------------------------------------
 
         /**
-         * The service returns null when no fiscal year
-         * matches both IDs.
+         * A null result indicates that no fiscal
+         * year matches both supplied identifiers.
          *
-         * This is different from an existing fiscal year
-         * containing zero periods, which returns [].
+         * An existing fiscal year with no periods
+         * may instead return an empty list.
          */
         if (periods == null) {
 
-            return ResponseEntity.notFound().build();
+            return ResponseEntity
+                .notFound()
+                .build();
         }
 
 
-        // ====================================================
+        // ----------------------------------------------------
         // RETURN ACCOUNTING PERIODS
-        // ====================================================
+        // ----------------------------------------------------
 
         return ResponseEntity.ok(periods);
     }
@@ -165,27 +213,40 @@ public class AccountingPeriodController {
     // ========================================================
 
     /**
-     * GET /api/v1/businesses/1/accounting-periods/10
+     * GET
+     * /api/v1/businesses/{businessId}/accounting-periods/{periodId}
      *
-     * Retrieve a particular accounting period.
+     * Retrieve one accounting period.
      *
-     * The service and MyBatis mapper enforce
-     * business-scoped retrieval.
+     * The service and MyBatis mapper scope the
+     * query to the requested business.
+     *
+     * SECURITY:
+     *
+     * Spring Security checks the authenticated
+     * user's membership before invoking the method.
      *
      * Returns:
      *
-     * HTTP 200 — Accounting period found.
-     * HTTP 404 — Period missing or belongs to
-     *            another business.
+     * HTTP 200 — Period found.
+     * HTTP 401 — Authentication required.
+     * HTTP 403 — Business access denied.
+     * HTTP 404 — Period not found in business.
      */
     @GetMapping("/accounting-periods/{periodId}")
     public ResponseEntity<AccountingPeriod> getAccountingPeriod(
-            @PathVariable Long businessId,
-            @PathVariable Long periodId) {
 
-        // ====================================================
-        // RETRIEVE BUSINESS-SCOPED PERIOD
-        // ====================================================
+        @PathVariable("businessId")
+        Long businessId,
+
+        @PathVariable("periodId")
+        Long periodId
+
+    ) {
+
+        // ----------------------------------------------------
+        // RETRIEVE PERIOD
+        // ----------------------------------------------------
 
         AccountingPeriod period =
             accountingPeriodService.getAccountingPeriod(
@@ -194,19 +255,21 @@ public class AccountingPeriodController {
             );
 
 
-        // ====================================================
+        // ----------------------------------------------------
         // HANDLE MISSING PERIOD
-        // ====================================================
+        // ----------------------------------------------------
 
         if (period == null) {
 
-            return ResponseEntity.notFound().build();
+            return ResponseEntity
+                .notFound()
+                .build();
         }
 
 
-        // ====================================================
-        // RETURN ACCOUNTING PERIOD
-        // ====================================================
+        // ----------------------------------------------------
+        // RETURN DATABASE RECORD
+        // ----------------------------------------------------
 
         return ResponseEntity.ok(period);
     }
@@ -217,135 +280,351 @@ public class AccountingPeriodController {
     // ========================================================
 
     /**
-     * POST /api/v1/businesses/1/accounting-periods/10/close
+     * POST
+     * /api/v1/businesses/{businessId}/accounting-periods/{periodId}/close
      *
      * Change an accounting period from OPEN to CLOSED.
      *
-     * Example request body:
+     * Example new request body:
+     *
+     * {}
+     *
+     * A request body is also optional.
+     *
+     * BACKWARD COMPATIBILITY:
+     *
+     * Older clients may still send:
      *
      * {
-     *   "actorId": 1
+     *     "actorId": 1
      * }
      *
-     * AccountingPeriodService is responsible for:
+     * The actorId in that body is ignored.
      *
-     * 1. Checking that the period belongs to the business.
-     * 2. Verifying that its current status is OPEN.
-     * 3. Updating the status to CLOSED.
-     * 4. Recording the closing timestamp.
-     * 5. Writing an accounting-period audit event.
+     * SECURITY:
      *
-     * A CLOSED period cannot accept new journal postings.
+     * Spring Security validates the JWT.
+     *
+     * BusinessAuthorizationManager checks the
+     * user's business write permission.
+     *
+     * This controller determines the acting user
+     * from the verified JWT subject.
+     *
+     * AccountingPeriodService then:
+     *
+     * - Verifies that the period belongs to businessId.
+     * - Acquires the required PostgreSQL row lock.
+     * - Verifies that the period is OPEN.
+     * - Changes the period status to CLOSED.
+     * - Records the closing timestamp.
+     * - Records the authenticated actor in audit_events.
+     *
+     * A CLOSED accounting period cannot accept
+     * new journal postings.
      *
      * Returns:
      *
      * HTTP 200 — Period successfully closed.
-     * HTTP 400 — Invalid actor ID.
-     * HTTP 404 — Period not found for this business.
-     * HTTP 409 — Period is already CLOSED or state
-     *            changes conflict with the request.
+     * HTTP 401 — Authentication required.
+     * HTTP 403 — Insufficient business permission.
+     * HTTP 404 — Period not found.
+     * HTTP 409 — Invalid transition or posting conflict.
+     *
+     * @param businessId owning business
+     * @param periodId period to close
+     * @param ignoredLegacyRequest optional legacy body
+     * @param jwt verified authentication principal
+     * @return updated CLOSED period
      */
     @PostMapping("/accounting-periods/{periodId}/close")
     public ResponseEntity<AccountingPeriod> closeAccountingPeriod(
-            @PathVariable Long businessId,
-            @PathVariable Long periodId,
-            @Valid @RequestBody AccountingPeriodActionRequest request) {
 
-        // ====================================================
+        @PathVariable("businessId")
+        Long businessId,
+
+        @PathVariable("periodId")
+        Long periodId,
+
+        @RequestBody(required = false)
+        AccountingPeriodActionRequest ignoredLegacyRequest,
+
+        @AuthenticationPrincipal
+        Jwt jwt
+
+    ) {
+
+        // ----------------------------------------------------
+        // RESOLVE AUTHENTICATED ACTOR
+        // ----------------------------------------------------
+
+        /**
+         * The acting user must come from the JWT.
+         *
+         * Never call ignoredLegacyRequest.actorId().
+         *
+         * This prevents a user from closing a period
+         * while impersonating another user in the
+         * financial audit history.
+         */
+        Long authenticatedActorId =
+            getAuthenticatedUserId(jwt);
+
+
+        // ----------------------------------------------------
         // DELEGATE TO ACCOUNTING PERIOD SERVICE
-        // ====================================================
+        // ----------------------------------------------------
 
+        /**
+         * The existing service receives the same
+         * three arguments as before.
+         *
+         * The difference is that actorId is now
+         * trusted authentication data, not browser input.
+         *
+         * Database locking, status transitions,
+         * and audit logging remain unchanged.
+         */
         AccountingPeriod closedPeriod =
             accountingPeriodService.closeAccountingPeriod(
                 businessId,
                 periodId,
-                request.actorId()
+                authenticatedActorId
             );
 
-        // ====================================================
+
+        // ----------------------------------------------------
         // HANDLE MISSING OR CROSS-BUSINESS PERIOD
-        // ====================================================
+        // ----------------------------------------------------
 
         /**
-         * The service returns null when the period cannot
-         * be found within the requested business.
+         * The service returns null when the period
+         * cannot be found in the specified business.
          */
         if (closedPeriod == null) {
 
-            return ResponseEntity.notFound().build();
+            return ResponseEntity
+                .notFound()
+                .build();
         }
 
-        // ====================================================
-        // RETURN UPDATED ACCOUNTING PERIOD
-        // ====================================================
+
+        // ----------------------------------------------------
+        // RETURN UPDATED PERIOD
+        // ----------------------------------------------------
 
         return ResponseEntity.ok(closedPeriod);
     }
+
 
     // ========================================================
     // REOPEN ACCOUNTING PERIOD
     // ========================================================
 
     /**
-     * POST /api/v1/businesses/1/accounting-periods/10/reopen
+     * POST
+     * /api/v1/businesses/{businessId}/accounting-periods/{periodId}/reopen
      *
      * Change an accounting period from CLOSED to OPEN.
      *
-     * Example request body:
+     * The frontend may submit an empty JSON object:
      *
-     * {
-     *   "actorId": 1
-     * }
+     * {}
      *
-     * AccountingPeriodService is responsible for:
+     * A request body is also optional.
      *
-     * 1. Checking that the period belongs to the business.
-     * 2. Verifying that its current status is CLOSED.
-     * 3. Updating the status to OPEN.
-     * 4. Clearing the closing timestamp.
-     * 5. Writing an accounting-period audit event.
+     * Legacy actorId values are ignored.
      *
-     * Reopening allows new journal postings dated
-     * within the accounting period.
+     * SECURITY:
+     *
+     * Spring Security validates the user's JWT
+     * and applies business write authorization.
+     *
+     * The verified JWT subject determines the
+     * actor recorded in audit_events.
+     *
+     * AccountingPeriodService:
+     *
+     * - Checks business and period ownership.
+     * - Locks the relevant database rows.
+     * - Verifies that the period is CLOSED.
+     * - Changes the period status to OPEN.
+     * - Clears the closing timestamp.
+     * - Records an ACCOUNTING_PERIOD_REOPENED event.
+     *
+     * Reopening permits eligible journal postings
+     * into the period again.
      *
      * Returns:
      *
      * HTTP 200 — Period successfully reopened.
-     * HTTP 400 — Invalid actor ID.
-     * HTTP 404 — Period not found for this business.
-     * HTTP 409 — Period is already OPEN or state
-     *            changes conflict with the request.
+     * HTTP 401 — Authentication required.
+     * HTTP 403 — Insufficient business permission.
+     * HTTP 404 — Period not found.
+     * HTTP 409 — Invalid state transition.
+     *
+     * @param businessId owning business
+     * @param periodId period to reopen
+     * @param ignoredLegacyRequest optional legacy body
+     * @param jwt verified authentication principal
+     * @return updated OPEN period
      */
     @PostMapping("/accounting-periods/{periodId}/reopen")
     public ResponseEntity<AccountingPeriod> reopenAccountingPeriod(
-            @PathVariable Long businessId,
-            @PathVariable Long periodId,
-            @Valid @RequestBody AccountingPeriodActionRequest request) {
 
-        // ====================================================
+        @PathVariable("businessId")
+        Long businessId,
+
+        @PathVariable("periodId")
+        Long periodId,
+
+        @RequestBody(required = false)
+        AccountingPeriodActionRequest ignoredLegacyRequest,
+
+        @AuthenticationPrincipal
+        Jwt jwt
+
+    ) {
+
+        // ----------------------------------------------------
+        // RESOLVE AUTHENTICATED ACTOR
+        // ----------------------------------------------------
+
+        /**
+         * The legacy request body is deliberately ignored.
+         *
+         * This guarantees that a client-supplied actorId
+         * cannot determine who reopened the period.
+         */
+        Long authenticatedActorId =
+            getAuthenticatedUserId(jwt);
+
+
+        // ----------------------------------------------------
         // DELEGATE TO ACCOUNTING PERIOD SERVICE
-        // ====================================================
+        // ----------------------------------------------------
 
         AccountingPeriod reopenedPeriod =
             accountingPeriodService.reopenAccountingPeriod(
                 businessId,
                 periodId,
-                request.actorId()
+                authenticatedActorId
             );
 
-        // ====================================================
+
+        // ----------------------------------------------------
         // HANDLE MISSING OR CROSS-BUSINESS PERIOD
-        // ====================================================
+        // ----------------------------------------------------
 
         if (reopenedPeriod == null) {
 
-            return ResponseEntity.notFound().build();
+            return ResponseEntity
+                .notFound()
+                .build();
         }
 
-        // ====================================================
-        // RETURN UPDATED ACCOUNTING PERIOD
-        // ====================================================
+
+        // ----------------------------------------------------
+        // RETURN UPDATED PERIOD
+        // ----------------------------------------------------
 
         return ResponseEntity.ok(reopenedPeriod);
+    }
+
+
+    // ========================================================
+    // RESOLVE AUTHENTICATED USER ID
+    // ========================================================
+
+    /**
+     * Extract the authenticated user's PostgreSQL ID
+     * from Spring Security's verified JWT principal.
+     *
+     * LedgerBase uses the numeric database user ID
+     * as the JWT subject.
+     *
+     * Example:
+     *
+     * JWT subject: "42"
+     *
+     * Result:
+     *
+     * Long userId = 42L
+     *
+     * We reject:
+     *
+     * - Missing JWT principals.
+     * - Missing JWT subjects.
+     * - Non-numeric subjects.
+     * - Zero or negative user IDs.
+     *
+     * This method only resolves identity.
+     *
+     * Authorization to modify a specific business
+     * is enforced independently by the Spring
+     * Security authorization manager.
+     *
+     * @param jwt validated JWT principal
+     * @return authenticated database user ID
+     */
+    private Long getAuthenticatedUserId(
+        Jwt jwt
+    ) {
+
+        // ----------------------------------------------------
+        // REQUIRE AUTHENTICATED PRINCIPAL
+        // ----------------------------------------------------
+
+        if (jwt == null) {
+
+            throw new ResponseStatusException(
+                HttpStatus.UNAUTHORIZED,
+                "Authentication required"
+            );
+        }
+
+
+        // ----------------------------------------------------
+        // PARSE NUMERIC JWT SUBJECT
+        // ----------------------------------------------------
+
+        try {
+
+            Long userId =
+                Long.parseLong(jwt.getSubject());
+
+
+            // ------------------------------------------------
+            // REQUIRE POSITIVE USER ID
+            // ------------------------------------------------
+
+            if (userId <= 0) {
+
+                throw new NumberFormatException(
+                    "Authenticated user ID must be positive"
+                );
+            }
+
+
+            // ------------------------------------------------
+            // RETURN TRUSTED ACTOR
+            // ------------------------------------------------
+
+            return userId;
+
+        } catch (
+            NumberFormatException
+            | NullPointerException exception
+        ) {
+
+            // ------------------------------------------------
+            // FAIL CLOSED ON INVALID JWT IDENTITY
+            // ------------------------------------------------
+
+            throw new ResponseStatusException(
+                HttpStatus.UNAUTHORIZED,
+                "Invalid authenticated identity"
+            );
+        }
     }
 }

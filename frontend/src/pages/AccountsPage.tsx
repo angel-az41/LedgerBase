@@ -75,6 +75,18 @@ import './AccountsPage.css'
  */
 interface AccountsPageProps {
   businessId: number
+
+  /**
+   * Whether the authenticated user can modify accounts
+   * belonging to the currently selected business.
+   *
+   * OWNER / ADMIN / ACCOUNTANT: true
+   * VIEWER: false
+   *
+   * App.tsx obtains this permission from the backend.
+   * Spring Security independently enforces authorization.
+   */
+  canWrite: boolean
 }
 
 // ============================================================
@@ -277,6 +289,7 @@ function formatAccountBalance(
 
 function AccountsPage({
   businessId,
+  canWrite,
 }: AccountsPageProps) {
 
   // ==========================================================
@@ -630,11 +643,33 @@ function AccountsPage({
 
   }, [accounts, searchQuery, statusFilter])
 
+  
   // ==========================================================
   // CREATE ACCOUNT — OPEN FORM
   // ==========================================================
 
+  /**
+   * Open the account creation form only when the
+   * authenticated user has accounting write permission.
+   *
+   * VIEWER users cannot initiate account creation.
+   *
+   * The backend independently verifies permissions
+   * before inserting any PostgreSQL records.
+   */
   function handleOpenCreateForm(): void {
+
+    // --------------------------------------------------------
+    // REQUIRE BUSINESS WRITE PERMISSION
+    // --------------------------------------------------------
+
+    if (!canWrite) {
+      return
+    }
+
+    // --------------------------------------------------------
+    // OPEN ACCOUNT CREATION WORKFLOW
+    // --------------------------------------------------------
 
     setSuccessMessage('')
 
@@ -894,7 +929,7 @@ function AccountsPage({
       {/* NEW ACCOUNT FORM */}
       {/* ==================================================== */}
 
-      {isCreateFormOpen && (
+      {canWrite && isCreateFormOpen && (
 
         <NewAccountForm
           businessId={businessId}
@@ -937,7 +972,7 @@ function AccountsPage({
             {/* PRIMARY ACTION — CREATE NEW ACCOUNT */}
             {/* ================================================ */}
 
-            {!isCreateFormOpen && (
+            {canWrite && !isCreateFormOpen && (
 
               <button
                 type="button"
@@ -954,10 +989,12 @@ function AccountsPage({
             {/* VISUAL SEPARATOR */}
             {/* ================================================ */}
 
-            <span
-              className="coa-action-separator"
-              aria-hidden="true"
-            />
+            {canWrite && (
+              <span
+                className="coa-action-separator"
+                aria-hidden="true"
+              />
+            )}
 
             {/* ================================================ */}
             {/* IMPORT AND EXPORT ACTIONS */}
@@ -965,14 +1002,18 @@ function AccountsPage({
 
             <div className="coa-import-export-actions">
 
-              {/* ============================================== */}
-              {/* IMPORT ACCOUNTS */}
-              {/* ============================================== */}
+              {/* ================================================== */}
+              {/* ACCOUNT IMPORT — WRITE PERMISSION REQUIRED */}
+              {/* ================================================== */}
 
-              <ImportAccountsDialog
-                businessId={businessId}
-                onImported={handleAccountsImported}
-              />
+              {canWrite && (
+
+                <ImportAccountsDialog
+                  businessId={businessId}
+                  onImported={handleAccountsImported}
+                />
+
+              )}
 
               {/* ============================================== */}
               {/* EXPORT FORMAT DROPDOWN */}
@@ -1209,9 +1250,10 @@ function AccountsPage({
               <h3>No accounts yet</h3>
 
               <p>
-                Create your first general ledger
-                account using the New Account button.
-              </p>
+              {canWrite
+                ? 'Create your first general ledger account using the New Account button.'
+                : 'There are no general ledger accounts to display for this business.'}
+            </p>
 
             </div>
 
@@ -1288,12 +1330,14 @@ function AccountsPage({
                       Created
                     </th>
 
-                    <th
-                      scope="col"
-                      className="coa-actions-column"
-                    >
-                      Actions
-                    </th>
+                    {canWrite && (
+                      <th
+                        scope="col"
+                        className="coa-actions-column"
+                      >
+                        Actions
+                      </th>
+                    )}
 
                   </tr>
 
@@ -1502,15 +1546,17 @@ function AccountsPage({
                         or posting eligibility.
                       */}
 
-                      <td className="coa-actions-column">
+                      {canWrite && (
+                        <td className="coa-actions-column">
 
-                        <AccountActions
-                          businessId={businessId}
-                          account={account}
-                          onUpdated={handleAccountUpdated}
-                        />
+                          <AccountActions
+                            businessId={businessId}
+                            account={account}
+                            onUpdated={handleAccountUpdated}
+                          />
 
-                      </td>
+                        </td>
+                      )}
 
                     </tr>
 

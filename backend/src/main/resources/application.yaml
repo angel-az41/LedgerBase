@@ -36,6 +36,9 @@ mybatis:
   configuration:
     map-underscore-to-camel-case: true
 
+  # Register Java-to-PostgreSQL type converters
+  type-handlers-package: com.ledgerbase.backend.typehandler
+
 # Spring Boot HTTP server
 server:
   port: 8080
@@ -46,3 +49,23 @@ management:
     web:
       exposure:
         include: health,info
+
+# ============================================================
+# JWT AUTHENTICATION CONFIGURATION
+# ============================================================
+
+# The signing key comes from the JWT_SECRET_BASE64
+# environment variable.
+#
+# No default signing key is provided. Application startup
+# must fail when the secret is missing or invalid.
+#
+# JWT issuer and audience identify LedgerBase tokens
+# and prevent tokens intended for another service
+# from being accepted accidentally.
+
+ledgerbase:
+  jwt:
+    secret-base64: ${JWT_SECRET_BASE64:}
+    issuer: ledgerbase
+    audience: ledgerbase-api

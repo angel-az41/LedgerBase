@@ -54,7 +54,21 @@ import './TransactionsPage.css'
  * App.tsx supplies the currently selected business ID.
  */
 interface TransactionsPageProps {
+
+  // Currently selected business.
   businessId: number
+
+  /**
+   * Whether the authenticated user may modify
+   * financial records for this business.
+   *
+   * OWNER, ADMIN, ACCOUNTANT: true
+   * VIEWER: false
+   *
+   * This value comes from App.tsx after verifying
+   * the user's current PostgreSQL membership.
+   */
+  canWrite: boolean
 }
 
 // ============================================================
@@ -98,6 +112,7 @@ function formatTransactionDate(date: string): string {
 
 function TransactionsPage({
   businessId,
+  canWrite,
 }: TransactionsPageProps) {
 
   // ============================================================
@@ -378,12 +393,27 @@ function TransactionsPage({
   // ============================================================
 
   /**
-   * Open the transaction creation form.
+   * Open the transaction creation form only when the
+   * authenticated user has accounting write permissions.
    *
-   * Close the Transaction Details panel so
-   * the user is focused on one workflow.
+   * VIEWER users cannot initiate this workflow.
+   *
+   * The backend remains responsible for enforcing
+   * authorization when financial APIs are called.
    */
   function handleOpenCreateForm(): void {
+
+    // ----------------------------------------------------------
+    // REQUIRE ACCOUNTING WRITE PERMISSION
+    // ----------------------------------------------------------
+
+    if (!canWrite) {
+      return
+    }
+
+    // ----------------------------------------------------------
+    // OPEN THE CREATION WORKFLOW
+    // ----------------------------------------------------------
 
     setSuccessMessage('')
 
@@ -561,7 +591,7 @@ function TransactionsPage({
       {/* NEW JOURNAL ENTRY FORM */}
       {/* ====================================================== */}
 
-      {isCreateFormOpen && (
+      {canWrite && isCreateFormOpen && (
 
         <NewJournalEntryForm
           businessId={businessId}
@@ -579,6 +609,7 @@ function TransactionsPage({
 
         <TransactionDetails
           businessId={businessId}
+          canWrite={canWrite}
           transactionId={selectedTransactionId}
           onClose={handleCloseDetails}
           onPosted={handleTransactionPosted}
@@ -671,7 +702,7 @@ function TransactionsPage({
             {/* NEW JOURNAL ENTRY BUTTON */}
             {/* ================================================ */}
 
-            {!isCreateFormOpen && (
+            {canWrite && !isCreateFormOpen && (
 
               <button
                 type="button"
