@@ -5,10 +5,12 @@ import com.ledgerbase.reporting.model.TrialBalanceReport;
 import com.ledgerbase.reporting.security.AccountingCoreAuthorizationClient;
 
 import com.ledgerbase.reporting.service.ReplicaReportingRevisionVerifier;
-import com.ledgerbase.reporting.service.TrialBalanceService;
+import com.ledgerbase.reporting.service.ReplicaTrialBalanceSnapshotService;
+
+import com.ledgerbase.reporting.service
+    .ReplicaTrialBalanceSnapshotService.VersionedTrialBalanceReport;
 
 import org.springframework.format.annotation.DateTimeFormat;
-
 import org.springframework.http.HttpStatus;
 
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -50,30 +52,18 @@ import java.util.OptionalLong;
  * 3. Current business membership.
  * 4. Reporting read permission.
  *
- * Only authorized requests reach this controller.
- *
  * REPLICA CONSISTENCY:
  *
- * Before generating a report, this controller:
+ * 1. Obtain the authorized revision from Accounting Core.
+ * 2. Wait for the replica to reach that revision.
+ * 3. Generate a consistent REPEATABLE READ snapshot.
+ * 4. Recheck the required revision inside that snapshot.
+ * 5. Return the financial report.
  *
- * 1. Requests the authoritative business revision
- *    through Accounting Core's authorized endpoint.
+ * The snapshot's exact revision is also available
+ * for future Redis version-aware caching.
  *
- * 2. Checks that the PostgreSQL read replica has
- *    replayed at least that revision.
- *
- * 3. Generates the Trial Balance only after the
- *    required revision becomes visible.
- *
- * This prevents a known-stale replica from returning
- * outdated financial balances after recent posting.
- *
- * If Accounting Core cannot verify the revision,
- * or the replica cannot catch up, report generation
- * fails safely.
- *
- * This controller performs no database writes
- * or monetary calculations.
+ * The public JSON response remains unchanged.
  */
 @RestController
 @RequestMapping(
@@ -82,92 +72,50 @@ import java.util.OptionalLong;
 public class TrialBalanceController {
 
     // ========================================================
-    // SERVICE DEPENDENCIES
+    // DEPENDENCIES
     // ========================================================
 
-    /**
-     * Existing financial reporting implementation.
-     *
-     * All accounting calculations remain inside
-     * TrialBalanceService and the MyBatis mapper.
-     */
-    private final TrialBalanceService trialBalanceService;
-
-    /**
-     * Calls Accounting Core using the requesting user's
-     * authenticated JWT.
-     *
-     * Returns the authoritative PostgreSQL primary
-     * revision only after Accounting Core authorizes
-     * the request.
-     */
     private final AccountingCoreAuthorizationClient
         authorizationClient;
 
-    /**
-     * Verifies that Reporting Service's PostgreSQL
-     * read replica has replayed the required revision.
-     */
     private final ReplicaReportingRevisionVerifier
         replicaRevisionVerifier;
+
+    private final ReplicaTrialBalanceSnapshotService
+        snapshotService;
 
     // ========================================================
     // CONSTRUCTOR INJECTION
     // ========================================================
 
     public TrialBalanceController(
-        TrialBalanceService trialBalanceService,
         AccountingCoreAuthorizationClient authorizationClient,
-        ReplicaReportingRevisionVerifier replicaRevisionVerifier
+        ReplicaReportingRevisionVerifier replicaRevisionVerifier,
+        ReplicaTrialBalanceSnapshotService snapshotService
     ) {
-
-        this.trialBalanceService = trialBalanceService;
 
         this.authorizationClient = authorizationClient;
 
         this.replicaRevisionVerifier =
             replicaRevisionVerifier;
+
+        this.snapshotService = snapshotService;
     }
 
     // ========================================================
-    // GET TRIAL BALANCE REPORT
+    // GET TRIAL BALANCE
     // ========================================================
 
     /**
-     * Generate a Trial Balance for an authorized business.
+     * Return a Trial Balance for an authorized business.
      *
-     * Example:
+     * The returned JSON is still TrialBalanceReport,
+     * so no React frontend changes are required.
      *
-     * GET /api/v1/businesses/2/reports/trial-balance
-     *     ?asOfDate=2026-10-23
-     *
-     * The report includes:
-     *
-     * - Business ID and reporting date.
-     * - Individual account balances.
-     * - Total debit and credit balances.
-     * - Balancing difference.
-     * - Balanced status.
-     *
-     * Monetary values are serialized as JSON strings
-     * to preserve decimal precision.
-     *
-     * SECURITY:
-     *
-     * The ReportingBusinessAuthorizationManager already
-     * checks the JWT and business membership before
-     * this controller executes.
-     *
-     * We perform another Accounting Core request here
-     * to retrieve a current authorized reporting revision.
-     *
-     * This ensures we never accept an untrusted revision
-     * supplied through a query parameter or request header.
-     *
-     * @param businessId authorized business identifier
-     * @param asOfDate reporting cutoff date
-     * @param jwt verified JWT from Spring Security
-     * @return complete Trial Balance report
+     * @param businessId requested business
+     * @param asOfDate inclusive reporting cutoff
+     * @param jwt authenticated JWT principal
+     * @return existing Trial Balance report structure
      */
     @GetMapping("/trial-balance")
     public TrialBalanceReport getTrialBalance(
@@ -186,17 +134,9 @@ public class TrialBalanceController {
     ) {
 
         // ====================================================
-        // STEP 1 — REQUIRE AN AUTHENTICATED JWT
+        // STEP 1 — REQUIRE AUTHENTICATED JWT
         // ====================================================
 
-        /*
-         * Spring Security normally guarantees this before
-         * the controller is invoked.
-         *
-         * The additional check prevents accidental
-         * authorization bypass if this method is later
-         * invoked outside the expected security context.
-         */
         if (
             jwt == null
             || jwt.getTokenValue() == null
@@ -210,21 +150,14 @@ public class TrialBalanceController {
         }
 
         // ====================================================
-        // STEP 2 — RETRIEVE AUTHORIZED PRIMARY REVISION
+        // STEP 2 — OBTAIN AUTHORIZED PRIMARY REVISION
         // ====================================================
 
         /*
-         * This invokes the existing Accounting Core
-         * reporting-access endpoint:
+         * This request uses the authenticated JWT.
          *
-         * GET /api/v1/businesses/{businessId}/reporting-access
-         *
-         * Accounting Core verifies the session and
-         * business membership, then returns HTTP 204
-         * with X-LedgerBase-Reporting-Revision.
-         *
-         * A missing or invalid revision must never
-         * be interpreted as revision zero.
+         * Accounting Core performs its existing
+         * session and business membership checks.
          */
         OptionalLong authorizedRevision =
             authorizationClient.getAuthorizedReportingRevision(
@@ -232,26 +165,14 @@ public class TrialBalanceController {
                 jwt.getTokenValue()
             );
 
-        // ====================================================
-        // STEP 3 — FAIL IF REVISION IS UNAVAILABLE
-        // ====================================================
-
         if (authorizedRevision.isEmpty()) {
 
             /*
-             * The revision could not be established.
+             * Never assume a missing revision is zero.
              *
-             * Possible causes include:
-             *
-             * - Accounting Core is unavailable.
-             * - Authentication or membership changed.
-             * - The revision response header is missing.
-             * - The upstream response is malformed.
-             *
-             * Do not generate the report.
-             *
-             * The existing authorization manager also
-             * fails closed on denied business access.
+             * Failed upstream authorization and
+             * communication errors must not lead
+             * to financial report generation.
              */
             throw new ResponseStatusException(
                 HttpStatus.SERVICE_UNAVAILABLE,
@@ -263,18 +184,14 @@ public class TrialBalanceController {
             authorizedRevision.getAsLong();
 
         // ====================================================
-        // STEP 4 — WAIT FOR REPLICA FRESHNESS
+        // STEP 3 — WAIT FOR REPLICA WAL REPLAY
         // ====================================================
 
         /*
-         * The replica may lag after a newly posted
-         * financial transaction.
+         * Poll outside the snapshot transaction.
          *
-         * Do not read financial balances until the
-         * required committed revision has been replayed.
-         *
-         * This method throws HTTP 503 if the replica
-         * remains behind or becomes unavailable.
+         * This allows each poll to see newer
+         * PostgreSQL WAL replay progress.
          */
         replicaRevisionVerifier.awaitRequiredRevision(
             businessId,
@@ -282,27 +199,37 @@ public class TrialBalanceController {
         );
 
         // ====================================================
-        // STEP 5 — GENERATE THE ORIGINAL TRIAL BALANCE
+        // STEP 4 — GENERATE CONSISTENT REPORT SNAPSHOT
         // ====================================================
 
         /*
-         * The freshness verification has succeeded.
+         * The snapshot service creates a separate
+         * REPEATABLE READ transaction.
          *
-         * Delegate to the existing reporting service,
-         * preserving:
+         * It reads the replica revision and the
+         * financial report from the same MVCC snapshot.
          *
-         * - The original SQL query.
-         * - POSTED-only ledger filtering.
-         * - As-of-date filtering.
-         * - Zero-balance account inclusion.
-         * - BigDecimal calculations.
-         * - The existing TrialBalanceReport JSON structure.
-         *
-         * Redis caching is not enabled in this step.
+         * It also independently verifies that the
+         * snapshot satisfies requiredRevision.
          */
-        return trialBalanceService.generateTrialBalance(
-            businessId,
-            asOfDate
-        );
+        VersionedTrialBalanceReport snapshot =
+            snapshotService.generateSnapshot(
+                businessId,
+                asOfDate,
+                requiredRevision
+            );
+
+        // ====================================================
+        // STEP 5 — PRESERVE ORIGINAL HTTP RESPONSE
+        // ====================================================
+
+        /*
+         * Redis caching will later use snapshot.revision().
+         *
+         * For now, return only the original financial report.
+         *
+         * React continues receiving the same JSON schema.
+         */
+        return snapshot.report();
     }
 }
