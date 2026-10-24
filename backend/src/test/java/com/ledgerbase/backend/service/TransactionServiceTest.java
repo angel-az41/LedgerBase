@@ -34,22 +34,49 @@ class TransactionServiceTest {
     // Service containing our accounting validation logic.
     private TransactionService transactionService;
         
+    // ========================================================
+    // TEST INITIALIZATION
+    // ========================================================
+
     /**
-     * Create the service using mock database dependencies.
+     * Create TransactionService using mocked dependencies.
      *
-     * These tests only exercise accounting validation,
-     * so no real PostgreSQL connection is necessary.
+     * These tests exercise accounting validation only.
+     * No database connections or real service calls
+     * are necessary.
+     *
+     * The reporting revision service is also mocked
+     * because revision persistence is tested separately.
      */
     @BeforeEach
     void setUp() {
 
+        // ----------------------------------------------------
+        // CREATE TRANSACTION SERVICE WITH MOCK DEPENDENCIES
+        // ----------------------------------------------------
+
         transactionService = new TransactionService(
+
+            // Financial transaction database operations.
             mock(LedgerTransactionMapper.class),
+
+            // Double-entry ledger database operations.
             mock(LedgerEntryMapper.class),
+
+            // Account validation and lookup operations.
             mock(AccountMapper.class),
+
+            // Business ownership validation.
             mock(BusinessMapper.class),
+
+            // Financial audit event persistence.
             mock(AuditEventMapper.class),
-            mock(AccountingPeriodMapper.class)
+
+            // Accounting period validation and locking.
+            mock(AccountingPeriodMapper.class),
+
+            // Durable financial reporting revision tracking.
+            mock(BusinessReportingRevisionService.class)
         );
     }
 

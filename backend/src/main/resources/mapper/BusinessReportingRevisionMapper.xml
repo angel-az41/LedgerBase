@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!DOCTYPE mapper
+    PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<!-- ============================================================ -->
+<!-- LEDGERBASE — BUSINESS REPORTING REVISION SQL -->
+<!-- ============================================================ -->
+
+<!--
+    Stores authoritative reporting revisions in PostgreSQL.
+
+    Each business owns an independent revision number.
+
+    Revision updates must commit atomically with
+    the accounting operations they represent.
+-->
+
+<mapper namespace="com.ledgerbase.backend.mapper.BusinessReportingRevisionMapper">
+
+    <!-- ======================================================== -->
+    <!-- INCREMENT BUSINESS REPORTING REVISION -->
+    <!-- ======================================================== -->
+
+    <!--
+        PostgreSQL atomically increments the revision.
+
+        Concurrent increments affecting the same
+        business are serialized by row-level locking.
+
+        If the surrounding transaction rolls back,
+        this increment rolls back as well.
+    -->
+
+    <update id="incrementRevision">
+
+        UPDATE businesses
+
+        SET reporting_revision = reporting_revision + 1
+
+        WHERE id = #{businessId}
+
+    </update>
+
+    <!-- ======================================================== -->
+    <!-- GET CURRENT REPORTING REVISION -->
+    <!-- ======================================================== -->
+
+    <!--
+        Read the current reporting revision.
+
+        Accounting Core uses its primary database
+        connection to obtain the authoritative value.
+    -->
+
+    <select
+        id="findRevision"
+        resultType="java.lang.Long">
+
+        SELECT reporting_revision
+
+        FROM businesses
+
+        WHERE id = #{businessId}
+
+    </select>
+
+</mapper>

@@ -20,20 +20,28 @@ import java.util.List;
 /**
  * Business logic for LedgerBase's Chart of Accounts.
  *
- * Responsibilities:
+ * RESPONSIBILITIES:
  *
- * 1. Retrieve accounts and calculated balances.
- * 2. Create normal posting accounts.
- * 3. Create non-postable grouping accounts.
- * 4. Validate financial reporting classifications.
- * 5. Validate optional parent-child relationships.
- * 6. Rename and deactivate accounts.
+ * - Retrieve accounts and calculated balances.
+ * - Create normal posting accounts.
+ * - Create non-postable grouping accounts.
+ * - Validate financial reporting classifications.
+ * - Validate optional parent-child relationships.
+ * - Rename and deactivate accounts.
+ * - Track durable business reporting revisions.
  *
- * V7 adds reporting groups, account hierarchy,
- * and posting eligibility.
+ * PostgreSQL remains authoritative for financial
+ * integrity through constraints and triggers.
  *
- * PostgreSQL remains the final authority for
- * financial integrity through constraints and triggers.
+ * REPORTING CONSISTENCY:
+ *
+ * Account changes that affect financial reports
+ * advance the business reporting revision.
+ *
+ * Each revision increment participates in the same
+ * PostgreSQL transaction as the account modification.
+ *
+ * Redis caching will use these revisions later.
  */
 @Service
 public class AccountService {
@@ -48,15 +56,41 @@ public class AccountService {
 
 
     // ========================================================
+    // DURABLE FINANCIAL REPORT REVISION MANAGEMENT
+    // ========================================================
+
+    /**
+     * Track committed account changes that could
+     * affect Trial Balance or other financial reports.
+     *
+     * PostgreSQL stores the authoritative revision.
+     *
+     * Each revision update must participate in
+     * the same transaction as the account change.
+     */
+    private final BusinessReportingRevisionService
+        reportingRevisionService;
+
+
+    // ========================================================
     // CONSTRUCTOR
     // ========================================================
 
+    /**
+     * Inject persistence, business validation, and durable
+     * reporting revision management.
+     *
+     * Every revision increment uses the same database
+     * transaction as the related account modification.
+     */
     public AccountService(
             AccountMapper accountMapper,
-            BusinessMapper businessMapper) {
+            BusinessMapper businessMapper,
+            BusinessReportingRevisionService reportingRevisionService) {
 
         this.accountMapper = accountMapper;
         this.businessMapper = businessMapper;
+        this.reportingRevisionService = reportingRevisionService;
     }
 
 
@@ -83,7 +117,7 @@ public class AccountService {
     /**
      * Calculate account balances from POSTED entries.
      *
-     * Accounting rules:
+     * ACCOUNTING RULES:
      *
      * - DRAFT transactions do not affect balances.
      * - Inactive accounts remain visible.
@@ -140,7 +174,7 @@ public class AccountService {
 
 
     // ========================================================
-    // CREATE ACCOUNT — ORIGINAL V1 METHOD
+    // CREATE ACCOUNT — COMPATIBILITY METHOD
     // ========================================================
 
     /**
@@ -149,7 +183,7 @@ public class AccountService {
      * Existing AccountController and service tests
      * can continue calling this method.
      *
-     * V7 defaults:
+     * Default values:
      *
      * reportingGroup = null
      * parentAccountId = null
@@ -157,6 +191,11 @@ public class AccountService {
      *
      * These values create a normal, top-level
      * posting account.
+     *
+     * This method delegates to the enhanced creation
+     * method, which advances the reporting revision.
+     *
+     * Do not increment the revision a second time here.
      */
     @Transactional
     public Account createAccount(
@@ -178,7 +217,7 @@ public class AccountService {
 
 
     // ========================================================
-    // CREATE ACCOUNT — V7 ENHANCED METHOD
+    // CREATE ACCOUNT — ENHANCED METHOD
     // ========================================================
 
     /**
@@ -201,6 +240,9 @@ public class AccountService {
      *
      * PostgreSQL also validates these relationships,
      * including concurrent database modifications.
+     *
+     * The account insertion and reporting revision
+     * increment commit atomically.
      */
     @Transactional
     public Account createAccount(
@@ -356,21 +398,21 @@ public class AccountService {
 
 
         // ====================================================
-        // V7 — SET REPORTING CLASSIFICATION
+        // SET REPORTING CLASSIFICATION
         // ====================================================
 
         account.setReportingGroup(reportingGroup);
 
 
         // ====================================================
-        // V7 — SET OPTIONAL PARENT
+        // SET OPTIONAL PARENT
         // ====================================================
 
         account.setParentAccountId(parentAccountId);
 
 
         // ====================================================
-        // V7 — SET POSTING ELIGIBILITY
+        // SET POSTING ELIGIBILITY
         // ====================================================
 
         /*
@@ -392,10 +434,33 @@ public class AccountService {
          * MyBatis inserts the account and populates
          * its PostgreSQL-generated ID.
          *
-         * V7 database triggers validate hierarchy and
+         * Database triggers validate hierarchy and
          * posting restrictions.
          */
         accountMapper.insert(account);
+
+
+        // ====================================================
+        // ADVANCE BUSINESS REPORTING REVISION
+        // ====================================================
+
+        /**
+         * Every account appears in Trial Balance, including
+         * accounts with no posted financial activity.
+         *
+         * Account creation and the revision increment run
+         * in the same Spring-managed database transaction.
+         *
+         * When an account import calls this method, both
+         * operations join its outer import transaction.
+         *
+         * If either operation fails, both roll back.
+         *
+         * Do not update Redis directly here.
+         */
+        reportingRevisionService.advanceRevision(
+            businessId
+        );
 
 
         // ====================================================
@@ -410,7 +475,7 @@ public class AccountService {
          * postable
          * createdAt
          *
-         * This also returns the V7 reporting fields.
+         * This also returns the reporting fields.
          */
         return accountMapper.findById(
             businessId,
@@ -426,15 +491,28 @@ public class AccountService {
     /**
      * Rename an active account.
      *
-     * Existing behavior remains unchanged.
-     *
      * Account code, fundamental type, reporting group,
      * hierarchy, and posting eligibility are preserved.
+     *
+     * REPORTING CONSISTENCY:
+     *
+     * Trial Balance includes account names.
+     *
+     * A successful account rename must therefore
+     * advance the durable business reporting revision.
+     *
+     * Both operations execute in one PostgreSQL
+     * transaction and commit atomically.
      */
+    @Transactional
     public boolean renameAccount(
             Long businessId,
             Long accountId,
             String newName) {
+
+        // ====================================================
+        // VALIDATE ACCOUNT NAME
+        // ====================================================
 
         if (newName == null || newName.isBlank()) {
 
@@ -443,11 +521,40 @@ public class AccountService {
             );
         }
 
-        return accountMapper.updateName(
+
+        // ====================================================
+        // UPDATE ACCOUNT NAME
+        // ====================================================
+
+        boolean updated = accountMapper.updateName(
             businessId,
             accountId,
             newName.trim()
         ) > 0;
+
+
+        // ====================================================
+        // ADVANCE REVISION ON SUCCESSFUL UPDATE
+        // ====================================================
+
+        /**
+         * The account update and revision increment
+         * commit or roll back together.
+         *
+         * An unsuccessful update does not advance
+         * the reporting revision.
+         *
+         * A successful update to the same existing name
+         * may conservatively advance the revision.
+         */
+        if (updated) {
+
+            reportingRevisionService.advanceRevision(
+                businessId
+            );
+        }
+
+        return updated;
     }
 
 
@@ -462,20 +569,57 @@ public class AccountService {
      *
      * Deactivation changes is_active only.
      * It does not modify is_postable.
+     *
+     * REPORTING CONSISTENCY:
+     *
+     * Trial Balance includes inactive accounts
+     * and returns their current active status.
+     *
+     * Deactivation and reporting revision advancement
+     * must therefore commit atomically.
      */
+    @Transactional
     public boolean deactivateAccount(
             Long businessId,
             Long accountId) {
 
-        return accountMapper.deactivate(
+        // ====================================================
+        // UPDATE ACCOUNT ACTIVE STATUS
+        // ====================================================
+
+        boolean updated = accountMapper.deactivate(
             businessId,
             accountId
         ) > 0;
+
+
+        // ====================================================
+        // ADVANCE REVISION ON SUCCESSFUL UPDATE
+        // ====================================================
+
+        /**
+         * Inactive accounts remain visible in Trial Balance.
+         *
+         * The status change and revision increment share
+         * the same database transaction.
+         *
+         * This operation also participates in the outer
+         * transaction when called by account import.
+         */
+        if (updated) {
+
+            reportingRevisionService.advanceRevision(
+                businessId
+            );
+        }
+
+        return updated;
     }
 
-    // ============================================================
+
+    // ========================================================
     // UPDATE ACCOUNT REPORTING GROUP
-    // ============================================================
+    // ========================================================
 
     /**
      * Update an existing account's financial statement
@@ -513,6 +657,14 @@ public class AccountService {
      * 5. Existing ledger entries and balances
      *    must remain unchanged.
      *
+     * REPORTING CONSISTENCY:
+     *
+     * Reporting group changes affect financial
+     * statement classifications.
+     *
+     * The reporting revision is therefore advanced
+     * in the same PostgreSQL transaction.
+     *
      * @param businessId Business owning the account.
      * @param accountId Account to update.
      * @param reportingGroup New reporting classification.
@@ -525,9 +677,9 @@ public class AccountService {
         String reportingGroup
     ) {
 
-        // ========================================================
+        // ====================================================
         // STEP 1 — VERIFY ACCOUNT OWNERSHIP
-        // ========================================================
+        // ====================================================
 
         /**
          * Reuse our existing business-scoped account lookup.
@@ -535,12 +687,15 @@ public class AccountService {
          * An account belonging to another business must
          * not be accessible through this operation.
          */
-        Account account = getAccount(businessId, accountId);
-        
+        Account account = getAccount(
+            businessId,
+            accountId
+        );
 
-        // ========================================================
-        // STEP 1A — VERIFY ACCOUNT EXISTS IN REQUESTED BUSINESS
-        // ========================================================
+
+        // ====================================================
+        // VERIFY ACCOUNT EXISTS IN REQUESTED BUSINESS
+        // ====================================================
 
         /**
          * A business-scoped lookup returns null when:
@@ -564,9 +719,9 @@ public class AccountService {
         }
 
 
-        // ========================================================
+        // ====================================================
         // STEP 2 — VALIDATE REQUIRED CLASSIFICATION
-        // ========================================================
+        // ====================================================
 
         /**
          * This endpoint assigns a reporting group.
@@ -585,13 +740,12 @@ public class AccountService {
         }
 
 
-        // ========================================================
+        // ====================================================
         // STEP 3 — VALIDATE TYPE/GROUP COMPATIBILITY
-        // ========================================================
+        // ====================================================
 
         /**
-         * Reuse the helper already introduced for
-         * account creation in Milestone 15.
+         * Reuse the existing reporting group validation.
          *
          * For example:
          *
@@ -605,9 +759,9 @@ public class AccountService {
         );
 
 
-        // ========================================================
+        // ====================================================
         // STEP 4 — UPDATE REPORTING GROUP THROUGH MYBATIS
-        // ========================================================
+        // ====================================================
 
         /**
          * The mapper uses:
@@ -624,9 +778,9 @@ public class AccountService {
         );
 
 
-        // ========================================================
+        // ====================================================
         // STEP 5 — VERIFY UPDATE RESULT
-        // ========================================================
+        // ====================================================
 
         /**
          * A successful update affects exactly one account.
@@ -642,9 +796,28 @@ public class AccountService {
         }
 
 
-        // ========================================================
-        // STEP 6 — RETURN UPDATED ACCOUNT
-        // ========================================================
+        // ====================================================
+        // STEP 6 — ADVANCE REPORTING REVISION
+        // ====================================================
+
+        /**
+         * Reporting classifications affect financial
+         * statements even though the current Trial Balance
+         * response does not expose reportingGroup.
+         *
+         * The update and revision share one transaction.
+         *
+         * If revision advancement fails, the reporting
+         * group update must also roll back.
+         */
+        reportingRevisionService.advanceRevision(
+            businessId
+        );
+
+
+        // ====================================================
+        // STEP 7 — RETURN UPDATED ACCOUNT
+        // ====================================================
 
         /**
          * Reload the account from PostgreSQL.
@@ -652,8 +825,12 @@ public class AccountService {
          * This ensures the REST API receives the
          * persisted reporting classification.
          */
-        return getAccount(businessId, accountId);
+        return getAccount(
+            businessId,
+            accountId
+        );
     }
+
 
     // ========================================================
     // HELPER — VALIDATE BUSINESS EXISTENCE
@@ -668,10 +845,14 @@ public class AccountService {
      */
     private void validateBusinessExists(Long businessId) {
 
-        if (businessId == null ||
-                !businessMapper.existsById(businessId)) {
+        if (
+            businessId == null ||
+            !businessMapper.existsById(businessId)
+        ) {
 
-            throw new BusinessNotFoundException(businessId);
+            throw new BusinessNotFoundException(
+                businessId
+            );
         }
     }
 
@@ -686,7 +867,7 @@ public class AccountService {
      * We explicitly classify accounts rather than
      * guessing their meaning from account codes.
      *
-     * This mirrors V7's PostgreSQL CHECK constraint.
+     * This mirrors PostgreSQL's reporting group constraint.
      *
      * Null is allowed until an account is classified.
      */

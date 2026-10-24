@@ -4,11 +4,19 @@
 #
 # Independent Spring Boot service for financial reporting.
 #
-# This service connects exclusively to the PostgreSQL
-# read replica using the restricted ledgerbase_reader role.
+# DATA SOURCES:
 #
-# Financial writes, schema migrations, and accounting
-# transaction management remain in Accounting Core.
+# PostgreSQL read replica:
+#   - Authoritative reporting calculations
+#   - Read-only financial SQL
+#
+# Redis Cluster:
+#   - Connected during this checkpoint
+#   - Financial report caching not yet enabled
+#
+# Accounting Core:
+#   - Active JWT session verification
+#   - Business-scoped authorization
 
 spring:
 
@@ -24,35 +32,133 @@ spring:
     # Local PostgreSQL standby.
     url: jdbc:postgresql://127.0.0.1:5435/ledgerbase
 
-    # Dedicated restricted database login.
+    # Restricted database login.
     username: ledgerbase_reader
 
-    # Load from the root .env file.
-    # Never commit actual passwords.
+    # Loaded from the environment.
     password: ${POSTGRES_REPLICA_PASSWORD}
 
-    # HikariCP connection pool configuration.
     hikari:
 
+      # Dedicated read-only connection pool.
       pool-name: ledgerbase-reporting-replica-pool
 
-      # Separate connection pool for reporting workloads.
       maximum-pool-size: 4
       minimum-idle: 0
 
-      # Report queries should never perform writes.
+      # Reporting queries must never perform writes.
       read-only: true
 
-      # Fail promptly when the replica is unreachable.
+      # Fail promptly when the replica is unavailable.
       connection-timeout: 5000
       validation-timeout: 2000
+
+  # ==========================================================
+  # REDIS CLUSTER — DISTRIBUTED CACHE CONNECTION
+  # ==========================================================
+
+  data:
+    redis:
+
+      # Lettuce supports cluster-aware routing and
+      # is the default Spring Data Redis client.
+      client-type: lettuce
+
+      # ------------------------------------------------------
+      # REDIS CLUSTER NODES
+      # ------------------------------------------------------
+
+      # Seed addresses used to discover the cluster.
+      #
+      # Redis Cluster assigns 16,384 hash slots across
+      # its primary nodes.
+      #
+      # The six local ports are mapped from Docker
+      # to the macOS host.
+      #
+      # These localhost addresses are development-only.
+      # Containerized Spring services will need a
+      # different network configuration.
+
+      cluster:
+        nodes:
+          - 127.0.0.1:7000
+          - 127.0.0.1:7001
+          - 127.0.0.1:7002
+          - 127.0.0.1:7003
+          - 127.0.0.1:7004
+          - 127.0.0.1:7005
+
+        # Allow cluster redirects when the requested
+        # key belongs to another primary node.
+        max-redirects: 5
+
+      # ------------------------------------------------------
+      # REDIS AUTHENTICATION
+      # ------------------------------------------------------
+
+      # Same password as the Docker Redis Cluster.
+      #
+      # Loaded from the root .env when exported into
+      # the Spring Boot process environment.
+      #
+      # The empty default allows ordinary application
+      # startup without the Redis password configured.
+      # The explicit connectivity test still requires
+      # correct credentials.
+      #
+      # Never commit the actual secret.
+
+      password: ${REDIS_PASSWORD:}
+
+      # ------------------------------------------------------
+      # REDIS CONNECTION TIMEOUTS
+      # ------------------------------------------------------
+
+      # Bound connection and command waiting times.
+      #
+      # These will also support fast cache-failure
+      # fallback when caching is introduced later.
+
+      connect-timeout: 2s
+      timeout: 2s
+
+      # ------------------------------------------------------
+      # LETTUCE CLUSTER TOPOLOGY REFRESH
+      # ------------------------------------------------------
+
+      # Allow Lettuce to refresh cluster information
+      # after topology changes and periodically.
+      #
+      # No Redis application keys are created by
+      # this configuration alone.
+
+      lettuce:
+        cluster:
+          refresh:
+            adaptive: true
+            period: 30s
+
+      # ------------------------------------------------------
+      # REDIS REPOSITORIES
+      # ------------------------------------------------------
+
+      # We will use StringRedisTemplate for explicit
+      # cache-aside operations, not Redis repositories.
+
+      repositories:
+        enabled: false
 
 # ============================================================
 # REPORTING HTTP SERVER
 # ============================================================
 
 server:
+
+  # Independent Reporting Service port.
   port: 8082
+
+  # Local development binding.
   address: 127.0.0.1
 
 # ============================================================
@@ -60,10 +166,29 @@ server:
 # ============================================================
 
 management:
+
+  # ----------------------------------------------------------
+  # HEALTH CHECK CONFIGURATION
+  # ----------------------------------------------------------
+
+  health:
+
+    # Redis is an optional cache dependency.
+    #
+    # A Redis outage should not automatically make
+    # the Reporting Service's database-backed
+    # health endpoint return DOWN.
+    #
+    # Redis availability will be observed separately
+    # when cache monitoring is implemented.
+
+    redis:
+      enabled: false
+
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,metrics
 
   endpoint:
     health:
@@ -83,63 +208,107 @@ logging:
 
 mybatis:
 
-  # Load XML statements for financial reporting.
+  # Load existing XML financial reporting queries.
   mapper-locations: classpath*:mapper/*.xml
 
   configuration:
 
     # Map PostgreSQL snake_case columns to
-    # Java camelCase properties when appropriate.
+    # corresponding Java camelCase properties.
     map-underscore-to-camel-case: true
 
 # ============================================================
 # JWT AUTHENTICATION CONFIGURATION
 # ============================================================
 
-# The Reporting Service validates JWT access tokens
-# issued by the existing LedgerBase Accounting Core.
-#
-# Both services must use the same:
-#
-# - HS256 signing secret
-# - JWT issuer
-# - JWT audience
-#
-# Reporting Service does not issue access tokens.
-#
-# Authentication sessions and business permissions
-# will be verified through Accounting Core.
-#
-# IMPORTANT:
-#
-# The signing secret is loaded from the environment.
-# Missing or invalid secrets must prevent startup.
-
 ledgerbase:
+
   jwt:
 
-    # Same signing secret used by Accounting Core.
+    # Reporting Service verifies JWT access tokens
+    # issued by Accounting Core.
+    #
+    # Both applications must use the same HS256
+    # signing secret, issuer, and audience.
+    #
+    # The signing secret must never be committed.
+
     secret-base64: ${JWT_SECRET_BASE64:}
 
-    # Must match the issuer in Accounting Core.
     issuer: ledgerbase
-
-    # Must match the audience in Accounting Core.
     audience: ledgerbase-api
-  
+
   # ==========================================================
   # ACCOUNTING CORE AUTHORIZATION SERVICE
   # ==========================================================
 
   accounting-core:
 
-    # Trusted Accounting Core service address.
-    #
     # Reporting Service calls Accounting Core directly
-    # to verify active sessions and business membership.
+    # to verify active JWT sessions and business roles.
     #
-    # Do not route these checks back through Gateway.
+    # Do not route this authorization check through
+    # the public Spring Cloud Gateway.
     #
-    # Override this URL for Docker or Kubernetes,
-    # where localhost refers to the current container.
+    # A future container deployment must override
+    # this localhost development address.
+
     base-url: ${ACCOUNTING_CORE_BASE_URL:http://127.0.0.1:8080}
+  
+  # ==========================================================
+  # TRIAL BALANCE — REDIS CLUSTER CACHE-ASIDE
+  # ==========================================================
+
+  cache:
+
+    trial-balance:
+
+      # Feature toggle for controlled rollout.
+      #
+      # Start disabled until cache correctness tests pass.
+      #
+      # false:
+      #   Always use the existing verified PostgreSQL path.
+      #
+      # true:
+      #   Enable revision-aware Redis cache-aside.
+      #
+      # Redis outages still fall back to PostgreSQL.
+
+      enabled: ${LEDGERBASE_TRIAL_BALANCE_CACHE_ENABLED:false}
+
+      # ------------------------------------------------------
+      # CACHE ENTRY EXPIRATION
+      # ------------------------------------------------------
+
+      # ISO-8601 duration.
+      #
+      # PT5M = five minutes.
+      #
+      # A revision change causes new requests to use
+      # a different key immediately.
+      #
+      # TTL cleans up older, unreachable cache entries.
+
+      ttl: ${LEDGERBASE_TRIAL_BALANCE_CACHE_TTL:PT5M}
+  
+  # ==========================================================
+  # LOCAL REPORTING METRICS
+  # ==========================================================
+
+  monitoring:
+
+    # Allow access to Actuator metrics from the local
+    # development machine only.
+    #
+    # Default: false.
+    #
+    # This is intended for local Redis performance
+    # testing, not public production monitoring.
+    #
+    # SecurityConfig additionally checks that the
+    # connecting client is 127.0.0.1.
+    #
+    # Keep disabled in deployed environments.
+
+    local-metrics-enabled: ${LEDGERBASE_LOCAL_METRICS_ENABLED:false}
