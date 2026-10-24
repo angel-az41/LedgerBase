@@ -5,24 +5,27 @@
     LEDGERBASE — FINANCIAL REPORTING SERVICE
     ============================================================
 
-    Independent Spring Boot application for
-    financial reporting workloads.
+    Independent Spring Boot application for financial
+    reporting workloads.
 
-    Initial responsibilities:
+    CURRENT RESPONSIBILITIES:
 
     - Run independently from Accounting Core.
-    - Expose application health information.
-    - Prepare for read-only PostgreSQL access.
+    - Expose secured Trial Balance reporting APIs.
+    - Query the PostgreSQL read replica through MyBatis.
+    - Validate JWT access tokens.
+    - Verify active sessions and business authorization
+      through Accounting Core.
+    - Connect to the local Redis Cluster.
 
-    Future responsibilities:
+    PLANNED RESPONSIBILITIES:
 
-    - Trial Balance generation
-    - Income Statement reporting
-    - Balance Sheet reporting
-    - Secure reporting APIs
+    - Cache financial reports in Redis.
+    - Coordinate cache invalidation with accounting writes.
+    - Extend financial reporting service extraction.
 
-    Accounting transactions and financial posting
-    remain inside the existing Accounting Core.
+    Financial transaction posting and accounting writes
+    remain inside Accounting Core.
 -->
 
 <project xmlns="http://maven.apache.org/POM/4.0.0"
@@ -33,7 +36,11 @@
 
     <modelVersion>4.0.0</modelVersion>
 
-    <!-- Spring Boot version aligned with Accounting Core. -->
+    <!-- ====================================================== -->
+    <!-- SPRING BOOT PARENT -->
+    <!-- ====================================================== -->
+
+    <!-- Keep the same version as Accounting Core. -->
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
@@ -41,7 +48,10 @@
         <relativePath/>
     </parent>
 
-    <!-- Independent Maven artifact. -->
+    <!-- ====================================================== -->
+    <!-- PROJECT IDENTITY -->
+    <!-- ====================================================== -->
+
     <groupId>com.ledgerbase</groupId>
     <artifactId>reporting-service</artifactId>
     <version>0.0.1-SNAPSHOT</version>
@@ -58,43 +68,57 @@
 
     <dependencies>
 
+        <!-- ================================================== -->
+        <!-- SPRING WEB MVC -->
+        <!-- ================================================== -->
+
         <!--
-            Spring Web MVC supports REST reporting APIs.
+            Spring Web MVC exposes REST endpoints for
+            financial reporting requests.
         -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-webmvc</artifactId>
         </dependency>
 
+        <!-- ================================================== -->
+        <!-- ACTUATOR MONITORING -->
+        <!-- ================================================== -->
+
         <!--
-            Actuator provides service-specific health
-            checks and future monitoring endpoints.
+            Exposes health and service information.
+
+            Redis health participation will initially be
+            disabled so Redis outages do not incorrectly
+            mark the database-backed service unhealthy.
         -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
 
+        <!-- ================================================== -->
+        <!-- SPRING WEB MVC TESTING -->
+        <!-- ================================================== -->
+
         <!--
-            Spring Boot testing infrastructure.
+            Supports existing Spring Boot integration
+            tests and JUnit-based test execution.
         -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-webmvc-test</artifactId>
             <scope>test</scope>
         </dependency>
-                
-        <!-- ======================================================== -->
+
+        <!-- ================================================== -->
         <!-- POSTGRESQL READ-ONLY DATA ACCESS -->
-        <!-- ======================================================== -->
+        <!-- ================================================== -->
 
         <!--
-            Spring JDBC:
-            Provides DataSource auto-configuration, HikariCP
-            connection pooling, and JdbcTemplate.
-
-            This service will read from PostgreSQL's standby,
-            not perform accounting transaction writes.
+            Provides datasource configuration, HikariCP
+            connection pooling, JDBC support, and
+            read-only database transactions.
         -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -102,9 +126,10 @@
         </dependency>
 
         <!--
-            PostgreSQL JDBC driver:
-            Allows the reporting service to connect to the
-            existing LedgerBase PostgreSQL 17 replica.
+            PostgreSQL JDBC driver.
+
+            Reporting Service connects to the PostgreSQL
+            standby using the restricted reader role.
         -->
         <dependency>
             <groupId>org.postgresql</groupId>
@@ -112,19 +137,15 @@
             <scope>runtime</scope>
         </dependency>
 
-        <!-- ======================================================== -->
+        <!-- ================================================== -->
         <!-- MYBATIS — FINANCIAL REPORTING SQL -->
-        <!-- ======================================================== -->
+        <!-- ================================================== -->
 
         <!--
-            MyBatis integrates Java mapper interfaces with
-            PostgreSQL financial reporting SQL.
+            Maps PostgreSQL financial reporting queries
+            to Java model and service classes.
 
-            This uses the same MyBatis version as the existing
-            LedgerBase accounting backend.
-
-            Reporting Service uses its own datasource,
-            which connects exclusively to the read replica.
+            Preserve the version already used by LedgerBase.
         -->
         <dependency>
             <groupId>org.mybatis.spring.boot</groupId>
@@ -132,31 +153,62 @@
             <version>4.0.1</version>
         </dependency>
 
-        <!-- ======================================================== -->
-        <!-- SECURITY — JWT AUTHENTICATION AND AUTHORIZATION -->
-        <!-- ======================================================== -->
+        <!-- ================================================== -->
+        <!-- SECURITY — JWT AND BUSINESS AUTHORIZATION -->
+        <!-- ================================================== -->
 
         <!--
-            Spring Security OAuth2 Resource Server:
+            Validates JWT Bearer access tokens using
+            Spring Security OAuth2 Resource Server.
 
-            Validates JWT bearer tokens issued by Accounting Core.
-
-            Reporting Service must verify token signatures
-            independently and enforce business-scoped permissions.
-
-            It does not issue JWTs or manage user passwords.
+            Active session and business membership
+            authorization remain authoritative in
+            Accounting Core.
         -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-security-oauth2-resource-server</artifactId>
         </dependency>
 
+        <!-- ================================================== -->
+        <!-- REDIS CLUSTER — DISTRIBUTED CACHING -->
+        <!-- ================================================== -->
+
+        <!--
+            Spring Data Redis provides:
+
+            - RedisConnectionFactory
+            - StringRedisTemplate
+            - RedisTemplate
+            - Redis Cluster connection support
+            - Lettuce client integration
+
+            Lettuce is the default Redis driver.
+
+            Dependency versions are managed by the
+            Spring Boot parent.
+
+            Redis is not yet used for financial reports.
+            This checkpoint establishes connectivity only.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
     </dependencies>
+
+    <!-- ====================================================== -->
+    <!-- BUILD CONFIGURATION -->
+    <!-- ====================================================== -->
 
     <build>
         <plugins>
 
-            <!-- Build and run as an independent service. -->
+            <!--
+                Build and run Reporting Service as an
+                independent Spring Boot application.
+            -->
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
