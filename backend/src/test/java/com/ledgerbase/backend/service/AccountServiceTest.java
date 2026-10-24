@@ -33,9 +33,30 @@ class AccountServiceTest {
         accountMapper = mock(AccountMapper.class);
         businessMapper = mock(BusinessMapper.class);
 
+        // ====================================================
+        // INITIALIZE ACCOUNT SERVICE
+        // ====================================================
+
+        /**
+         * Create AccountService using mocked dependencies.
+         *
+         * AccountMapper:
+         *   Simulates PostgreSQL account operations.
+         *
+         * BusinessMapper:
+         *   Simulates business existence checks.
+         *
+         * BusinessReportingRevisionService:
+         *   Simulates financial reporting revision updates.
+         *
+         * These unit tests do not modify the database.
+         * Actual revision persistence and rollback behavior
+         * will be verified through integration tests.
+         */
         accountService = new AccountService(
             accountMapper,
-            businessMapper
+            businessMapper,
+            mock(BusinessReportingRevisionService.class)
         );
 
         // Simulate a business that exists for ordinary tests.

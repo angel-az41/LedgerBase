@@ -5,6 +5,7 @@ import com.ledgerbase.backend.dto.CreateTransactionRequest;
 import com.ledgerbase.backend.mapper.LedgerEntryMapper;
 import com.ledgerbase.backend.model.LedgerEntry;
 import com.ledgerbase.backend.model.LedgerTransaction;
+import com.ledgerbase.backend.service.BusinessReportingRevisionService;
 import com.ledgerbase.backend.service.TransactionService;
 import com.ledgerbase.backend.service.FiscalYearService;
 
@@ -115,6 +116,17 @@ class TransactionIntegrationTest {
      */
     @Autowired
     private MockMvc mockMvc;
+
+    /**
+     * Read the authoritative PostgreSQL reporting revision
+     * for the test business.
+     *
+     * Used to verify that financial transaction posting
+     * advances the business revision correctly.
+     */
+    @Autowired
+    private BusinessReportingRevisionService
+        reportingRevisionService;
 
     /**
      * Mock JWT signature decoding only in this test context.
@@ -1496,6 +1508,10 @@ class TransactionIntegrationTest {
                 testBusinessId,
                 createRequest("500.00", "500.00")
             );
+        
+        // Record the reporting revision before posting.
+        long revisionBeforePosting =
+            getReportingRevision(testBusinessId);
 
         // Post the transaction.
         LedgerTransaction posted =
@@ -1504,6 +1520,19 @@ class TransactionIntegrationTest {
                 draft.getId(),
                 testUserId
             );
+
+        /**
+         * Posting changes the financial balances used by
+         * Trial Balance and other financial reports.
+         *
+         * A successful DRAFT-to-POSTED transition must
+         * advance the reporting revision exactly once.
+         */
+        assertEquals(
+            revisionBeforePosting + 1,
+            getReportingRevision(testBusinessId),
+            "Successful posting must advance the reporting revision once"
+        );
 
         assertEquals("POSTED", posted.getStatus());
 
@@ -2761,5 +2790,415 @@ class TransactionIntegrationTest {
             );
 
         assertEquals(0, postingAuditCount);
+    }
+
+    // ============================================================
+    // REPORTING REVISION — SUCCESSFUL POSTING
+    // ============================================================
+
+    /**
+     * Verify that only successful transaction posting
+     * advances the business reporting revision.
+     *
+     * Expected behavior:
+     *
+     * - A new DRAFT does not change the revision.
+     * - Successful posting advances it exactly once.
+     * - Attempting to post again does not advance it.
+     *
+     * This test uses real PostgreSQL and MyBatis.
+     */
+    @Test
+    void advancesReportingRevisionExactlyOnceWhenPosting() {
+
+        // ====================================================
+        // CAPTURE INITIAL REPORTING REVISION
+        // ====================================================
+
+        long originalRevision =
+            getReportingRevision(testBusinessId);
+
+        // ====================================================
+        // CREATE A VALID DRAFT TRANSACTION
+        // ====================================================
+
+        LedgerTransaction draft =
+            transactionService.createDraftTransaction(
+                testBusinessId,
+                createRequest("500.00", "500.00")
+            );
+
+        assertNotNull(draft.getId());
+        assertEquals("DRAFT", draft.getStatus());
+
+        // Creating a draft has no effect on Trial Balance.
+        assertEquals(
+            originalRevision,
+            getReportingRevision(testBusinessId)
+        );
+
+        // ====================================================
+        // POST THE DRAFT
+        // ====================================================
+
+        LedgerTransaction posted =
+            transactionService.postTransaction(
+                testBusinessId,
+                draft.getId(),
+                testUserId
+            );
+
+        assertEquals("POSTED", posted.getStatus());
+
+        // ====================================================
+        // VERIFY REPORTING REVISION ADVANCED ONCE
+        // ====================================================
+
+        assertEquals(
+            originalRevision + 1,
+            getReportingRevision(testBusinessId),
+            "Posting must advance the reporting revision once"
+        );
+
+        // ====================================================
+        // REJECT DUPLICATE POSTING
+        // ====================================================
+
+        /*
+         * POSTED transactions are immutable.
+         *
+         * A second posting attempt must fail without
+         * increasing the reporting revision.
+         */
+        assertThrows(
+            RuntimeException.class,
+            () -> transactionService.postTransaction(
+                testBusinessId,
+                draft.getId(),
+                testUserId
+            )
+        );
+
+        // ====================================================
+        // VERIFY NO SECOND REVISION INCREMENT
+        // ====================================================
+
+        assertEquals(
+            originalRevision + 1,
+            getReportingRevision(testBusinessId),
+            "Duplicate posting must not advance the revision"
+        );
+    }
+
+
+    // ============================================================
+    // REPORTING REVISION — FAILED POSTING
+    // ============================================================
+
+    /**
+     * Verify that rejected posting attempts do not
+     * change the business reporting revision.
+     *
+     * The test business has an accounting calendar
+     * for 2026, but not for 2025.
+     *
+     * A historical draft dated in 2025 is therefore
+     * valid to save but cannot be posted.
+     */
+    @Test
+    void doesNotAdvanceReportingRevisionWhenPostingFails() {
+
+        // ====================================================
+        // CAPTURE INITIAL REVISION
+        // ====================================================
+
+        long originalRevision =
+            getReportingRevision(testBusinessId);
+
+        // ====================================================
+        // PREPARE A DRAFT OUTSIDE THE ACCOUNTING CALENDAR
+        // ====================================================
+
+        CreateTransactionRequest validRequest =
+            createRequest("500.00", "500.00");
+
+        CreateTransactionRequest historicalRequest =
+            new CreateTransactionRequest(
+                validRequest.createdBy(),
+                "Historical transaction without accounting period",
+                LocalDate.of(2025, 10, 11),
+                validRequest.entries()
+            );
+
+        LedgerTransaction draft =
+            transactionService.createDraftTransaction(
+                testBusinessId,
+                historicalRequest
+            );
+
+        assertEquals("DRAFT", draft.getStatus());
+
+        // ====================================================
+        // ATTEMPT TO POST THE INVALID DRAFT
+        // ====================================================
+
+        assertThrows(
+            RuntimeException.class,
+            () -> transactionService.postTransaction(
+                testBusinessId,
+                draft.getId(),
+                testUserId
+            )
+        );
+
+        // ====================================================
+        // VERIFY NO REPORTING REVISION CHANGE
+        // ====================================================
+
+        assertEquals(
+            originalRevision,
+            getReportingRevision(testBusinessId),
+            "Rejected posting must not advance the revision"
+        );
+
+        // ====================================================
+        // VERIFY TRANSACTION REMAINS DRAFT
+        // ====================================================
+
+        String savedStatus = jdbcTemplate.queryForObject(
+            """
+            SELECT status
+            FROM transactions
+            WHERE business_id = ?
+              AND id = ?
+            """,
+            String.class,
+            testBusinessId,
+            draft.getId()
+        );
+
+        assertEquals("DRAFT", savedStatus);
+    }
+
+    
+    // ============================================================
+    // REPORTING REVISION — POSTING ROLLBACK
+    // ============================================================
+
+    /**
+     * Verify that PostgreSQL rolls back:
+     *
+     * - The DRAFT-to-POSTED status change.
+     * - The transaction posting audit event.
+     * - The business reporting revision increment.
+     *
+     * The original DRAFT is created before the savepoint.
+     *
+     * IMPORTANT:
+     *
+     * Revision verification after the JDBC savepoint
+     * rollback uses JdbcTemplate rather than MyBatis.
+     *
+     * MyBatis may retain an earlier query result in
+     * its session-local cache after an external JDBC
+     * savepoint rollback.
+     */
+    @Test
+    void rollsBackPostingAndReportingRevisionTogether() {
+
+        // ====================================================
+        // CREATE VALID DRAFT
+        // ====================================================
+
+        LedgerTransaction draft =
+            transactionService.createDraftTransaction(
+                testBusinessId,
+                createRequest("500.00", "500.00")
+            );
+
+        assertEquals("DRAFT", draft.getStatus());
+
+        // ====================================================
+        // READ ORIGINAL REVISION DIRECTLY FROM POSTGRESQL
+        // ====================================================
+
+        Long originalRevision = jdbcTemplate.queryForObject(
+            """
+            SELECT reporting_revision
+            FROM businesses
+            WHERE id = ?
+            """,
+            Long.class,
+            testBusinessId
+        );
+
+        assertNotNull(originalRevision);
+
+        // ====================================================
+        // POST WITHIN A DATABASE SAVEPOINT
+        // ====================================================
+
+        jdbcTemplate.execute(
+            (ConnectionCallback<Void>) connection -> {
+
+                Savepoint savepoint =
+                    connection.setSavepoint();
+
+                try {
+
+                    // ----------------------------------------
+                    // POST FINANCIAL TRANSACTION
+                    // ----------------------------------------
+
+                    LedgerTransaction posted =
+                        transactionService.postTransaction(
+                            testBusinessId,
+                            draft.getId(),
+                            testUserId
+                        );
+
+                    assertEquals(
+                        "POSTED",
+                        posted.getStatus()
+                    );
+
+                    // ----------------------------------------
+                    // VERIFY REVISION ADVANCED
+                    // ----------------------------------------
+
+                    Long updatedRevision =
+                        jdbcTemplate.queryForObject(
+                            """
+                            SELECT reporting_revision
+                            FROM businesses
+                            WHERE id = ?
+                            """,
+                            Long.class,
+                            testBusinessId
+                        );
+
+                    assertNotNull(updatedRevision);
+
+                    assertEquals(
+                        originalRevision + 1,
+                        updatedRevision,
+                        "Posting must advance the revision"
+                    );
+
+                } finally {
+
+                    // ----------------------------------------
+                    // ROLL BACK ALL POSTING CHANGES
+                    // ----------------------------------------
+
+                    /*
+                     * Roll back to the savepoint created
+                     * before the posting operation.
+                     *
+                     * The original DRAFT remains, while
+                     * posting and its revision are reverted.
+                     */
+                    connection.rollback(savepoint);
+
+                    connection.releaseSavepoint(savepoint);
+                }
+
+                return null;
+            }
+        );
+
+        // ====================================================
+        // VERIFY PERSISTED REVISION WAS RESTORED
+        // ====================================================
+
+        /*
+         * Query PostgreSQL directly.
+         *
+         * Do not call getReportingRevision() here:
+         * the MyBatis session may cache the value
+         * from before the JDBC savepoint rollback.
+         */
+        Long revisionAfterRollback =
+            jdbcTemplate.queryForObject(
+                """
+                SELECT reporting_revision
+                FROM businesses
+                WHERE id = ?
+                """,
+                Long.class,
+                testBusinessId
+            );
+
+        assertEquals(
+            originalRevision,
+            revisionAfterRollback,
+            "Rollback must restore the original revision"
+        );
+
+        // ====================================================
+        // VERIFY TRANSACTION REMAINS DRAFT
+        // ====================================================
+
+        String savedStatus = jdbcTemplate.queryForObject(
+            """
+            SELECT status
+            FROM transactions
+            WHERE business_id = ?
+              AND id = ?
+            """,
+            String.class,
+            testBusinessId,
+            draft.getId()
+        );
+
+        assertEquals(
+            "DRAFT",
+            savedStatus
+        );
+
+        // ====================================================
+        // VERIFY POSTING AUDIT WAS ROLLED BACK
+        // ====================================================
+
+        Integer postingAuditCount =
+            jdbcTemplate.queryForObject(
+                """
+                SELECT COUNT(*)
+                FROM audit_events
+                WHERE business_id = ?
+                  AND entity_type = 'TRANSACTION'
+                  AND entity_id = ?
+                  AND action = 'TRANSACTION_POSTED'
+                """,
+                Integer.class,
+                testBusinessId,
+                draft.getId()
+            );
+
+        assertEquals(
+            0,
+            postingAuditCount
+        );
+    }
+
+    // ========================================================
+    // HELPER — READ BUSINESS REPORTING REVISION
+    // ========================================================
+
+    /**
+     * Retrieve the current financial reporting revision.
+     *
+     * This uses the production service and real MyBatis
+     * mapper rather than a mocked repository.
+     *
+     * Because these integration tests are transactional,
+     * it can also observe revision updates made earlier
+     * within the same test transaction.
+     */
+    private long getReportingRevision(Long businessId) {
+
+        return reportingRevisionService.getCurrentRevision(
+            businessId
+        );
     }
 }

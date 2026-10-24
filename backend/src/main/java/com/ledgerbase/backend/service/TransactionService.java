@@ -59,11 +59,37 @@ public class TransactionService {
     // Used to retrieve and lock accounting periods during posting.
     private final AccountingPeriodMapper accountingPeriodMapper;
 
+    // ========================================================
+    // FINANCIAL REPORTING REVISION MANAGEMENT
+    // ========================================================
+
     /**
-     * Spring injects the MyBatis mappers.
+     * Advances the durable business reporting revision
+     * when a transaction is successfully posted.
      *
-     * Keeping dependencies in the constructor makes
-     * the service easier to understand and unit test.
+     * The revision is stored in PostgreSQL and must
+     * commit atomically with the financial transaction.
+     *
+     * Reporting Service will later use this revision
+     * to select version-safe Redis cache entries.
+     */
+    private final BusinessReportingRevisionService
+        reportingRevisionService;
+
+    // ========================================================
+    // CONSTRUCTOR INJECTION
+    // ========================================================
+
+    /**
+     * Spring injects the dependencies required for
+     * financial transaction management.
+     *
+     * The reporting revision service coordinates
+     * version changes within existing PostgreSQL
+     * accounting transactions.
+     *
+     * Constructor injection keeps dependencies explicit
+     * and allows them to be mocked in unit tests.
      */
     public TransactionService(
             LedgerTransactionMapper transactionMapper,
@@ -71,14 +97,31 @@ public class TransactionService {
             AccountMapper accountMapper,
             BusinessMapper businessMapper,
             AuditEventMapper auditEventMapper,
-            AccountingPeriodMapper accountingPeriodMapper) {
+            AccountingPeriodMapper accountingPeriodMapper,
+            BusinessReportingRevisionService reportingRevisionService) {
+
+        // ----------------------------------------------------
+        // FINANCIAL TRANSACTION MAPPERS
+        // ----------------------------------------------------
 
         this.transactionMapper = transactionMapper;
         this.entryMapper = entryMapper;
         this.accountMapper = accountMapper;
         this.businessMapper = businessMapper;
+
+        // ----------------------------------------------------
+        // AUDIT AND ACCOUNTING PERIOD MANAGEMENT
+        // ----------------------------------------------------
+
         this.auditEventMapper = auditEventMapper;
         this.accountingPeriodMapper = accountingPeriodMapper;
+
+        // ----------------------------------------------------
+        // DURABLE REPORTING REVISION MANAGEMENT
+        // ----------------------------------------------------
+
+        this.reportingRevisionService =
+            reportingRevisionService;
     }
 
     /**
@@ -727,12 +770,61 @@ public class TransactionService {
                 businessId,
                 transactionId
             );
+        
+        // ====================================================
+        // VERIFY SUCCESSFUL TRANSACTION POSTING
+        // ====================================================
 
         if (postedTransaction == null) {
+
             throw new IllegalStateException(
                 "Posted transaction could not be retrieved"
             );
         }
+
+        // ====================================================
+        // ADVANCE BUSINESS REPORTING REVISION
+        // ====================================================
+
+        /**
+         * Posting changes the financial balances used
+         * by Trial Balance and other financial reports.
+         *
+         * The durable reporting revision must therefore
+         * advance after the successful posting operation.
+         *
+         * TRANSACTIONAL CONSISTENCY:
+         *
+         * The surrounding postTransaction() method uses
+         * @Transactional.
+         *
+         * BusinessReportingRevisionService requires an
+         * existing transaction (Propagation.MANDATORY).
+         *
+         * Consequently:
+         *
+         * - POSTED status update
+         * - Posting audit event
+         * - Reporting revision increment
+         *
+         * all belong to the same PostgreSQL transaction.
+         *
+         * If any operation fails, all changes roll back.
+         *
+         * IMPORTANT:
+         *
+         * Do not directly update or invalidate Redis here.
+         *
+         * Reporting Service will use the committed
+         * PostgreSQL revision for cache consistency.
+         */
+        reportingRevisionService.advanceRevision(
+            businessId
+        );
+
+        // ====================================================
+        // RETURN POSTED TRANSACTION
+        // ====================================================
 
         return postedTransaction;
     }
