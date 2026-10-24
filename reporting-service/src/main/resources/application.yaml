@@ -188,7 +188,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,metrics
 
   endpoint:
     health:
@@ -291,3 +291,24 @@ ledgerbase:
       # TTL cleans up older, unreachable cache entries.
 
       ttl: ${LEDGERBASE_TRIAL_BALANCE_CACHE_TTL:PT5M}
+  
+  # ==========================================================
+  # LOCAL REPORTING METRICS
+  # ==========================================================
+
+  monitoring:
+
+    # Allow access to Actuator metrics from the local
+    # development machine only.
+    #
+    # Default: false.
+    #
+    # This is intended for local Redis performance
+    # testing, not public production monitoring.
+    #
+    # SecurityConfig additionally checks that the
+    # connecting client is 127.0.0.1.
+    #
+    # Keep disabled in deployed environments.
+
+    local-metrics-enabled: ${LEDGERBASE_LOCAL_METRICS_ENABLED:false}
