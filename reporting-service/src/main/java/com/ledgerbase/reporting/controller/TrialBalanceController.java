@@ -6,9 +6,7 @@ import com.ledgerbase.reporting.security.AccountingCoreAuthorizationClient;
 
 import com.ledgerbase.reporting.service.ReplicaReportingRevisionVerifier;
 import com.ledgerbase.reporting.service.ReplicaTrialBalanceSnapshotService;
-
-import com.ledgerbase.reporting.service
-    .ReplicaTrialBalanceSnapshotService.VersionedTrialBalanceReport;
+import com.ledgerbase.reporting.service.TrialBalanceCacheService;
 
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
@@ -32,10 +30,10 @@ import java.util.OptionalLong;
 // ============================================================
 
 /**
- * Exposes the Trial Balance REST API through the
- * independent financial Reporting Service.
+ * Exposes Trial Balance financial reports through the
+ * independent Reporting Service.
  *
- * API CONTRACT:
+ * API:
  *
  * GET /api/v1/businesses/{businessId}/reports/trial-balance
  *
@@ -45,25 +43,28 @@ import java.util.OptionalLong;
  *
  * SECURITY:
  *
- * Spring Security must verify:
+ * 1. Spring Security verifies the JWT.
+ * 2. BusinessAuthorizationManager verifies reporting access.
+ * 3. Accounting Core supplies the authoritative revision.
  *
- * 1. Valid LedgerBase JWT.
- * 2. Active Accounting Core authentication session.
- * 3. Current business membership.
- * 4. Reporting read permission.
+ * CACHING:
  *
- * REPLICA CONSISTENCY:
+ * Cached reports use the current authorized primary
+ * reporting revision as part of their Redis key.
  *
- * 1. Obtain the authorized revision from Accounting Core.
- * 2. Wait for the replica to reach that revision.
- * 3. Generate a consistent REPEATABLE READ snapshot.
- * 4. Recheck the required revision inside that snapshot.
- * 5. Return the financial report.
+ * A cache hit does not need another database read.
  *
- * The snapshot's exact revision is also available
- * for future Redis version-aware caching.
+ * A cache miss triggers:
  *
- * The public JSON response remains unchanged.
+ * 1. Replica freshness verification.
+ * 2. REPEATABLE READ report snapshot.
+ * 3. Redis population under the snapshot revision.
+ *
+ * Redis unavailability does not bypass authorization
+ * or PostgreSQL replica consistency checks.
+ *
+ * The public TrialBalanceReport JSON contract
+ * remains unchanged.
  */
 @RestController
 @RequestMapping(
@@ -84,6 +85,8 @@ public class TrialBalanceController {
     private final ReplicaTrialBalanceSnapshotService
         snapshotService;
 
+    private final TrialBalanceCacheService cacheService;
+
     // ========================================================
     // CONSTRUCTOR INJECTION
     // ========================================================
@@ -91,7 +94,8 @@ public class TrialBalanceController {
     public TrialBalanceController(
         AccountingCoreAuthorizationClient authorizationClient,
         ReplicaReportingRevisionVerifier replicaRevisionVerifier,
-        ReplicaTrialBalanceSnapshotService snapshotService
+        ReplicaTrialBalanceSnapshotService snapshotService,
+        TrialBalanceCacheService cacheService
     ) {
 
         this.authorizationClient = authorizationClient;
@@ -100,6 +104,8 @@ public class TrialBalanceController {
             replicaRevisionVerifier;
 
         this.snapshotService = snapshotService;
+
+        this.cacheService = cacheService;
     }
 
     // ========================================================
@@ -107,15 +113,20 @@ public class TrialBalanceController {
     // ========================================================
 
     /**
-     * Return a Trial Balance for an authorized business.
+     * Return the Trial Balance for an authorized business.
      *
-     * The returned JSON is still TrialBalanceReport,
-     * so no React frontend changes are required.
+     * The caller never supplies a reporting revision.
+     *
+     * The revision is retrieved from Accounting Core
+     * using the verified JWT for this request.
+     *
+     * The cache key therefore reflects the current
+     * authorized accounting state.
      *
      * @param businessId requested business
-     * @param asOfDate inclusive reporting cutoff
+     * @param asOfDate inclusive reporting date
      * @param jwt authenticated JWT principal
-     * @return existing Trial Balance report structure
+     * @return existing TrialBalanceReport response
      */
     @GetMapping("/trial-balance")
     public TrialBalanceReport getTrialBalance(
@@ -150,14 +161,17 @@ public class TrialBalanceController {
         }
 
         // ====================================================
-        // STEP 2 — OBTAIN AUTHORIZED PRIMARY REVISION
+        // STEP 2 — FETCH AUTHORIZED PRIMARY REVISION
         // ====================================================
 
         /*
-         * This request uses the authenticated JWT.
+         * The ReportingBusinessAuthorizationManager
+         * already checks access before controller entry.
          *
-         * Accounting Core performs its existing
-         * session and business membership checks.
+         * This call obtains the current primary revision
+         * through the same authenticated Core endpoint.
+         *
+         * The revision is never accepted from a browser.
          */
         OptionalLong authorizedRevision =
             authorizationClient.getAuthorizedReportingRevision(
@@ -165,14 +179,18 @@ public class TrialBalanceController {
                 jwt.getTokenValue()
             );
 
+        // ====================================================
+        // STEP 3 — FAIL CLOSED WITHOUT AUTHORIZED REVISION
+        // ====================================================
+
         if (authorizedRevision.isEmpty()) {
 
             /*
-             * Never assume a missing revision is zero.
+             * A missing revision is not revision zero.
              *
-             * Failed upstream authorization and
-             * communication errors must not lead
-             * to financial report generation.
+             * Do not consult Redis or read financial data
+             * unless Accounting Core has supplied a
+             * valid, authorized version.
              */
             throw new ResponseStatusException(
                 HttpStatus.SERVICE_UNAVAILABLE,
@@ -184,52 +202,66 @@ public class TrialBalanceController {
             authorizedRevision.getAsLong();
 
         // ====================================================
-        // STEP 3 — WAIT FOR REPLICA WAL REPLAY
+        // STEP 4 — CACHE-ASIDE REPORT RETRIEVAL
         // ====================================================
 
         /*
-         * Poll outside the snapshot transaction.
+         * The cache service first searches Redis using
+         * the current authorized revision.
          *
-         * This allows each poll to see newer
-         * PostgreSQL WAL replay progress.
+         * CACHE HIT:
+         *
+         * Return the previously verified versioned report.
+         *
+         * CACHE MISS:
+         *
+         * Execute the supplier below.
+         *
+         * The supplier verifies replica freshness and
+         * generates a REPEATABLE READ snapshot.
+         *
+         * Snapshot execution must occur through the
+         * Spring-managed service bean so that its
+         * transactional proxy remains active.
          */
-        replicaRevisionVerifier.awaitRequiredRevision(
+        return cacheService.getOrGenerate(
             businessId,
-            requiredRevision
+            asOfDate,
+            requiredRevision,
+
+            () -> {
+
+                // --------------------------------------------
+                // REQUIRE SUFFICIENT WAL REPLAY
+                // --------------------------------------------
+
+                /*
+                 * A cache miss must not read a replica
+                 * known to be behind the primary revision.
+                 */
+                replicaRevisionVerifier.awaitRequiredRevision(
+                    businessId,
+                    requiredRevision
+                );
+
+                // --------------------------------------------
+                // GENERATE CONSISTENT FINANCIAL SNAPSHOT
+                // --------------------------------------------
+
+                /*
+                 * The snapshot service independently
+                 * verifies its actual revision inside
+                 * a REPEATABLE READ transaction.
+                 *
+                 * The returned revision may be newer
+                 * than the initially required revision.
+                 */
+                return snapshotService.generateSnapshot(
+                    businessId,
+                    asOfDate,
+                    requiredRevision
+                );
+            }
         );
-
-        // ====================================================
-        // STEP 4 — GENERATE CONSISTENT REPORT SNAPSHOT
-        // ====================================================
-
-        /*
-         * The snapshot service creates a separate
-         * REPEATABLE READ transaction.
-         *
-         * It reads the replica revision and the
-         * financial report from the same MVCC snapshot.
-         *
-         * It also independently verifies that the
-         * snapshot satisfies requiredRevision.
-         */
-        VersionedTrialBalanceReport snapshot =
-            snapshotService.generateSnapshot(
-                businessId,
-                asOfDate,
-                requiredRevision
-            );
-
-        // ====================================================
-        // STEP 5 — PRESERVE ORIGINAL HTTP RESPONSE
-        // ====================================================
-
-        /*
-         * Redis caching will later use snapshot.revision().
-         *
-         * For now, return only the original financial report.
-         *
-         * React continues receiving the same JSON schema.
-         */
-        return snapshot.report();
     }
 }

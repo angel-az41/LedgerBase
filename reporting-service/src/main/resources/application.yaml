@@ -254,3 +254,40 @@ ledgerbase:
     # this localhost development address.
 
     base-url: ${ACCOUNTING_CORE_BASE_URL:http://127.0.0.1:8080}
+  
+  # ==========================================================
+  # TRIAL BALANCE — REDIS CLUSTER CACHE-ASIDE
+  # ==========================================================
+
+  cache:
+
+    trial-balance:
+
+      # Feature toggle for controlled rollout.
+      #
+      # Start disabled until cache correctness tests pass.
+      #
+      # false:
+      #   Always use the existing verified PostgreSQL path.
+      #
+      # true:
+      #   Enable revision-aware Redis cache-aside.
+      #
+      # Redis outages still fall back to PostgreSQL.
+
+      enabled: ${LEDGERBASE_TRIAL_BALANCE_CACHE_ENABLED:false}
+
+      # ------------------------------------------------------
+      # CACHE ENTRY EXPIRATION
+      # ------------------------------------------------------
+
+      # ISO-8601 duration.
+      #
+      # PT5M = five minutes.
+      #
+      # A revision change causes new requests to use
+      # a different key immediately.
+      #
+      # TTL cleans up older, unreachable cache entries.
+
+      ttl: ${LEDGERBASE_TRIAL_BALANCE_CACHE_TTL:PT5M}

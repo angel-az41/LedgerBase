@@ -1,4 +1,4 @@
-package com.ledgerbase.reporting;
+package com.ledgerbase.reporting.integration;
 
 import com.ledgerbase.reporting.model.TrialBalanceReport;
 

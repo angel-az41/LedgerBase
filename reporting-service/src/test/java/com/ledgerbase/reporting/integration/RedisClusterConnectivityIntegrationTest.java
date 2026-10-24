@@ -1,4 +1,4 @@
-package com.ledgerbase.reporting;
+package com.ledgerbase.reporting.integration;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;

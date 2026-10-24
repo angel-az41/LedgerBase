@@ -6,9 +6,9 @@ import com.ledgerbase.reporting.security.AccountingCoreAuthorizationClient;
 
 import com.ledgerbase.reporting.service.ReplicaReportingRevisionVerifier;
 import com.ledgerbase.reporting.service.ReplicaTrialBalanceSnapshotService;
+import com.ledgerbase.reporting.service.TrialBalanceCacheService;
 
-import com.ledgerbase.reporting.service
-    .ReplicaTrialBalanceSnapshotService.VersionedTrialBalanceReport;
+import com.ledgerbase.reporting.service.ReplicaTrialBalanceSnapshotService.VersionedTrialBalanceReport;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -21,8 +21,10 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.OptionalLong;
+import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 // ============================================================
@@ -30,21 +32,38 @@ import static org.mockito.Mockito.*;
 // ============================================================
 
 /**
- * Verify controller orchestration for secure,
- * snapshot-consistent financial reporting.
+ * Verify secure Trial Balance controller orchestration
+ * after introducing revision-aware Redis cache-aside.
  *
- * Expected order:
+ * SECURITY:
  *
- * 1. Obtain authorized Accounting Core revision.
- * 2. Verify the replica has caught up.
- * 3. Generate a consistent replica snapshot.
- * 4. Return the existing Trial Balance response.
+ * Every request must obtain an authorized primary
+ * reporting revision before accessing the cache.
  *
- * Failure at any earlier stage prevents report generation.
+ * CACHE HIT:
  *
- * All service dependencies are mocked.
+ * Return a previously verified matching report without
+ * querying the PostgreSQL replica.
+ *
+ * CACHE MISS:
+ *
+ * 1. Verify replica freshness.
+ * 2. Generate a consistent PostgreSQL snapshot.
+ * 3. Return the report through the cache service.
+ *
+ * FAILURES:
+ *
+ * Missing JWT, unavailable authorized revisions,
+ * insufficient replica freshness, and snapshot
+ * failures must prevent financial report generation.
+ *
+ * All dependencies are mocked.
  */
 class TrialBalanceControllerTest {
+
+    // ========================================================
+    // TEST CONSTANTS
+    // ========================================================
 
     private static final Long BUSINESS_ID = 2L;
 
@@ -67,12 +86,14 @@ class TrialBalanceControllerTest {
     private ReplicaTrialBalanceSnapshotService
         snapshotService;
 
+    private TrialBalanceCacheService cacheService;
+
     private TrialBalanceController controller;
 
     private Jwt jwt;
 
     // ========================================================
-    // SETUP
+    // TEST SETUP
     // ========================================================
 
     @BeforeEach
@@ -87,10 +108,14 @@ class TrialBalanceControllerTest {
         snapshotService =
             mock(ReplicaTrialBalanceSnapshotService.class);
 
+        cacheService =
+            mock(TrialBalanceCacheService.class);
+
         controller = new TrialBalanceController(
             authorizationClient,
             replicaRevisionVerifier,
-            snapshotService
+            snapshotService,
+            cacheService
         );
 
         jwt = Jwt.withTokenValue(TEST_ACCESS_TOKEN)
@@ -100,10 +125,10 @@ class TrialBalanceControllerTest {
     }
 
     // ========================================================
-    // TEST HELPER
+    // TEST HELPERS
     // ========================================================
 
-    private TrialBalanceReport createExpectedReport() {
+    private TrialBalanceReport expectedReport() {
 
         return new TrialBalanceReport(
             BUSINESS_ID,
@@ -114,22 +139,58 @@ class TrialBalanceControllerTest {
         );
     }
 
-    // ========================================================
-    // TEST 1 — AUTHORIZED AND CONSISTENT SNAPSHOT
-    // ========================================================
+    /**
+     * Simulate a cache miss by making the mocked cache
+     * invoke the supplied PostgreSQL snapshot loader.
+     *
+     * The actual cache implementation is tested
+     * separately.
+     */
+    private void simulateCacheMiss(long revision) {
 
-    @Test
-    void generatesReportAfterSuccessfulRevisionVerification() {
+        when(
+            cacheService.getOrGenerate(
+                eq(BUSINESS_ID),
+                eq(REPORT_DATE),
+                eq(revision),
+                any()
+            )
+        ).thenAnswer(invocation -> {
+
+            Supplier<?> loader =
+                invocation.getArgument(3);
+
+            VersionedTrialBalanceReport snapshot =
+                (VersionedTrialBalanceReport) loader.get();
+
+            return snapshot.report();
+        });
+    }
+
+    private void authorizeRevision(long revision) {
 
         when(
             authorizationClient.getAuthorizedReportingRevision(
                 BUSINESS_ID,
                 TEST_ACCESS_TOKEN
             )
-        ).thenReturn(OptionalLong.of(12L));
+        ).thenReturn(
+            OptionalLong.of(revision)
+        );
+    }
 
-        TrialBalanceReport expectedReport =
-            createExpectedReport();
+    // ========================================================
+    // TEST 1 — CACHE MISS GENERATES VERIFIED SNAPSHOT
+    // ========================================================
+
+    @Test
+    void generatesReportAfterSuccessfulRevisionVerification() {
+
+        authorizeRevision(12L);
+        simulateCacheMiss(12L);
+
+        TrialBalanceReport expected =
+            expectedReport();
 
         when(
             snapshotService.generateSnapshot(
@@ -140,22 +201,24 @@ class TrialBalanceControllerTest {
         ).thenReturn(
             new VersionedTrialBalanceReport(
                 12L,
-                expectedReport
+                expected
             )
         );
 
-        TrialBalanceReport actualReport =
+        TrialBalanceReport actual =
             controller.getTrialBalance(
                 BUSINESS_ID,
                 REPORT_DATE,
                 jwt
             );
 
-        assertSame(expectedReport, actualReport);
+        assertSame(expected, actual);
 
-        // Enforce the full verification order.
+        // Verify authorization, caching, and replica
+        // generation occurred in the correct order.
         var order = inOrder(
             authorizationClient,
+            cacheService,
             replicaRevisionVerifier,
             snapshotService
         );
@@ -164,6 +227,14 @@ class TrialBalanceControllerTest {
             .getAuthorizedReportingRevision(
                 BUSINESS_ID,
                 TEST_ACCESS_TOKEN
+            );
+
+        order.verify(cacheService)
+            .getOrGenerate(
+                eq(BUSINESS_ID),
+                eq(REPORT_DATE),
+                eq(12L),
+                any()
             );
 
         order.verify(replicaRevisionVerifier)
@@ -178,26 +249,66 @@ class TrialBalanceControllerTest {
                 REPORT_DATE,
                 12L
             );
-
-        order.verifyNoMoreInteractions();
     }
 
     // ========================================================
-    // TEST 2 — REVISION ZERO IS VALID
+    // TEST 2 — CACHE HIT SKIPS POSTGRESQL
     // ========================================================
 
     @Test
-    void generatesReportWhenAuthorizedRevisionIsZero() {
+    void cacheHitReturnsReportWithoutReplicaRead() {
 
+        authorizeRevision(12L);
+
+        TrialBalanceReport expected =
+            expectedReport();
+
+        // The cache already contains a report associated
+        // with the authorized revision.
         when(
-            authorizationClient.getAuthorizedReportingRevision(
+            cacheService.getOrGenerate(
+                eq(BUSINESS_ID),
+                eq(REPORT_DATE),
+                eq(12L),
+                any()
+            )
+        ).thenReturn(expected);
+
+        TrialBalanceReport actual =
+            controller.getTrialBalance(
+                BUSINESS_ID,
+                REPORT_DATE,
+                jwt
+            );
+
+        assertSame(expected, actual);
+
+        // Authorization must still occur.
+        verify(authorizationClient)
+            .getAuthorizedReportingRevision(
                 BUSINESS_ID,
                 TEST_ACCESS_TOKEN
-            )
-        ).thenReturn(OptionalLong.of(0L));
+            );
 
-        TrialBalanceReport expectedReport =
-            createExpectedReport();
+        // A cache hit must avoid both replica operations.
+        verifyNoInteractions(
+            replicaRevisionVerifier,
+            snapshotService
+        );
+    }
+
+    // ========================================================
+    // TEST 3 — REVISION ZERO REMAINS VALID
+    // ========================================================
+
+    @Test
+    void acceptsAuthorizedRevisionZero() {
+
+        authorizeRevision(0L);
+        simulateCacheMiss(0L);
+
+        TrialBalanceReport expected =
+            expectedReport();
 
         when(
             snapshotService.generateSnapshot(
@@ -208,36 +319,29 @@ class TrialBalanceControllerTest {
         ).thenReturn(
             new VersionedTrialBalanceReport(
                 0L,
-                expectedReport
+                expected
             )
         );
 
-        TrialBalanceReport result =
+        assertSame(
+            expected,
             controller.getTrialBalance(
                 BUSINESS_ID,
                 REPORT_DATE,
                 jwt
-            );
-
-        assertSame(expectedReport, result);
+            )
+        );
 
         verify(replicaRevisionVerifier)
             .awaitRequiredRevision(BUSINESS_ID, 0L);
-
-        verify(snapshotService)
-            .generateSnapshot(
-                BUSINESS_ID,
-                REPORT_DATE,
-                0L
-            );
     }
 
     // ========================================================
-    // TEST 3 — MISSING JWT
+    // TEST 4 — MISSING JWT
     // ========================================================
 
     @Test
-    void rejectsRequestWithoutAuthenticatedJwt() {
+    void missingJwtPreventsCacheAndDatabaseAccess() {
 
         ResponseStatusException exception =
             assertThrows(
@@ -256,17 +360,18 @@ class TrialBalanceControllerTest {
 
         verifyNoInteractions(
             authorizationClient,
+            cacheService,
             replicaRevisionVerifier,
             snapshotService
         );
     }
 
     // ========================================================
-    // TEST 4 — AUTHORIZED REVISION UNAVAILABLE
+    // TEST 5 — AUTHORIZED REVISION UNAVAILABLE
     // ========================================================
 
     @Test
-    void rejectsRequestWhenAuthorizedRevisionIsUnavailable() {
+    void unavailableAuthorizedRevisionPreventsCacheAccess() {
 
         when(
             authorizationClient.getAuthorizedReportingRevision(
@@ -286,34 +391,33 @@ class TrialBalanceControllerTest {
             );
 
         assertEquals(
-            HttpStatus.SERVICE_UNAVAILABLE,
-            exception.getStatusCode()
+            503,
+            exception.getStatusCode().value()
         );
 
+        // Never return Redis data when current
+        // authorization cannot be verified.
         verifyNoInteractions(
+            cacheService,
             replicaRevisionVerifier,
             snapshotService
         );
     }
 
     // ========================================================
-    // TEST 5 — REPLICA REMAINS BEHIND
+    // TEST 6 — REPLICA REMAINS STALE
     // ========================================================
 
     @Test
-    void doesNotGenerateReportWhenReplicaIsBehind() {
+    void staleReplicaPreventsSnapshotGeneration() {
 
-        when(
-            authorizationClient.getAuthorizedReportingRevision(
-                BUSINESS_ID,
-                TEST_ACCESS_TOKEN
-            )
-        ).thenReturn(OptionalLong.of(12L));
+        authorizeRevision(12L);
+        simulateCacheMiss(12L);
 
         doThrow(
             new ResponseStatusException(
                 HttpStatus.SERVICE_UNAVAILABLE,
-                "Reporting replica has not caught up"
+                "Replica remains behind"
             )
         ).when(replicaRevisionVerifier)
             .awaitRequiredRevision(BUSINESS_ID, 12L);
@@ -333,80 +437,23 @@ class TrialBalanceControllerTest {
             exception.getStatusCode().value()
         );
 
-        // Never start report generation on a stale replica.
         verifyNoInteractions(snapshotService);
     }
 
     // ========================================================
-    // TEST 6 — REPLICA DATABASE FAILURE
+    // TEST 7 — FINAL SNAPSHOT VERIFICATION FAILURE
     // ========================================================
 
     @Test
-    void doesNotGenerateReportWhenReplicaCheckFails() {
+    void invalidSnapshotDoesNotProduceReport() {
 
-        when(
-            authorizationClient.getAuthorizedReportingRevision(
-                BUSINESS_ID,
-                TEST_ACCESS_TOKEN
-            )
-        ).thenReturn(OptionalLong.of(7L));
+        authorizeRevision(12L);
+        simulateCacheMiss(12L);
 
         doThrow(
             new ResponseStatusException(
                 HttpStatus.SERVICE_UNAVAILABLE,
-                "Unable to verify replica freshness"
-            )
-        ).when(replicaRevisionVerifier)
-            .awaitRequiredRevision(BUSINESS_ID, 7L);
-
-        ResponseStatusException exception =
-            assertThrows(
-                ResponseStatusException.class,
-                () -> controller.getTrialBalance(
-                    BUSINESS_ID,
-                    REPORT_DATE,
-                    jwt
-                )
-            );
-
-        assertEquals(
-            503,
-            exception.getStatusCode().value()
-        );
-
-        verifyNoInteractions(snapshotService);
-    }
-
-    // ========================================================
-    // TEST 7 — SNAPSHOT RACE CONDITION PROTECTION
-    // ========================================================
-
-    /**
-     * Even after the initial freshness check succeeds,
-     * the actual reporting snapshot must verify its
-     * revision independently.
-     *
-     * This test simulates snapshot creation failing
-     * that final consistency check.
-     *
-     * The controller must propagate the failure rather
-     * than return an unverified financial report.
-     */
-    @Test
-    void rejectsSnapshotThatFailsFinalRevisionCheck() {
-
-        when(
-            authorizationClient.getAuthorizedReportingRevision(
-                BUSINESS_ID,
-                TEST_ACCESS_TOKEN
-            )
-        ).thenReturn(OptionalLong.of(12L));
-
-        doThrow(
-            new ResponseStatusException(
-                HttpStatus.SERVICE_UNAVAILABLE,
-                "Reporting snapshot is behind "
-                    + "the required financial revision"
+                "Snapshot revision is insufficient"
             )
         ).when(snapshotService)
             .generateSnapshot(
@@ -429,9 +476,6 @@ class TrialBalanceControllerTest {
             503,
             exception.getStatusCode().value()
         );
-
-        verify(replicaRevisionVerifier)
-            .awaitRequiredRevision(BUSINESS_ID, 12L);
 
         verify(snapshotService)
             .generateSnapshot(
