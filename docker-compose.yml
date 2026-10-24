@@ -133,14 +133,127 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+  
+  # ==========================================================
+  # REDIS CLUSTER — LOCAL DEVELOPMENT
+  # ==========================================================
+  #
+  # Run six independent Redis server processes inside
+  # one local development container.
+  #
+  # CLUSTER TOPOLOGY:
+  #
+  # - Three primary nodes
+  # - Three replica nodes
+  # - 16,384 distributed hash slots
+  #
+  # Each Redis node has its own port, configuration,
+  # cluster identity, and working directory.
+  #
+  # WHY ONE CONTAINER?
+  #
+  # Spring Boot currently runs on the macOS host.
+  # Keeping local cluster nodes in one network namespace
+  # makes Redis-advertised localhost addresses usable
+  # by both the nodes and the host-based Redis client.
+  #
+  # This is not a production high-availability topology.
+  # The container is a shared point of failure.
+  #
+  # The cache is disposable. PostgreSQL remains the
+  # authoritative financial system of record.
+
+  redis-cluster:
+
+    image: redis:7.4-alpine
+
+    container_name: ledgerbase-redis-cluster
+
+    restart: unless-stopped
+
+    # Use Docker's init process for signal handling.
+    init: true
+
+    # --------------------------------------------------------
+    # REDIS AUTHENTICATION
+    # --------------------------------------------------------
+
+    # REDIS_PASSWORD protects Redis client connections.
+    #
+    # REDISCLI_AUTH allows redis-cli commands inside
+    # the container to authenticate without exposing
+    # the password as a command-line argument.
+
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+
+    # --------------------------------------------------------
+    # CLUSTER STARTUP SCRIPT
+    # --------------------------------------------------------
+
+    entrypoint:
+      - /bin/sh
+      - /usr/local/bin/start-cluster.sh
+
+    # --------------------------------------------------------
+    # LOCAL REDIS PORTS
+    # --------------------------------------------------------
+
+    # Only expose the Redis client ports on host loopback.
+    #
+    # Cluster communication ports 17000-17005 remain
+    # internal to the shared container network namespace.
+
+    ports:
+      - "127.0.0.1:7000:7000"
+      - "127.0.0.1:7001:7001"
+      - "127.0.0.1:7002:7002"
+      - "127.0.0.1:7003:7003"
+      - "127.0.0.1:7004:7004"
+      - "127.0.0.1:7005:7005"
+
+    # --------------------------------------------------------
+    # CLUSTER CONFIGURATION AND STORAGE
+    # --------------------------------------------------------
+
+    volumes:
+
+      # Preserve Redis Cluster identities and topology
+      # when the development container restarts.
+      - redis_cluster_data:/data
+
+      # Read-only startup configuration.
+      - ./docker/redis/start-cluster.sh:/usr/local/bin/start-cluster.sh:ro
+
+    # Keep generated password-bearing configuration
+    # files in temporary container memory.
+    tmpfs:
+      - /run/ledgerbase-redis
+
+    # --------------------------------------------------------
+    # REDIS HEALTH CHECK
+    # --------------------------------------------------------
+
+    # PING checks that the first Redis process responds.
+    #
+    # Full cluster health is verified separately
+    # with the CLUSTER INFO and CLUSTER NODES commands.
+
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -p 7000 ping | grep -qx PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 # ============================================================
-# PERSISTENT DATABASE VOLUMES
+# PERSISTENT DATABASE AND REDIS CLUSTER VOLUMES
 # ============================================================
 
 volumes:
   postgres_data:
   postgres_replica_data:
+  redis_cluster_data:
 
 # ============================================================
 # REPLICATION CREDENTIALS
