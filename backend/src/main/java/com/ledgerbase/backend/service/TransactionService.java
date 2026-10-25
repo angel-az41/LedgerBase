@@ -76,6 +76,9 @@ public class TransactionService {
     private final BusinessReportingRevisionService
         reportingRevisionService;
 
+    // Records financial events within the posting transaction.
+    private final OutboxEventService outboxEventService;
+
     // ========================================================
     // CONSTRUCTOR INJECTION
     // ========================================================
@@ -98,7 +101,8 @@ public class TransactionService {
             BusinessMapper businessMapper,
             AuditEventMapper auditEventMapper,
             AccountingPeriodMapper accountingPeriodMapper,
-            BusinessReportingRevisionService reportingRevisionService) {
+            BusinessReportingRevisionService reportingRevisionService,
+            OutboxEventService outboxEventService) {
 
         // ----------------------------------------------------
         // FINANCIAL TRANSACTION MAPPERS
@@ -122,6 +126,8 @@ public class TransactionService {
 
         this.reportingRevisionService =
             reportingRevisionService;
+        
+        this.outboxEventService = outboxEventService;
     }
 
     /**
@@ -820,6 +826,30 @@ public class TransactionService {
          */
         reportingRevisionService.advanceRevision(
             businessId
+        );
+
+        // ====================================================
+        // RECORD DURABLE FINANCIAL DOMAIN EVENT
+        // ====================================================
+
+        /**
+         * Store TransactionPosted inside the same
+         * PostgreSQL transaction as:
+         *
+         * - The POSTED status transition.
+         * - The posting audit event.
+         * - The reporting revision increment.
+         *
+         * If this operation fails, the entire financial
+         * posting transaction rolls back.
+         *
+         * Kafka publishing occurs asynchronously after
+         * PostgreSQL commits successfully.
+         */
+        outboxEventService.recordTransactionPosted(
+            businessId,
+            transactionId,
+            actorId
         );
 
         // ====================================================

@@ -6,8 +6,9 @@ import com.ledgerbase.backend.mapper.LedgerEntryMapper;
 import com.ledgerbase.backend.model.LedgerEntry;
 import com.ledgerbase.backend.model.LedgerTransaction;
 import com.ledgerbase.backend.service.BusinessReportingRevisionService;
-import com.ledgerbase.backend.service.TransactionService;
 import com.ledgerbase.backend.service.FiscalYearService;
+import com.ledgerbase.backend.service.OutboxPublisherStore;
+import com.ledgerbase.backend.service.TransactionService;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -127,6 +128,16 @@ class TransactionIntegrationTest {
     @Autowired
     private BusinessReportingRevisionService
         reportingRevisionService;
+
+    /**
+     * PostgreSQL-backed publisher store used to verify
+     * durable outbox claiming and crash recovery.
+     *
+     * Tests exercise real SQL locking and state transitions
+     * without requiring an active Kafka broker.
+     */
+    @Autowired
+    private OutboxPublisherStore outboxPublisherStore;
 
     /**
      * Mock JWT signature decoding only in this test context.
@@ -1255,6 +1266,46 @@ class TransactionIntegrationTest {
         );
 
         assertEquals("POSTED", databaseStatus);
+
+        // ========================================================
+        // VERIFY POSTING TIMESTAMP AND OUTBOX EVENT
+        // ========================================================
+
+        /**
+         * A finalized journal must record the actual time
+         * at which PostgreSQL processed its posting.
+         *
+         * The TransactionPosted event must include the same
+         * timestamp as the financial transaction record.
+         *
+         * This query verifies both records directly in
+         * PostgreSQL rather than relying on the API response.
+         */
+        Integer correctlyTimestampedEvents =
+            jdbcTemplate.queryForObject(
+                """
+                SELECT COUNT(*)
+                FROM transactions t
+                JOIN outbox_events o
+                ON o.business_id = t.business_id
+                AND o.transaction_id = t.id
+                WHERE t.business_id = ?
+                AND t.id = ?
+                AND t.status = 'POSTED'
+                AND t.posted_at IS NOT NULL
+                AND o.event_type = 'TransactionPosted'
+                AND o.payload -> 'postedAt' = to_jsonb(t.posted_at)
+                """,
+                Integer.class,
+                testBusinessId,
+                draft.getId()
+            );
+
+        assertEquals(
+            1,
+            correctlyTimestampedEvents,
+            "The outbox event must contain the actual posting timestamp"
+        );
 
         // Posting must not change the number of entries.
         Integer entryCount = jdbcTemplate.queryForObject(
@@ -2851,6 +2902,24 @@ class TransactionIntegrationTest {
         assertEquals("POSTED", posted.getStatus());
 
         // ====================================================
+        // VERIFY TRANSACTIONAL OUTBOX INSERTION
+        // ====================================================
+
+        /**
+         * Successful financial posting must record exactly
+         * one TransactionPosted event.
+         *
+         * The event is inserted within the same PostgreSQL
+         * transaction as the journal posting and the
+         * reporting revision update.
+         */
+        assertEquals(
+            1,
+            countTransactionPostedOutboxEvents(draft.getId()),
+            "Successful posting must create exactly one outbox event"
+        );
+
+        // ====================================================
         // VERIFY REPORTING REVISION ADVANCED ONCE
         // ====================================================
 
@@ -2887,6 +2956,23 @@ class TransactionIntegrationTest {
             originalRevision + 1,
             getReportingRevision(testBusinessId),
             "Duplicate posting must not advance the revision"
+        );
+
+        // ====================================================
+        // VERIFY DUPLICATE EVENT PREVENTION
+        // ====================================================
+
+        /**
+         * Attempting to post an already POSTED transaction
+         * must not create another outbox event.
+         *
+         * The database uniqueness constraint also prevents
+         * duplicate TransactionPosted records.
+         */
+        assertEquals(
+            1,
+            countTransactionPostedOutboxEvents(draft.getId()),
+            "Duplicate posting must not create additional outbox events"
         );
     }
 
@@ -2978,6 +3064,20 @@ class TransactionIntegrationTest {
         );
 
         assertEquals("DRAFT", savedStatus);
+
+        // ====================================================
+        // VERIFY FAILED POSTING CREATES NO OUTBOX EVENT
+        // ====================================================
+
+        /**
+         * A rejected posting must not produce a financial
+         * domain event because no successful posting occurred.
+         */
+        assertEquals(
+            0,
+            countTransactionPostedOutboxEvents(draft.getId()),
+            "Failed posting must not create an outbox event"
+        );
     }
 
     
@@ -3085,6 +3185,20 @@ class TransactionIntegrationTest {
                         "Posting must advance the revision"
                     );
 
+                    // ====================================================
+                    // VERIFY OUTBOX EVENT EXISTS BEFORE ROLLBACK
+                    // ====================================================
+
+                    /**
+                     * The financial posting and its outbox event are
+                     * visible within the current PostgreSQL transaction.
+                     */
+                    assertEquals(
+                        1,
+                        countTransactionPostedOutboxEvents(draft.getId()),
+                        "Outbox event must exist before rollback"
+                    );
+
                 } finally {
 
                     // ----------------------------------------
@@ -3179,7 +3293,214 @@ class TransactionIntegrationTest {
             0,
             postingAuditCount
         );
+
+        // ====================================================
+        // VERIFY OUTBOX EVENT WAS ROLLED BACK
+        // ====================================================
+
+        /**
+         * The savepoint rollback must remove the outbox
+         * event along with:
+         *
+         * - The POSTED status transition.
+         * - The posting audit event.
+         * - The reporting revision increment.
+         *
+         * This verifies that the event was persisted
+         * within the same PostgreSQL transaction.
+         */
+        assertEquals(
+            0,
+            countTransactionPostedOutboxEvents(draft.getId()),
+            "Rollback must remove the TransactionPosted outbox event"
+        );
     }
+
+
+    /**
+     * Verify that an abandoned outbox claim can be recovered.
+     *
+     * The test simulates a publisher crash by forcing
+     * the current claim lease to expire in PostgreSQL.
+     *
+     * Expected behavior:
+     *
+     * - The first publisher claims a PENDING event.
+     * - The event becomes PROCESSING.
+     * - The active claim prevents another immediate claim.
+     * - An expired claim becomes eligible for recovery.
+     * - Recovery retains the original event ID and payload.
+     * - The new claim receives a different claim token.
+     * - Stale publishers cannot overwrite the new claim.
+     * - Successful acknowledgment marks the event PUBLISHED.
+     *
+     * All database modifications are rolled back by
+     * the surrounding integration-test transaction.
+     */
+    @Test
+    void recoversExpiredOutboxClaimWithoutDuplicateStateChanges() {
+
+        // ====================================================
+        // CREATE AND POST A FINANCIAL TRANSACTION
+        // ====================================================
+
+        LedgerTransaction draft =
+            transactionService.createDraftTransaction(
+                testBusinessId,
+                createRequest("500.00", "500.00")
+            );
+
+        LedgerTransaction posted =
+            transactionService.postTransaction(
+                testBusinessId,
+                draft.getId(),
+                testUserId
+            );
+
+        assertEquals("POSTED", posted.getStatus());
+
+        assertEquals(
+            1,
+            countTransactionPostedOutboxEvents(draft.getId())
+        );
+
+        // ====================================================
+        // CLAIM THE PENDING EVENT
+        // ====================================================
+
+        OutboxPublisherStore.ClaimedEvent firstClaim =
+            outboxPublisherStore.claimNextEvent()
+                .orElseThrow();
+
+        assertEquals(1, firstClaim.attemptCount());
+
+        // The event must not be claimed again while the
+        // current PROCESSING lease remains valid.
+        assertTrue(
+            outboxPublisherStore.claimNextEvent().isEmpty()
+        );
+
+        // ====================================================
+        // SIMULATE A CRASHED PUBLISHER
+        // ====================================================
+
+        /*
+        * A real crash leaves the event in PROCESSING
+        * until its lease expires.
+        *
+        * Rather than waiting for the lease duration,
+        * force claimed_until into the past.
+        *
+        * This modifies only the isolated test database.
+        */
+        int expiredClaims = jdbcTemplate.update(
+            """
+            UPDATE outbox_events
+            SET claimed_until = NOW() - INTERVAL '1 second'
+            WHERE id = ?
+            AND status = 'PROCESSING'
+            AND claimed_by = ?
+            """,
+            firstClaim.id(),
+            firstClaim.claimToken()
+        );
+
+        assertEquals(1, expiredClaims);
+
+        // ====================================================
+        // RECOVER THE EXPIRED CLAIM
+        // ====================================================
+
+        OutboxPublisherStore.ClaimedEvent recoveredClaim =
+            outboxPublisherStore.claimNextEvent()
+                .orElseThrow();
+
+        // Recovery must operate on the original event.
+        assertEquals(
+            firstClaim.id(),
+            recoveredClaim.id()
+        );
+
+        assertEquals(
+            firstClaim.eventId(),
+            recoveredClaim.eventId()
+        );
+
+        assertEquals(
+            firstClaim.payload(),
+            recoveredClaim.payload()
+        );
+
+        // The recovery attempt increments the counter.
+        assertEquals(
+            2,
+            recoveredClaim.attemptCount()
+        );
+
+        // The recovered claim must have a new token.
+        assertNotEquals(
+            firstClaim.claimToken(),
+            recoveredClaim.claimToken()
+        );
+
+        // ====================================================
+        // REJECT UPDATES FROM THE EXPIRED CLAIM
+        // ====================================================
+
+        /*
+        * The original publisher may finish its Kafka
+        * operation after another instance has reclaimed
+        * the event.
+        *
+        * Claim-token fencing prevents that stale publisher
+        * from updating the newer claim's state.
+        */
+        assertEquals(
+            0,
+            outboxPublisherStore.markPublished(firstClaim)
+        );
+
+        assertEquals(
+            0,
+            outboxPublisherStore.scheduleRetry(
+                firstClaim,
+                2,
+                "Late failure from expired publisher"
+            )
+        );
+
+        // ====================================================
+        // COMPLETE PUBLICATION USING THE CURRENT CLAIM
+        // ====================================================
+
+        assertEquals(
+            1,
+            outboxPublisherStore.markPublished(recoveredClaim)
+        );
+
+        // Independently verify the resulting database state.
+        Integer publishedCount = jdbcTemplate.queryForObject(
+            """
+            SELECT COUNT(*)
+            FROM outbox_events
+            WHERE id = ?
+            AND status = 'PUBLISHED'
+            AND attempt_count = 2
+            AND published_at IS NOT NULL
+            AND claimed_by IS NULL
+            AND claimed_until IS NULL
+            """,
+            Integer.class,
+            recoveredClaim.id()
+        );
+
+        assertEquals(
+            1,
+            publishedCount,
+            "Recovered event must be marked PUBLISHED exactly once"
+        );
+    }
+
 
     // ========================================================
     // HELPER — READ BUSINESS REPORTING REVISION
@@ -3200,5 +3521,41 @@ class TransactionIntegrationTest {
         return reportingRevisionService.getCurrentRevision(
             businessId
         );
+    }
+    
+    // ========================================================
+    // HELPER — VERIFY TRANSACTIONAL OUTBOX EVENTS
+    // ========================================================
+
+    /**
+     * Count durable TransactionPosted events associated
+     * with a specific financial transaction.
+     *
+     * Uses JdbcTemplate to query PostgreSQL directly,
+     * independently of MyBatis session-local caching.
+     *
+     * This is especially important when verifying
+     * rollback behavior after a JDBC savepoint.
+     *
+     * @param transactionId Financial transaction identifier.
+     * @return Number of matching outbox events.
+     */
+    private int countTransactionPostedOutboxEvents(
+            Long transactionId) {
+
+        Integer count = jdbcTemplate.queryForObject(
+            """
+            SELECT COUNT(*)
+            FROM outbox_events
+            WHERE business_id = ?
+            AND transaction_id = ?
+            AND event_type = 'TransactionPosted'
+            """,
+            Integer.class,
+            testBusinessId,
+            transactionId
+        );
+
+        return count == null ? 0 : count;
     }
 }

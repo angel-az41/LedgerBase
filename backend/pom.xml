@@ -363,6 +363,22 @@
             <scope>test</scope>
         </dependency>
 
+        <!--
+            ======================================
+            KAFKA FINANCIAL EVENT PUBLISHING
+            ======================================
+
+            Enables Spring Boot's Kafka auto-configuration,
+            KafkaTemplate, producer connections, and message
+            serialization.
+
+            Spring Boot manages the compatible dependency version.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-kafka</artifactId>
+        </dependency>
+
     </dependencies>
 
     <!-- ======================================
