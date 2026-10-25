@@ -1,0 +1,97 @@
+# ============================================================
+# LEDGERBASE — APPLICATION CONTAINER SERVICES
+# ============================================================
+#
+# PURPOSE:
+#
+# Run LedgerBase application services as Docker containers.
+#
+# This Compose file supplements the existing PostgreSQL,
+# Redis, and Kafka infrastructure configuration.
+#
+# Use it alongside docker-compose.yml rather than
+# replacing the infrastructure file.
+#
+# Initial scope:
+#
+# - Accounting Core
+#
+# Additional services will be added after the Accounting
+# Core container is verified.
+#
+# DATABASE SAFETY:
+#
+# This file does not define or modify database volumes.
+# Existing PostgreSQL data is preserved.
+
+services:
+
+  # ==========================================================
+  # ACCOUNTING CORE
+  # ==========================================================
+
+  accounting-core:
+
+    # Use the image that was successfully built and verified.
+    image: ledgerbase-accounting-core:local
+
+    # Retain the build configuration so future developers
+    # can rebuild the image through Docker Compose.
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+
+    container_name: ledgerbase-accounting-core
+
+    restart: unless-stopped
+
+    # --------------------------------------------------------
+    # APPLICATION PORT
+    # --------------------------------------------------------
+
+    # Expose the API only through the Mac's loopback
+    # interface for local development.
+    ports:
+      - "127.0.0.1:8080:8080"
+
+    # --------------------------------------------------------
+    # ENVIRONMENT CONFIGURATION
+    # --------------------------------------------------------
+
+    environment:
+
+      # Use Docker's internal service name and container
+      # port instead of the host-only localhost:5434 URL.
+      #
+      # Spring Boot environment variables override
+      # corresponding application.yaml properties.
+      SPRING_DATASOURCE_URL: "jdbc:postgresql://postgres:5432/ledgerbase"
+
+      # Reuse the existing database credentials.
+      #
+      # This also satisfies the POSTGRES_PASSWORD
+      # placeholder used by application.yaml.
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
+
+      # JWT signing secret must be provided externally.
+      #
+      # Reuse the same secret as the existing Accounting
+      # Core application; do not commit it to Git.
+      JWT_SECRET_BASE64: "${JWT_SECRET_BASE64:?Set JWT_SECRET_BASE64 in .env}"
+
+      # The initial container verification uses the
+      # standard application profile.
+      #
+      # Kafka publishing and consumption will be enabled
+      # after the database connection has been verified.
+
+    # --------------------------------------------------------
+    # INFRASTRUCTURE DEPENDENCY
+    # --------------------------------------------------------
+
+    # Wait for PostgreSQL to report ready before starting
+    # the application when dependencies are started by
+    # Compose.
+    depends_on:
+      postgres:
+        condition: service_healthy
