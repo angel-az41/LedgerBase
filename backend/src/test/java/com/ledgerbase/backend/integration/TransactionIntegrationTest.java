@@ -3937,6 +3937,149 @@ class TransactionIntegrationTest {
     }
 
 
+    /**
+     * Verify that a Kafka TransactionPosted event cannot
+     * be processed when its financial transaction is DRAFT.
+     *
+     * A Kafka message alone does not prove that a journal
+     * has been finalized.
+     *
+     * The consumer must independently verify the persisted
+     * financial transaction status in PostgreSQL.
+     *
+     * Expected behavior:
+     *
+     * - A valid DRAFT transaction exists.
+     * - A TransactionPosted message references that DRAFT.
+     * - Inbox processing throws an exception.
+     * - No durable processing receipt is recorded.
+     * - The original financial transaction remains DRAFT.
+     *
+     * This test runs against ledgerbase_test and its
+     * records are rolled back afterward.
+     */
+    @Test
+    void rejectsKafkaEventForUnpostedTransaction() {
+
+        // ====================================================
+        // CREATE A VALID DRAFT FINANCIAL TRANSACTION
+        // ====================================================
+
+        LedgerTransaction draft =
+            transactionService.createDraftTransaction(
+                testBusinessId,
+                createRequest("500.00", "500.00")
+            );
+
+        assertEquals("DRAFT", draft.getStatus());
+
+        // ====================================================
+        // CONSTRUCT A KAFKA EVENT REFERENCING THE DRAFT
+        // ====================================================
+
+        String eventId = UUID.randomUUID().toString();
+
+        String eventKey =
+            "business:" + testBusinessId
+                + ":transaction:" + draft.getId();
+
+        /*
+        * The JSON satisfies the expected event contract.
+        *
+        * However, its referenced transaction has never
+        * been successfully POSTED.
+        */
+        String payload = """
+            {
+            "eventId": "%s",
+            "eventType": "TransactionPosted",
+            "eventVersion": 1,
+            "businessId": %d,
+            "transactionId": %d
+            }
+            """.formatted(
+                eventId,
+                testBusinessId,
+                draft.getId()
+            );
+
+        ConsumerRecord<String, String> record =
+            new ConsumerRecord<>(
+                "ledgerbase.transaction-posted.v1",
+                2,
+                200L,
+                eventKey,
+                payload
+            );
+
+        // ====================================================
+        // ATTEMPT CONSUMER PROCESSING
+        // ====================================================
+
+        /*
+        * TransactionPostedInboxService checks the
+        * persisted transaction state using PostgreSQL.
+        *
+        * Since the transaction is DRAFT, the INSERT
+        * cannot create a successful inbox receipt.
+        */
+        assertThrows(
+            IllegalStateException.class,
+            () -> inboxService.process(record)
+        );
+
+        // ====================================================
+        // VERIFY NO DURABLE INBOX RECEIPT EXISTS
+        // ====================================================
+
+        Integer receiptCount =
+            jdbcTemplate.queryForObject(
+                """
+                SELECT COUNT(*)
+                FROM kafka_consumer_inbox
+                WHERE consumer_name =
+                    'transaction-posted-inbox-v1'
+                AND business_id = ?
+                AND transaction_id = ?
+                """,
+                Integer.class,
+                testBusinessId,
+                draft.getId()
+            );
+
+        assertEquals(
+            0,
+            receiptCount,
+            "An unposted transaction must not be "
+                + "recorded as successfully processed"
+        );
+
+        // ====================================================
+        // VERIFY FINANCIAL TRANSACTION IS UNCHANGED
+        // ====================================================
+
+        String savedStatus =
+            jdbcTemplate.queryForObject(
+                """
+                SELECT status
+                FROM transactions
+                WHERE business_id = ?
+                AND id = ?
+                """,
+                String.class,
+                testBusinessId,
+                draft.getId()
+            );
+
+        assertEquals(
+            "DRAFT",
+            savedStatus,
+            "Consumer failure must not change "
+                + "the financial transaction"
+        );
+    }
+
+
     // ========================================================
     // HELPER — READ BUSINESS REPORTING REVISION
     // ========================================================
