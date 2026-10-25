@@ -3502,6 +3502,246 @@ class TransactionIntegrationTest {
     }
 
 
+    /**
+     * Verify financial posting behavior when PostgreSQL
+     * rejects insertion of the TransactionPosted outbox event.
+     *
+     * This test deliberately inserts a conflicting event
+     * to trigger the outbox unique constraint.
+     *
+     * Expected behavior:
+     *
+     * - PostgreSQL rejects the duplicate outbox INSERT.
+     * - TransactionService propagates the failure.
+     * - Rolling back the failed posting attempt restores
+     *   the original financial transaction state.
+     * - No posting audit, revision increment, or outbox
+     *   event from the attempt remains.
+     *
+     * A JDBC savepoint is necessary because this test
+     * already runs inside a Spring-managed transaction.
+     * PostgreSQL requires rollback to a savepoint after
+     * a unique-constraint violation before queries resume.
+     */
+    @Test
+    void rollsBackPostingWhenOutboxInsertionFails() {
+
+        // ====================================================
+        // CREATE A VALID DRAFT
+        // ====================================================
+
+        LedgerTransaction draft =
+            transactionService.createDraftTransaction(
+                testBusinessId,
+                createRequest("500.00", "500.00")
+            );
+
+        assertEquals("DRAFT", draft.getStatus());
+
+        // Record the reporting revision before posting.
+        Long originalRevision = jdbcTemplate.queryForObject(
+            """
+            SELECT reporting_revision
+            FROM businesses
+            WHERE id = ?
+            """,
+            Long.class,
+            testBusinessId
+        );
+
+        assertNotNull(originalRevision);
+
+        // ====================================================
+        // INJECT A REAL POSTGRESQL OUTBOX FAILURE
+        // ====================================================
+
+        jdbcTemplate.execute(
+            (ConnectionCallback<Void>) connection -> {
+
+                Savepoint savepoint = connection.setSavepoint();
+
+                try {
+
+                    /*
+                    * Insert a deliberately conflicting event.
+                    *
+                    * The outbox table has a UNIQUE constraint
+                    * on business_id, transaction_id, event_type.
+                    *
+                    * The real posting workflow will later
+                    * attempt to insert the same combination.
+                    *
+                    * This record exists only inside the test's
+                    * savepoint and will be rolled back.
+                    */
+                    int seededRows = jdbcTemplate.update(
+                        """
+                        INSERT INTO outbox_events (
+                            business_id,
+                            transaction_id,
+                            event_type,
+                            kafka_topic,
+                            event_key,
+                            payload
+                        )
+                        VALUES (
+                            ?, ?,
+                            'TransactionPosted',
+                            'ledgerbase.transaction-posted.v1',
+                            ?,
+                            '{"testOnly": true}'::jsonb
+                        )
+                        """,
+                        testBusinessId,
+                        draft.getId(),
+                        "test-conflict:" + draft.getId()
+                    );
+
+                    assertEquals(1, seededRows);
+
+                    // ========================================
+                    // ATTEMPT THE REAL FINANCIAL POSTING
+                    // ========================================
+
+                    /*
+                    * TransactionService should reach the
+                    * outbox INSERT after updating the journal,
+                    * audit record, and reporting revision.
+                    *
+                    * PostgreSQL rejects the duplicate event.
+                    */
+                    RuntimeException failure = assertThrows(
+                        RuntimeException.class,
+                        () -> transactionService.postTransaction(
+                            testBusinessId,
+                            draft.getId(),
+                            testUserId
+                        )
+                    );
+
+                    // ========================================
+                    // VERIFY THE EXPECTED SQL CONSTRAINT ERROR
+                    // ========================================
+
+                    /*
+                    * SQLSTATE 23505 means unique-constraint
+                    * violation in PostgreSQL.
+                    *
+                    * Check the exception chain because MyBatis
+                    * or Spring may wrap the original SQL error.
+                    */
+                    boolean uniqueViolationFound = false;
+
+                    Throwable cause = failure;
+
+                    while (cause != null) {
+
+                        if (cause instanceof SQLException sqlException
+                                && "23505".equals(
+                                    sqlException.getSQLState()
+                                )) {
+
+                            uniqueViolationFound = true;
+                            break;
+                        }
+
+                        cause = cause.getCause();
+                    }
+
+                    assertTrue(
+                        uniqueViolationFound,
+                        "Posting must fail because of the "
+                            + "outbox unique constraint"
+                    );
+
+                } finally {
+
+                    /*
+                    * Restore the database to the point
+                    * immediately before failure injection.
+                    *
+                    * This also clears PostgreSQL's aborted
+                    * statement state so verification queries
+                    * can execute normally.
+                    */
+                    connection.rollback(savepoint);
+                    connection.releaseSavepoint(savepoint);
+                }
+
+                return null;
+            }
+        );
+
+        // ====================================================
+        // VERIFY FINANCIAL TRANSACTION REMAINS DRAFT
+        // ====================================================
+
+        String savedStatus = jdbcTemplate.queryForObject(
+            """
+            SELECT status
+            FROM transactions
+            WHERE business_id = ?
+            AND id = ?
+            """,
+            String.class,
+            testBusinessId,
+            draft.getId()
+        );
+
+        assertEquals("DRAFT", savedStatus);
+
+        // ====================================================
+        // VERIFY REPORTING REVISION WAS RESTORED
+        // ====================================================
+
+        Long revisionAfterFailure = jdbcTemplate.queryForObject(
+            """
+            SELECT reporting_revision
+            FROM businesses
+            WHERE id = ?
+            """,
+            Long.class,
+            testBusinessId
+        );
+
+        assertEquals(
+            originalRevision,
+            revisionAfterFailure,
+            "Failed posting must not change reporting revision"
+        );
+
+        // ====================================================
+        // VERIFY NO POSTING AUDIT EVENT REMAINS
+        // ====================================================
+
+        Integer postingAuditCount = jdbcTemplate.queryForObject(
+            """
+            SELECT COUNT(*)
+            FROM audit_events
+            WHERE business_id = ?
+            AND entity_type = 'TRANSACTION'
+            AND entity_id = ?
+            AND action = 'TRANSACTION_POSTED'
+            """,
+            Integer.class,
+            testBusinessId,
+            draft.getId()
+        );
+
+        assertEquals(0, postingAuditCount);
+
+        // ====================================================
+        // VERIFY NO OUTBOX EVENT REMAINS
+        // ====================================================
+
+        assertEquals(
+            0,
+            countTransactionPostedOutboxEvents(draft.getId()),
+            "Failed posting must leave no outbox event"
+        );
+    }
+
+
     // ========================================================
     // HELPER — READ BUSINESS REPORTING REVISION
     // ========================================================
