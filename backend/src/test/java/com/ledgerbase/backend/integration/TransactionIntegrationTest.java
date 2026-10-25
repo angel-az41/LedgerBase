@@ -31,6 +31,9 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.sql.PreparedStatement;
@@ -152,6 +155,14 @@ class TransactionIntegrationTest {
      */
     @Autowired
     private TransactionPostedInboxService inboxService;
+
+    /**
+     * Spring transaction manager used to verify that
+     * a failed financial posting automatically rolls
+     * back database changes.
+     */
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     /**
      * Mock JWT signature decoding only in this test context.
@@ -308,18 +319,6 @@ class TransactionIntegrationTest {
                 .expiresAt(now.plusSeconds(900))
                 .build();
         });
-    }
-
-    // ============================================================
-    // HELPER METHODS
-    // ============================================================
-
-    /**
-     * Form a test-only Bearer header for an existing user.
-     * The identity must be authorized for the target business.
-     */
-    private String bearerFor(Long userId) {
-        return "Bearer transaction-test-user-" + userId;
     }
 
     /**
@@ -2756,108 +2755,6 @@ class TransactionIntegrationTest {
 
 
     // ============================================================
-    // HELPER — VERIFY REJECTED POSTING PRESERVES FINANCIAL DATA
-    // ============================================================
-
-    /**
-     * Verify that a rejected posting does not partially
-     * change financial records.
-     *
-     * The original transaction must:
-     *
-     * - Remain DRAFT.
-     * - Preserve its two ledger entries.
-     * - Preserve its TRANSACTION_CREATED audit event.
-     * - Have zero TRANSACTION_POSTED audit events.
-     *
-     * Both rejection tests use this helper.
-     */
-    private void assertRejectedPostingPreservesDraft(
-            Long transactionId) {
-
-        // ========================================================
-        // VERIFY THE TRANSACTION IS STILL DRAFT
-        // ========================================================
-
-        String savedStatus = jdbcTemplate.queryForObject(
-            """
-            SELECT status
-            FROM transactions
-            WHERE id = ?
-              AND business_id = ?
-            """,
-            String.class,
-            transactionId,
-            testBusinessId
-        );
-
-        assertEquals("DRAFT", savedStatus);
-
-
-        // ========================================================
-        // VERIFY BOTH ORIGINAL LEDGER ENTRIES REMAIN
-        // ========================================================
-
-        Integer entryCount = jdbcTemplate.queryForObject(
-            """
-            SELECT COUNT(*)
-            FROM ledger_entries
-            WHERE transaction_id = ?
-              AND business_id = ?
-            """,
-            Integer.class,
-            transactionId,
-            testBusinessId
-        );
-
-        assertEquals(2, entryCount);
-
-
-        // ========================================================
-        // VERIFY THE CREATION AUDIT EVENT REMAINS
-        // ========================================================
-
-        Integer creationAuditCount =
-            jdbcTemplate.queryForObject(
-                """
-                SELECT COUNT(*)
-                FROM audit_events
-                WHERE business_id = ?
-                  AND entity_type = 'TRANSACTION'
-                  AND entity_id = ?
-                  AND action = 'TRANSACTION_CREATED'
-                """,
-                Integer.class,
-                testBusinessId,
-                transactionId
-            );
-
-        assertEquals(1, creationAuditCount);
-
-
-        // ========================================================
-        // VERIFY NO POSTING AUDIT EVENT WAS CREATED
-        // ========================================================
-
-        Integer postingAuditCount =
-            jdbcTemplate.queryForObject(
-                """
-                SELECT COUNT(*)
-                FROM audit_events
-                WHERE business_id = ?
-                  AND entity_type = 'TRANSACTION'
-                  AND entity_id = ?
-                  AND action = 'TRANSACTION_POSTED'
-                """,
-                Integer.class,
-                testBusinessId,
-                transactionId
-            );
-
-        assertEquals(0, postingAuditCount);
-    }
-
-    // ============================================================
     // REPORTING REVISION — SUCCESSFUL POSTING
     // ============================================================
 
@@ -4079,6 +3976,403 @@ class TransactionIntegrationTest {
         );
     }
 
+
+    /**
+     * Verify that Spring automatically rolls back posting
+     * changes when PostgreSQL rejects outbox persistence.
+     *
+     * A deliberately conflicting outbox event is inserted
+     * before the nested posting transaction begins.
+     *
+     * The posting operation then:
+     *
+     * - Updates the financial transaction status.
+     * - Records the posting audit event.
+     * - Advances the reporting revision.
+     * - Attempts to insert its TransactionPosted event.
+     *
+     * PostgreSQL rejects the final INSERT because the
+     * unique transaction-event constraint is violated.
+     *
+     * Spring must automatically roll back the nested
+     * posting transaction.
+     *
+     * The surrounding integration-test transaction
+     * preserves the initial DRAFT and conflict fixture
+     * until the test finishes, then rolls back normally.
+     */
+    @Test
+    void automaticallyRollsBackPostingWhenOutboxInsertFails() {
+
+        // ====================================================
+        // CREATE A VALID FINANCIAL DRAFT
+        // ====================================================
+
+        LedgerTransaction draft =
+            transactionService.createDraftTransaction(
+                testBusinessId,
+                createRequest("500.00", "500.00")
+            );
+
+        assertEquals("DRAFT", draft.getStatus());
+
+        Long revisionBefore = jdbcTemplate.queryForObject(
+            """
+            SELECT reporting_revision
+            FROM businesses
+            WHERE id = ?
+            """,
+            Long.class,
+            testBusinessId
+        );
+
+        assertNotNull(revisionBefore);
+
+        // ====================================================
+        // CREATE AN OUTBOX UNIQUENESS CONFLICT
+        // ====================================================
+
+        /*
+        * V13 prevents duplicate events for the same
+        * business, transaction, and event type.
+        *
+        * The placeholder record is part of the test
+        * fixture, outside the nested posting transaction.
+        */
+        int inserted = jdbcTemplate.update(
+            """
+            INSERT INTO outbox_events (
+                business_id,
+                transaction_id,
+                event_type,
+                kafka_topic,
+                event_key,
+                payload
+            )
+            VALUES (
+                ?,
+                ?,
+                'TransactionPosted',
+                'ledgerbase.transaction-posted.v1',
+                ?,
+                CAST(? AS JSONB)
+            )
+            """,
+            testBusinessId,
+            draft.getId(),
+            "test-conflict:" + draft.getId(),
+            "{\"injectedFailure\":true}"
+        );
+
+        assertEquals(1, inserted);
+
+        // ====================================================
+        // START A SPRING-MANAGED NESTED TRANSACTION
+        // ====================================================
+
+        /*
+        * The test already runs inside a transaction.
+        *
+        * PROPAGATION_NESTED creates a Spring-managed
+        * savepoint before financial posting begins.
+        *
+        * We do not explicitly call JDBC rollback.
+        * Spring handles rollback when posting throws.
+        */
+        TransactionTemplate nestedTransaction =
+            new TransactionTemplate(transactionManager);
+
+        nestedTransaction.setPropagationBehavior(
+            TransactionDefinition.PROPAGATION_NESTED
+        );
+
+        // ====================================================
+        // EXECUTE POSTING AND EXPECT OUTBOX FAILURE
+        // ====================================================
+
+        RuntimeException exception = assertThrows(
+            RuntimeException.class,
+            () -> nestedTransaction.executeWithoutResult(
+                status -> {
+
+                    transactionService.postTransaction(
+                        testBusinessId,
+                        draft.getId(),
+                        testUserId
+                    );
+                }
+            )
+        );
+
+        // ====================================================
+        // VERIFY THE DATABASE CONSTRAINT CAUSED FAILURE
+        // ====================================================
+
+        /*
+        * PostgreSQL SQLSTATE 23505 identifies a
+        * unique-constraint violation.
+        *
+        * Spring and MyBatis may wrap the underlying
+        * SQLException, so inspect the exception chain.
+        */
+        boolean uniqueViolationFound = false;
+
+        Throwable cause = exception;
+
+        while (cause != null) {
+
+            if (cause instanceof SQLException sqlException
+                    && "23505".equals(sqlException.getSQLState())) {
+
+                uniqueViolationFound = true;
+                break;
+            }
+
+            cause = cause.getCause();
+        }
+
+        assertTrue(
+            uniqueViolationFound,
+            "Posting must fail because of the outbox "
+                + "unique constraint"
+        );
+
+        // ====================================================
+        // VERIFY FINANCIAL TRANSACTION WAS ROLLED BACK
+        // ====================================================
+
+        String savedStatus = jdbcTemplate.queryForObject(
+            """
+            SELECT status
+            FROM transactions
+            WHERE business_id = ?
+            AND id = ?
+            """,
+            String.class,
+            testBusinessId,
+            draft.getId()
+        );
+
+        assertEquals(
+            "DRAFT",
+            savedStatus,
+            "Spring rollback must restore the DRAFT status"
+        );
+
+        // ====================================================
+        // VERIFY POSTING TIMESTAMP WAS ROLLED BACK
+        // ====================================================
+
+        java.sql.Timestamp postedAt =
+            jdbcTemplate.queryForObject(
+                """
+                SELECT posted_at
+                FROM transactions
+                WHERE business_id = ?
+                AND id = ?
+                """,
+                java.sql.Timestamp.class,
+                testBusinessId,
+                draft.getId()
+            );
+
+        assertNull(
+            postedAt,
+            "Failed posting must not retain a posting timestamp"
+        );
+
+        // ====================================================
+        // VERIFY REPORTING REVISION WAS ROLLED BACK
+        // ====================================================
+
+        Long revisionAfter = jdbcTemplate.queryForObject(
+            """
+            SELECT reporting_revision
+            FROM businesses
+            WHERE id = ?
+            """,
+            Long.class,
+            testBusinessId
+        );
+
+        assertEquals(
+            revisionBefore,
+            revisionAfter,
+            "Failed posting must not advance the reporting revision"
+        );
+
+        // ====================================================
+        // VERIFY POSTING AUDIT WAS ROLLED BACK
+        // ====================================================
+
+        Integer postingAuditCount =
+            jdbcTemplate.queryForObject(
+                """
+                SELECT COUNT(*)
+                FROM audit_events
+                WHERE business_id = ?
+                AND entity_type = 'TRANSACTION'
+                AND entity_id = ?
+                AND action = 'TRANSACTION_POSTED'
+                """,
+                Integer.class,
+                testBusinessId,
+                draft.getId()
+            );
+
+        assertEquals(
+            0,
+            postingAuditCount,
+            "Failed posting must not retain a posting audit"
+        );
+
+        // ====================================================
+        // VERIFY ORIGINAL CONFLICT FIXTURE REMAINS
+        // ====================================================
+
+        /*
+        * The nested rollback must preserve records
+        * created before its transaction boundary.
+        *
+        * Only the deliberately inserted conflict
+        * should remain at this point in the test.
+        */
+        Integer remainingEvents =
+            jdbcTemplate.queryForObject(
+                """
+                SELECT COUNT(*)
+                FROM outbox_events
+                WHERE business_id = ?
+                AND transaction_id = ?
+                AND event_type = 'TransactionPosted'
+                AND payload ->> 'injectedFailure' = 'true'
+                """,
+                Integer.class,
+                testBusinessId,
+                draft.getId()
+            );
+
+        assertEquals(
+            1,
+            remainingEvents,
+            "Spring rollback must preserve the preexisting fixture"
+        );
+    }
+
+
+    // ============================================================
+    // HELPER METHODS
+    // ============================================================
+
+    /**
+     * Form a test-only Bearer header for an existing user.
+     * The identity must be authorized for the target business.
+     */
+    private String bearerFor(Long userId) {
+        return "Bearer transaction-test-user-" + userId;
+    }
+
+    // ============================================================
+    // HELPER — VERIFY REJECTED POSTING PRESERVES FINANCIAL DATA
+    // ============================================================
+
+    /**
+     * Verify that a rejected posting does not partially
+     * change financial records.
+     *
+     * The original transaction must:
+     *
+     * - Remain DRAFT.
+     * - Preserve its two ledger entries.
+     * - Preserve its TRANSACTION_CREATED audit event.
+     * - Have zero TRANSACTION_POSTED audit events.
+     *
+     * Both rejection tests use this helper.
+     */
+    private void assertRejectedPostingPreservesDraft(
+            Long transactionId) {
+
+        // ========================================================
+        // VERIFY THE TRANSACTION IS STILL DRAFT
+        // ========================================================
+
+        String savedStatus = jdbcTemplate.queryForObject(
+            """
+            SELECT status
+            FROM transactions
+            WHERE id = ?
+              AND business_id = ?
+            """,
+            String.class,
+            transactionId,
+            testBusinessId
+        );
+
+        assertEquals("DRAFT", savedStatus);
+
+
+        // ========================================================
+        // VERIFY BOTH ORIGINAL LEDGER ENTRIES REMAIN
+        // ========================================================
+
+        Integer entryCount = jdbcTemplate.queryForObject(
+            """
+            SELECT COUNT(*)
+            FROM ledger_entries
+            WHERE transaction_id = ?
+              AND business_id = ?
+            """,
+            Integer.class,
+            transactionId,
+            testBusinessId
+        );
+
+        assertEquals(2, entryCount);
+
+
+        // ========================================================
+        // VERIFY THE CREATION AUDIT EVENT REMAINS
+        // ========================================================
+
+        Integer creationAuditCount =
+            jdbcTemplate.queryForObject(
+                """
+                SELECT COUNT(*)
+                FROM audit_events
+                WHERE business_id = ?
+                  AND entity_type = 'TRANSACTION'
+                  AND entity_id = ?
+                  AND action = 'TRANSACTION_CREATED'
+                """,
+                Integer.class,
+                testBusinessId,
+                transactionId
+            );
+
+        assertEquals(1, creationAuditCount);
+
+
+        // ========================================================
+        // VERIFY NO POSTING AUDIT EVENT WAS CREATED
+        // ========================================================
+
+        Integer postingAuditCount =
+            jdbcTemplate.queryForObject(
+                """
+                SELECT COUNT(*)
+                FROM audit_events
+                WHERE business_id = ?
+                  AND entity_type = 'TRANSACTION'
+                  AND entity_id = ?
+                  AND action = 'TRANSACTION_POSTED'
+                """,
+                Integer.class,
+                testBusinessId,
+                transactionId
+            );
+
+        assertEquals(0, postingAuditCount);
+    }
 
     // ========================================================
     // HELPER — READ BUSINESS REPORTING REVISION
