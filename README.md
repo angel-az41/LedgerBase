@@ -93,17 +93,23 @@ the repository.
 
 ---
 
+
 ## Tech Stack
 
 | Layer | Technologies |
 |---|---|
-| Frontend | React, TypeScript, Vite |
-| Backend | Java 25, Spring Boot, REST APIs |
-| Database Access | MyBatis |
-| Database | PostgreSQL 17 |
+| Frontend | React, TypeScript, Vite, Axios |
+| Backend | Java 25, Spring Boot, Spring Cloud Gateway, REST APIs |
+| Database Access | MyBatis, Spring JDBC |
+| Primary Database | PostgreSQL 17 |
+| Database Replication | PostgreSQL WAL Streaming Replication |
 | Database Migrations | Flyway |
-| Development Environment | Docker, Docker Compose |
+| Distributed Caching | Redis Cluster, Spring Data Redis, Lettuce |
+| Asynchronous Messaging | Apache Kafka, Transactional Outbox, Idempotent Consumer |
+| Authentication and Authorization | JWT, Business-Scoped RBAC |
+| Development Infrastructure | Docker, Docker Compose |
 | Build Tools | Maven, npm |
+| Testing | JUnit, Mockito, Spring Boot Integration Tests |
 | Version Control | Git, GitHub |
 
 ---
@@ -117,21 +123,57 @@ the [System Architecture Guide](docs/architecture.md).
 LedgerBase follows a layered full-stack architecture.
 
 ```text
-                React + TypeScript
-                        |
-                        | HTTP / JSON
-                        v
-               Spring Boot REST API
-                        |
-                        v
-                 Service Layer
-                        |
-                        v
-                 MyBatis Mappers
-                        |
-                        v
-                   PostgreSQL
+                 React + TypeScript
+                         |
+                         v
+                Spring Cloud Gateway
+                       :8081
+                         |
+             +-----------+-----------+
+             |                       |
+             v                       v
+      Accounting Core         Reporting Service
+          :8080                    :8082
+             |                       |
+             v                       +----> Redis Cluster
+      PostgreSQL Primary                  (6 nodes)
+             |                       |
+             |                       v
+             +--------------> PostgreSQL Replica
+             |                       (read-only)
+             |
+             v
+      Transactional Outbox
+             |
+             v
+       Kafka Publisher
+             |
+             v
+        Apache Kafka
+             |
+             v
+       Kafka Consumer
+             |
+             v
+      PostgreSQL Inbox
 ```
+
+The application uses Spring Cloud Gateway as its API entry point.
+
+Most accounting API requests are routed to Accounting Core.
+Trial Balance read requests are handled by the independent
+Reporting Service, which uses a PostgreSQL streaming replica
+and Redis Cluster caching.
+
+Accounting Core remains responsible for authoritative
+financial transaction processing.
+
+Committed financial events are persisted through a PostgreSQL
+transactional outbox, published asynchronously to Apache Kafka,
+and consumed using a durable, idempotent PostgreSQL inbox.
+
+The Reporting Service also validates authentication and
+business access through Accounting Core.
 
 ### Frontend
 
@@ -186,6 +228,121 @@ MyBatis maps Java backend operations to SQL statements.
 
 ---
 
+## Kafka Transactional Outbox and Idempotent Consumer
+
+LedgerBase uses Apache Kafka to support asynchronous
+financial event processing without coupling financial
+posting to broker availability.
+
+### Architecture
+
+1. Accounting Core posts a financial transaction.
+2. PostgreSQL atomically persists the posting,
+   audit record, reporting revision, and outbox event.
+3. The outbox publisher claims committed events using
+   `FOR UPDATE SKIP LOCKED`.
+4. The publisher sends events to Apache Kafka.
+5. A successful Kafka acknowledgment causes the event
+   to be marked `PUBLISHED` in PostgreSQL.
+6. The Kafka consumer validates incoming events and
+   records processing receipts in a PostgreSQL inbox.
+7. The consumer acknowledges Kafka only after the
+   database processing transaction commits.
+
+### Local Kafka Setup
+
+Start the broker alongside the existing infrastructure:
+
+```bash
+docker compose -f docker-compose.yml \
+  -f docker-compose.kafka.yml \
+  up -d kafka
+```
+
+Create the financial event topic if it does not exist:
+
+```bash
+docker exec ledgerbase-kafka \
+  /opt/kafka/bin/kafka-topics.sh \
+  --bootstrap-server localhost:19092 \
+  --create \
+  --if-not-exists \
+  --topic ledgerbase.transaction-posted.v1 \
+  --partitions 3 \
+  --replication-factor 1
+```
+
+Start Accounting Core with Kafka publishing and
+consumption enabled:
+
+```bash
+mvn -f backend/pom.xml spring-boot:run \
+  -Dspring-boot.run.profiles=kafka-outbox
+```
+
+Kafka publishing and consumption are opt-in and
+disabled during normal backend test runs.
+
+### Delivery and Idempotency
+
+LedgerBase implements at-least-once event delivery.
+
+The PostgreSQL outbox preserves events if Kafka
+becomes unavailable. Failed publication attempts
+are retried using exponential backoff.
+
+Outbox claims expire so abandoned events can be
+reclaimed after publisher failures.
+
+Kafka may deliver the same event more than once.
+The consumer uses a PostgreSQL inbox with a unique
+`(consumer_name, event_id)` key to prevent duplicate
+database processing for the same logical consumer.
+
+The consumer does not repost financial transactions
+or modify authoritative ledger balances.
+
+### Reliability Testing
+
+The backend test suite covers:
+
+- Atomic financial posting and outbox recording.
+- Duplicate outbox event prevention.
+- Financial posting rollback on outbox insertion failure.
+- Kafka publisher acknowledgment and retry handling.
+- Expired publisher claim recovery.
+- Consumer event-ID deduplication.
+- Consumer acknowledgment on successful processing.
+- Unacknowledged messages when processing fails.
+- Rejection of events referencing DRAFT transactions.
+
+Manual integration testing additionally verified
+Kafka broker outage retries and automatic publication
+after the broker recovered.
+
+### Development Limitations
+
+The local Kafka environment uses one KRaft broker,
+replication factor 1, and PLAINTEXT listeners.
+
+It is not a production high-availability deployment.
+
+Kafka delivery is at least once, not globally
+exactly once. Producer idempotence does not remove
+the need for consumer deduplication.
+
+The consumer's retry configuration may block a
+partition when a message cannot be processed.
+Production deployment would require additional
+authentication, transport security, monitoring,
+failure classification, and dead-letter handling.
+
+The `earliest` offset reset policy applies when
+the consumer group has no committed offsets.
+Existing groups resume from their committed offsets.
+
+---
+
 ## Implemented Features
 
 ### 1. Business and Accounting Structure
@@ -206,8 +363,10 @@ Implemented accounting structures include:
 - Ledger entries.
 - Reporting classifications.
 
-Business-scoped data access is not a substitute for
-production authentication or authorization.
+LedgerBase implements JWT-based authentication and 
+business-scoped role-based access control to enforce 
+authorized financial operations. Additional security 
+hardening is required for production deployment.
 
 ### 2. Chart of Accounts
 
@@ -730,29 +889,28 @@ Check the container:
 docker compose ps
 ```
 
-### 4. Start the Backend
+### 4. Start the Backend Services
 
-From the LedgerBase project root:
+LedgerBase uses three Spring Boot applications:
 
-```bash
-set -a
-source .env
-set +a
+| Service | Port | Responsibility |
+|---|---|---|
+| Accounting Core | 8080 | Financial operations, JWT/RBAC, PostgreSQL writes, Kafka event processing |
+| Reporting Service | 8082 | Trial Balance reporting, PostgreSQL replica reads, Redis caching |
+| Spring Cloud Gateway | 8081 | API routing between frontend and backend services |
 
-cd backend
-./mvnw spring-boot:run
-```
+Start Accounting Core, Reporting Service, and Spring Cloud
+Gateway in separate terminal sessions using their respective
+Maven configurations.
 
-Spring Boot runs at:
+Ensure their required infrastructure services are available
+before starting the applications.
 
-```text
-http://localhost:8080
-```
+Flyway manages database schema migrations during the
+appropriate service startup process.
 
-Flyway manages the database schema migrations
-during application startup.
-
-Keep this terminal running while using the application.
+The React frontend sends API requests through Spring Cloud
+Gateway on port 8081.
 
 ### 5. Start the Frontend
 
@@ -773,7 +931,7 @@ http://localhost:5173
 ```
 
 During local development, Vite proxies API requests
-to the Spring Boot backend on port 8080.
+to the Spring Cloud Gateway on port 8081.
 
 ### 6. Explore LedgerBase
 
@@ -953,13 +1111,6 @@ Potential future extensions include:
 - Support carefully validated updates to existing accounts.
 - Provide additional migration and reconciliation tools.
 
-### Authentication and Authorization
-
-- User authentication.
-- Business-level access controls.
-- Role-based permissions.
-- Secure financial API access.
-
 ### Additional Accounting Workflows
 
 - Customer invoice and payment reconciliation.
@@ -968,19 +1119,21 @@ Potential future extensions include:
 - Fixed-asset depreciation.
 - Additional financial reporting capabilities.
 
-### Distributed Systems and Performance
+### Distributed Systems and Infrastructure
 
-Longer-term engineering extensions may include:
+LedgerBase already implements Spring Cloud microservices,
+PostgreSQL read replication, Redis Cluster caching,
+and Kafka-based asynchronous financial event processing.
 
-- Redis caching.
-- Kafka-based asynchronous processing.
-- Transactional outbox patterns.
-- Additional concurrency testing.
+Potential future engineering extensions include:
+
 - Container orchestration with Kubernetes.
-- Monitoring and performance benchmarking.
-
-These are planned enhancements, not claims of
-currently implemented functionality.
+- Automated CI/CD pipelines.
+- Prometheus and Grafana observability.
+- Distributed tracing and operational alerting.
+- Additional concurrency and failure-recovery testing.
+- Production-grade Kafka security and dead-letter handling.
+- Production deployment and infrastructure hardening.
 
 ---
 
@@ -1008,25 +1161,25 @@ The ABC Consulting LLC scenario validates the
 accounting behavior of eight posted journal entries
 and their corresponding financial statements.
 
+
 ### Important Limitations
 
 LedgerBase is a development and portfolio application,
-not production-ready accounting software.
+not production-certified financial accounting software.
 
-In particular:
+The platform implements JWT authentication, business-scoped
+role-based authorization, PostgreSQL transactional integrity,
+distributed caching, and asynchronous event processing.
 
-- Production authentication is not implemented.
-- Business-level authorization is not yet enforced
-  as a complete security boundary.
-- Development workflows currently use a temporary
-  demo user identity.
-- The accounting demo is documented but not
-  automatically seeded into a fresh database.
-- Additional production security, operational,
-  and financial controls are required before
-  handling real customer financial data.
+However, additional production safeguards are required:
 
-The project prioritizes correctness, maintainability,
-and a strong accounting and backend engineering
-foundation before introducing more advanced
-distributed infrastructure.
+- Production-grade secret management and credential rotation.
+- TLS and authentication for internal infrastructure services.
+- Highly available Kafka broker deployment.
+- Production database backup and disaster recovery procedures.
+- Comprehensive monitoring, tracing, and alerting.
+- Operational handling of permanently failing Kafka messages.
+- Additional security testing and financial compliance controls.
+
+The local Kafka deployment uses a single broker and PLAINTEXT
+listeners and is intended only for trusted development.
