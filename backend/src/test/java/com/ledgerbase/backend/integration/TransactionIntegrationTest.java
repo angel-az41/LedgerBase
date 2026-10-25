@@ -8,7 +8,10 @@ import com.ledgerbase.backend.model.LedgerTransaction;
 import com.ledgerbase.backend.service.BusinessReportingRevisionService;
 import com.ledgerbase.backend.service.FiscalYearService;
 import com.ledgerbase.backend.service.OutboxPublisherStore;
+import com.ledgerbase.backend.service.TransactionPostedInboxService;
 import com.ledgerbase.backend.service.TransactionService;
+
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,6 +39,7 @@ import java.sql.Savepoint;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -138,6 +142,16 @@ class TransactionIntegrationTest {
      */
     @Autowired
     private OutboxPublisherStore outboxPublisherStore;
+
+    /**
+     * Processes TransactionPosted events using the real
+     * PostgreSQL inbox table.
+     *
+     * Integration tests verify event-ID deduplication
+     * independently of an active Kafka broker.
+     */
+    @Autowired
+    private TransactionPostedInboxService inboxService;
 
     /**
      * Mock JWT signature decoding only in this test context.
@@ -3738,6 +3752,187 @@ class TransactionIntegrationTest {
             0,
             countTransactionPostedOutboxEvents(draft.getId()),
             "Failed posting must leave no outbox event"
+        );
+    }
+
+
+    /**
+     * Verify that Kafka redelivery does not process the
+     * same financial event more than once.
+     *
+     * Scenario:
+     *
+     * - Create and post a real financial transaction.
+     * - Retrieve its durable outbox event.
+     * - Simulate the first Kafka delivery.
+     * - Simulate redelivery at a different Kafka offset.
+     * - Verify the second delivery is recognized as a duplicate.
+     * - Verify PostgreSQL retains exactly one inbox receipt.
+     *
+     * The test uses real PostgreSQL and the real inbox service.
+     * Kafka records are constructed locally, so no Kafka
+     * broker connection is required.
+     *
+     * The surrounding test transaction automatically
+     * rolls back the test records afterward.
+     */
+    @Test
+    void processesDuplicateKafkaEventOnlyOnce() {
+
+        // ====================================================
+        // CREATE AND POST A FINANCIAL TRANSACTION
+        // ====================================================
+
+        LedgerTransaction draft =
+            transactionService.createDraftTransaction(
+                testBusinessId,
+                createRequest("500.00", "500.00")
+            );
+
+        LedgerTransaction posted =
+            transactionService.postTransaction(
+                testBusinessId,
+                draft.getId(),
+                testUserId
+            );
+
+        assertEquals("POSTED", posted.getStatus());
+
+        // ====================================================
+        // READ THE ORIGINAL DURABLE OUTBOX EVENT
+        // ====================================================
+
+        /*
+        * Reuse the actual event created by the financial
+        * posting workflow.
+        *
+        * This avoids constructing an artificial domain
+        * payload that might differ from production.
+        */
+        Map<String, Object> outboxEvent =
+            jdbcTemplate.queryForMap(
+                """
+                SELECT
+                    event_key,
+                    payload::text AS payload
+                FROM outbox_events
+                WHERE business_id = ?
+                AND transaction_id = ?
+                AND event_type = 'TransactionPosted'
+                """,
+                testBusinessId,
+                draft.getId()
+            );
+
+        String eventKey =
+            (String) outboxEvent.get("event_key");
+
+        String payload =
+            (String) outboxEvent.get("payload");
+
+        // ====================================================
+        // SIMULATE THE ORIGINAL KAFKA DELIVERY
+        // ====================================================
+
+        ConsumerRecord<String, String> firstDelivery =
+            new ConsumerRecord<>(
+                "ledgerbase.transaction-posted.v1",
+                2,
+                100L,
+                eventKey,
+                payload
+            );
+
+        boolean firstProcessed =
+            inboxService.process(firstDelivery);
+
+        assertTrue(
+            firstProcessed,
+            "The first delivery must be processed"
+        );
+
+        // ====================================================
+        // SIMULATE KAFKA REDELIVERY
+        // ====================================================
+
+        /*
+        * The second record carries the same eventId
+        * and payload, but arrives at a new Kafka offset.
+        *
+        * The consumer must deduplicate using eventId,
+        * not the Kafka offset.
+        */
+        ConsumerRecord<String, String> duplicateDelivery =
+            new ConsumerRecord<>(
+                "ledgerbase.transaction-posted.v1",
+                2,
+                101L,
+                eventKey,
+                payload
+            );
+
+        boolean duplicateProcessed =
+            inboxService.process(duplicateDelivery);
+
+        assertFalse(
+            duplicateProcessed,
+            "Duplicate delivery must be skipped"
+        );
+
+        // ====================================================
+        // VERIFY EXACTLY ONE INBOX RECEIPT
+        // ====================================================
+
+        Integer receiptCount =
+            jdbcTemplate.queryForObject(
+                """
+                SELECT COUNT(*)
+                FROM kafka_consumer_inbox
+                WHERE consumer_name =
+                    'transaction-posted-inbox-v1'
+                AND business_id = ?
+                AND transaction_id = ?
+                """,
+                Integer.class,
+                testBusinessId,
+                draft.getId()
+            );
+
+        assertEquals(
+            1,
+            receiptCount,
+            "Duplicate Kafka delivery must not create "
+                + "another inbox receipt"
+        );
+
+        // ====================================================
+        // VERIFY ORIGINAL KAFKA OFFSET IS PRESERVED
+        // ====================================================
+
+        /*
+        * A duplicate delivery must not overwrite
+        * metadata from the original successful receipt.
+        */
+        Long savedOffset =
+            jdbcTemplate.queryForObject(
+                """
+                SELECT kafka_offset
+                FROM kafka_consumer_inbox
+                WHERE consumer_name =
+                    'transaction-posted-inbox-v1'
+                AND business_id = ?
+                AND transaction_id = ?
+                """,
+                Long.class,
+                testBusinessId,
+                draft.getId()
+            );
+
+        assertEquals(
+            100L,
+            savedOffset,
+            "Duplicate delivery must preserve "
+                + "the original Kafka offset"
         );
     }
 

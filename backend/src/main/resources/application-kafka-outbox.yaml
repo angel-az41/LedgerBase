@@ -38,6 +38,24 @@ spring:
         "[request.timeout.ms]": 10000
         "[delivery.timeout.ms]": 30000
 
+    
+    # ============================================================
+    # DURABLE FINANCIAL EVENT CONSUMER
+    # ============================================================
+    consumer:
+      group-id: ledgerbase-transaction-posted-inbox-v1
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+
+    # The Kafka offset is acknowledged explicitly after
+    # the PostgreSQL processing transaction commits.
+    listener:
+      ack-mode: manual_immediate
+
+
 ledgerbase:
   kafka:
     outbox:
@@ -46,3 +64,8 @@ ledgerbase:
 
         # Poll PostgreSQL once a second.
         poll-ms: 1000
+    
+    inbox:
+      consumer:
+        enabled: true
+        topic: ledgerbase.transaction-posted.v1
