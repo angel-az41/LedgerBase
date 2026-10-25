@@ -262,34 +262,40 @@
 
     <!-- ========================================================
          5. POST A DRAFT TRANSACTION
-         ======================================================== -->
+         ========================================================
 
-    <!--
-        Mark a transaction as POSTED.
+        Atomically transition a financial transaction
+        from DRAFT to POSTED.
 
-        The status condition ensures only DRAFT transactions
-        can transition to POSTED.
+        The PostgreSQL update also records the posting
+        timestamp using the database server's clock.
 
-        TransactionService remains responsible for:
+        This timestamp is distinct from transaction_date:
 
-        - Validating all ledger entries.
-        - Checking debit and credit totals.
-        - Enforcing business ownership.
-        - Executing posting atomically.
+        - transaction_date: Accounting date of the journal.
+        - posted_at: Actual time the journal was finalized.
 
-        Database triggers continue protecting posted entries
-        and accounting periods.
+        The status condition prevents posting the same
+        transaction more than once.
 
-        No numbering changes are needed in this UPDATE.
+        TransactionService performs this operation within
+        an existing PostgreSQL transaction and acquires
+        the transaction row lock beforehand.
+
+        The posting timestamp is subsequently included
+        in the TransactionPosted outbox event payload.
     -->
 
     <update id="markAsPosted">
 
         UPDATE transactions
-        SET status = 'POSTED'
+
+        SET status = 'POSTED',
+            posted_at = CURRENT_TIMESTAMP
+
         WHERE business_id = #{businessId}
-          AND id = #{transactionId}
-          AND status = 'DRAFT'
+        AND id = #{transactionId}
+        AND status = 'DRAFT'
 
     </update>
 

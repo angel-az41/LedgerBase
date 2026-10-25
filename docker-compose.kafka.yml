@@ -1,0 +1,159 @@
+# ============================================================
+# LEDGERBASE — APACHE KAFKA DEVELOPMENT INFRASTRUCTURE
+# ============================================================
+#
+# PURPOSE:
+#
+# Run Apache Kafka as the asynchronous financial event
+# broker for LedgerBase.
+#
+# ARCHITECTURE:
+#
+# Accounting Core
+#       |
+#       v
+# PostgreSQL Transactional Outbox
+#       |
+#       v
+# Kafka Outbox Publisher
+#       |
+#       v
+# Apache Kafka
+#       |
+#       v
+# Financial Event Consumer
+#
+# DEPLOYMENT:
+#
+# This configuration runs one Kafka broker in KRaft mode.
+#
+# KRaft provides Kafka metadata management without
+# requiring a separate ZooKeeper container.
+#
+# This single-node configuration is intended for
+# local development and integration testing.
+#
+# It does not provide production broker redundancy.
+#
+# NETWORKING:
+#
+# HOST listener:
+#   127.0.0.1:9092
+#   Used by locally running Spring Boot applications.
+#
+# INTERNAL listener:
+#   kafka:19092
+#   Used by future Docker-hosted Spring services.
+#
+# CONTROLLER listener:
+#   kafka:29093
+#   Used internally for KRaft metadata coordination.
+#
+# The broker is bound to host loopback.
+# PLAINTEXT is acceptable only for trusted development.
+
+services:
+
+  kafka:
+
+    image: apache/kafka:4.2.2
+
+    container_name: ledgerbase-kafka
+
+    hostname: kafka
+
+    restart: unless-stopped
+
+    # ========================================================
+    # HOST PORT
+    # ========================================================
+
+    ports:
+      - "127.0.0.1:9092:9092"
+
+    # ========================================================
+    # KAFKA KRAFT CONFIGURATION
+    # ========================================================
+
+    environment:
+
+      # Unique node identifier in the Kafka cluster.
+      KAFKA_NODE_ID: "1"
+
+      # Run both broker and controller roles locally.
+      KAFKA_PROCESS_ROLES: "broker,controller"
+
+      # Static single-node controller quorum.
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:29093"
+
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+
+      # ------------------------------------------------------
+      # LISTENERS
+      # ------------------------------------------------------
+
+      KAFKA_LISTENERS: >-
+        INTERNAL://0.0.0.0:19092,
+        HOST://0.0.0.0:9092,
+        CONTROLLER://0.0.0.0:29093
+
+      KAFKA_ADVERTISED_LISTENERS: >-
+        INTERNAL://kafka:19092,
+        HOST://127.0.0.1:9092
+
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: >-
+        INTERNAL:PLAINTEXT,
+        HOST:PLAINTEXT,
+        CONTROLLER:PLAINTEXT
+
+      KAFKA_INTER_BROKER_LISTENER_NAME: "INTERNAL"
+
+      # ------------------------------------------------------
+      # DEVELOPMENT CLUSTER IDENTIFIER
+      # ------------------------------------------------------
+
+      # Fixed identifier for the local Kafka data volume.
+      CLUSTER_ID: "4L6g3nShT-eMCtK--X86sw"
+
+      # ------------------------------------------------------
+      # SINGLE-BROKER REPLICATION SETTINGS
+      # ------------------------------------------------------
+
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR: "1"
+
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR: "1"
+
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+
+      # ------------------------------------------------------
+      # TOPIC MANAGEMENT
+      # ------------------------------------------------------
+
+      # Require LedgerBase event topics to be created
+      # explicitly with known partitions and settings.
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+
+      # ------------------------------------------------------
+      # PERSISTENT KAFKA LOG STORAGE
+      # ------------------------------------------------------
+
+      # Keep Kafka event logs and KRaft metadata in
+      # a Docker-managed volume across container restarts.
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+
+    volumes:
+      - ledgerbase-kafka-data:/var/lib/kafka/data
+
+# ============================================================
+# PERSISTENT VOLUMES
+# ============================================================
+
+volumes:
+
+  ledgerbase-kafka-data:

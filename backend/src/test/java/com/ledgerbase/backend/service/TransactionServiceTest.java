@@ -28,12 +28,16 @@ import static org.mockito.Mockito.mock;
  * - Every entry references an account.
  *
  * No database connection is required.
+ *
+ * All database mappers and auxiliary services are mocked.
+ * The tests directly exercise the pure accounting
+ * validation logic in TransactionService.
  */
 class TransactionServiceTest {
 
     // Service containing our accounting validation logic.
     private TransactionService transactionService;
-        
+
     // ========================================================
     // TEST INITIALIZATION
     // ========================================================
@@ -45,8 +49,16 @@ class TransactionServiceTest {
      * No database connections or real service calls
      * are necessary.
      *
-     * The reporting revision service is also mocked
-     * because revision persistence is tested separately.
+     * The reporting revision service is mocked because
+     * revision persistence is tested separately.
+     *
+     * The outbox service is also mocked because
+     * financial event persistence and transaction
+     * rollback behavior are verified through separate
+     * integration tests.
+     *
+     * We explicitly use Mockito.mock() for every
+     * dependency, keeping initialization consistent.
      */
     @BeforeEach
     void setUp() {
@@ -76,7 +88,11 @@ class TransactionServiceTest {
             mock(AccountingPeriodMapper.class),
 
             // Durable financial reporting revision tracking.
-            mock(BusinessReportingRevisionService.class)
+            mock(BusinessReportingRevisionService.class),
+
+            // Durable financial event recording.
+            // No real outbox INSERT occurs in unit tests.
+            mock(OutboxEventService.class)
         );
     }
 

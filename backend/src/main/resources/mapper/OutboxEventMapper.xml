@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!DOCTYPE mapper
+    PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.ledgerbase.backend.mapper.OutboxEventMapper">
+
+    <!--
+        ====================================================
+        RECORD A POSTED TRANSACTION EVENT
+        ====================================================
+
+        Insert the event into PostgreSQL rather than
+        publishing directly to Kafka.
+
+        The caller is responsible for providing an
+        active database transaction.
+
+        Financial posting and event creation must
+        commit or roll back together.
+
+        EVENT IDENTIFIER:
+
+        Java generates a UUID before this INSERT.
+
+        The event UUID is stored both in the
+        event_id column and in the JSON payload.
+
+        Kafka consumers can later use this identifier
+        to recognize duplicate deliveries.
+
+        FINANCIAL VALIDATION:
+
+        INSERT ... SELECT requires the matching
+        transaction to be in POSTED status.
+
+        Tenant isolation is enforced through
+        the business_id and transaction_id pair.
+
+        EVENT PAYLOAD:
+
+        PostgreSQL jsonb_build_object() constructs
+        safe JSON from parameterized values.
+
+        We do not concatenate user-controlled strings
+        into SQL or manually construct JSON.
+
+        KAFKA MESSAGE KEY:
+
+        All events for the same business transaction
+        will use the same partitioning key.
+    -->
+
+    <insert id="insertTransactionPosted">
+
+        INSERT INTO outbox_events (
+
+            event_id,
+            business_id,
+            transaction_id,
+            event_type,
+            kafka_topic,
+            event_key,
+            payload
+
+        )
+
+        SELECT
+
+            CAST(#{eventId} AS UUID),
+
+            t.business_id,
+
+            t.id,
+
+            'TransactionPosted',
+
+            'ledgerbase.transaction-posted.v1',
+
+            CONCAT(
+                'business:',
+                t.business_id,
+                ':transaction:',
+                t.id
+            ),
+
+            jsonb_build_object(
+
+                'eventId',
+                #{eventId},
+
+                'eventType',
+                'TransactionPosted',
+
+                'eventVersion',
+                1,
+
+                'businessId',
+                t.business_id,
+
+                'transactionId',
+                t.id,
+
+                'actorId',
+                #{actorId},
+
+                'transactionDate',
+                t.transaction_date,
+
+                'postedAt',
+                t.posted_at,
+
+                'occurredAt',
+                CURRENT_TIMESTAMP
+
+            )
+
+        FROM transactions t
+
+        WHERE t.business_id = #{businessId}
+
+          AND t.id = #{transactionId}
+
+          AND t.status = 'POSTED'
+
+    </insert>
+
+</mapper>
