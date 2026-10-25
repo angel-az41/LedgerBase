@@ -1,0 +1,20 @@
+# ============================================================
+# LEDGERBASE — DOCKER BUILD CONTEXT EXCLUSIONS
+# ============================================================
+
+# Local Maven build artifacts are regenerated in Docker.
+target/
+
+# Local editor and operating-system files.
+.idea/
+.vscode/
+.DS_Store
+*.iml
+
+# Logs and temporary files.
+*.log
+*.tmp
+
+# Local environment files must not enter the image.
+.env
+.env.*
