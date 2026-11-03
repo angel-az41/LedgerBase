@@ -160,3 +160,106 @@ services:
     depends_on:
       accounting-core:
         condition: service_started
+  
+  # ==========================================================
+  # FINANCIAL REPORTING SERVICE
+  # ==========================================================
+
+  reporting-service:
+
+    # Build an independent Spring Boot reporting image.
+    image: ledgerbase-reporting-service:local
+
+    build:
+      context: .
+      dockerfile: reporting-service/Dockerfile
+
+    container_name: ledgerbase-reporting-service
+
+    restart: unless-stopped
+
+    # --------------------------------------------------------
+    # LOCAL HTTP PORT
+    # --------------------------------------------------------
+
+    ports:
+      - "127.0.0.1:8082:8082"
+
+    # --------------------------------------------------------
+    # APPLICATION CONFIGURATION
+    # --------------------------------------------------------
+
+    environment:
+
+      # The original application.yaml binds to localhost.
+      #
+      # A Dockerized HTTP service must listen on the
+      # container network interface to accept traffic
+      # from Gateway and published host ports.
+      SERVER_ADDRESS: "0.0.0.0"
+
+      # ------------------------------------------------------
+      # POSTGRESQL READ REPLICA
+      # ------------------------------------------------------
+
+      # Connect through Docker service discovery.
+      # Never route reporting reads to the primary
+      # simply to make the container start.
+      SPRING_DATASOURCE_URL: "jdbc:postgresql://postgres-replica:5432/ledgerbase"
+
+      # Preserve the restricted read-only database role.
+      SPRING_DATASOURCE_USERNAME: "ledgerbase_reader"
+
+      # Existing reporting database credentials.
+      POSTGRES_REPLICA_PASSWORD: "${POSTGRES_REPLICA_PASSWORD:?Set POSTGRES_REPLICA_PASSWORD}"
+
+      # ------------------------------------------------------
+      # JWT AND ACCOUNTING CORE AUTHORIZATION
+      # ------------------------------------------------------
+
+      # Use the same signing secret as Accounting Core.
+      JWT_SECRET_BASE64: "${JWT_SECRET_BASE64:?Set JWT_SECRET_BASE64}"
+
+      # Reporting Service validates active sessions and
+      # business access directly through Accounting Core.
+      ACCOUNTING_CORE_BASE_URL: "http://accounting-core:8080"
+
+      # ------------------------------------------------------
+      # REDIS CLUSTER — INITIAL CONTAINER VERIFICATION
+      # ------------------------------------------------------
+
+      # These addresses permit initial discovery of
+      # the existing Redis container.
+      #
+      # The Redis nodes currently advertise 127.0.0.1.
+      # That topology is not yet usable for reliable
+      # cluster operations from this container.
+      SPRING_DATA_REDIS_CLUSTER_NODES: "redis-cluster:7000,redis-cluster:7001,redis-cluster:7002,redis-cluster:7003,redis-cluster:7004,redis-cluster:7005"
+
+      # Retain authentication for future cache tests.
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?Set REDIS_PASSWORD}"
+
+      # Disable cache usage until Redis Cluster address
+      # discovery has been adapted and verified.
+      #
+      # Financial reports continue using PostgreSQL.
+      LEDGERBASE_TRIAL_BALANCE_CACHE_ENABLED: "false"
+
+      # Do not expose local-only metrics in Docker.
+      LEDGERBASE_LOCAL_METRICS_ENABLED: "false"
+
+    # --------------------------------------------------------
+    # SERVICE DEPENDENCIES
+    # --------------------------------------------------------
+
+    depends_on:
+
+      # The read replica must already be accepting
+      # connections before Reporting Service starts.
+      postgres-replica:
+        condition: service_healthy
+
+      # Accounting Core provides session verification
+      # and business authorization endpoints.
+      accounting-core:
+        condition: service_started
