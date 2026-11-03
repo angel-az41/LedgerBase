@@ -145,10 +145,9 @@ services:
       # Docker Desktop provides host.docker.internal
       # for reaching services running on the host.
       #
-      # This temporary route will be replaced with
-      # http://reporting-service:8082 after Reporting
-      # Service is containerized.
-      LEDGERBASE_REPORTING_URL: "http://host.docker.internal:8082"
+      # Route reporting requests directly to the
+      # Reporting Service container over Docker DNS.
+      LEDGERBASE_REPORTING_URL: "http://reporting-service:8082"
 
     # --------------------------------------------------------
     # SERVICE DEPENDENCY
