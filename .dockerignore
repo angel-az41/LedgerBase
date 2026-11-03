@@ -1,0 +1,42 @@
+# ============================================================
+# LEDGERBASE — ROOT DOCKER BUILD CONTEXT EXCLUSIONS
+# ============================================================
+#
+# PURPOSE:
+#
+# Prevent unnecessary project files, generated outputs,
+# and private development configuration from entering
+# Docker build contexts that use the repository root.
+
+
+# Git history and editor files.
+.git/
+.github/
+.idea/
+.vscode/
+.DS_Store
+
+# Java build artifacts.
+**/target/
+
+# Frontend dependencies and generated output.
+**/node_modules/
+**/dist/
+
+# Local environment configuration.
+.env
+.env.*
+**/.env
+**/.env.*
+
+# Local secrets.
+.secrets/
+**/.secrets/
+
+# Temporary files and logs.
+*.log
+*.tmp
+
+# Project documentation and screenshots are not
+# required when compiling the Gateway application.
+docs/

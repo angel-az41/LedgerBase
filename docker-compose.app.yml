@@ -95,3 +95,68 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+  
+  # ==========================================================
+  # SPRING CLOUD GATEWAY
+  # ==========================================================
+
+  gateway:
+
+    # Gateway is compiled from its own Maven module.
+    #
+    # The repository root is the build context because
+    # the Dockerfile reuses the backend Maven wrapper.
+    image: ledgerbase-gateway:local
+
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+
+    container_name: ledgerbase-gateway
+
+    restart: unless-stopped
+
+    # --------------------------------------------------------
+    # APPLICATION PORT
+    # --------------------------------------------------------
+
+    # Expose Gateway only on host loopback for local use.
+    ports:
+      - "127.0.0.1:8081:8081"
+
+    # --------------------------------------------------------
+    # UPSTREAM SERVICE ROUTING
+    # --------------------------------------------------------
+
+    environment:
+
+      # Listen on the container network interface.
+      #
+      # Binding only to container-local loopback would
+      # prevent published Docker ports from reaching it.
+      SERVER_ADDRESS: "0.0.0.0"
+
+      # Route accounting requests directly to the
+      # Accounting Core container on the same network.
+      LEDGERBASE_CORE_URL: "http://accounting-core:8080"
+
+      # Reporting Service currently runs on macOS.
+      #
+      # Docker Desktop provides host.docker.internal
+      # for reaching services running on the host.
+      #
+      # This temporary route will be replaced with
+      # http://reporting-service:8082 after Reporting
+      # Service is containerized.
+      LEDGERBASE_REPORTING_URL: "http://host.docker.internal:8082"
+
+    # --------------------------------------------------------
+    # SERVICE DEPENDENCY
+    # --------------------------------------------------------
+
+    # Accounting Core must be started before Gateway.
+    #
+    # Actual API readiness is verified separately.
+    depends_on:
+      accounting-core:
+        condition: service_started
