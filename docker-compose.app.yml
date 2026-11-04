@@ -238,14 +238,24 @@ services:
       # Retain authentication for future cache tests.
       REDIS_PASSWORD: "${REDIS_PASSWORD:?Set REDIS_PASSWORD}"
 
-      # Disable cache usage until Redis Cluster address
-      # discovery has been adapted and verified.
+      # Enable the existing revision-aware Trial Balance
+      # cache after configuring Docker Redis address mapping.
       #
-      # Financial reports continue using PostgreSQL.
-      LEDGERBASE_TRIAL_BALANCE_CACHE_ENABLED: "false"
+      # Reporting calculations remain authoritative in
+      # the PostgreSQL read replica.
+      LEDGERBASE_TRIAL_BALANCE_CACHE_ENABLED: "true"
 
       # Do not expose local-only metrics in Docker.
       LEDGERBASE_LOCAL_METRICS_ENABLED: "false"
+
+      # Redis nodes advertise localhost addresses.
+      #
+      # Enable Lettuce client-side mapping so the
+      # Reporting Service connects through the
+      # existing Docker Compose service hostname.
+      #
+      # No Redis cluster configuration is modified.
+      LEDGERBASE_REDIS_DOCKER_ADDRESS_MAPPING_ENABLED: "true"
 
     # --------------------------------------------------------
     # SERVICE DEPENDENCIES
