@@ -1,0 +1,347 @@
+# ============================================================
+# LEDGERBASE — APPLICATION CONTAINER SERVICES
+# ============================================================
+#
+# PURPOSE:
+#
+# Run LedgerBase application services as Docker containers.
+#
+# This Compose file supplements the existing PostgreSQL,
+# Redis, and Kafka infrastructure configuration.
+#
+# Use it alongside docker-compose.yml rather than
+# replacing the infrastructure file.
+#
+# Initial scope:
+#
+# - Accounting Core
+#
+# Additional services will be added after the Accounting
+# Core container is verified.
+#
+# DATABASE SAFETY:
+#
+# This file does not define or modify database volumes.
+# Existing PostgreSQL data is preserved.
+
+services:
+
+  # ==========================================================
+  # ACCOUNTING CORE
+  # ==========================================================
+
+  accounting-core:
+
+    # Use the image that was successfully built and verified.
+    image: ledgerbase-accounting-core:local
+
+    # Retain the build configuration so future developers
+    # can rebuild the image through Docker Compose.
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+
+    container_name: ledgerbase-accounting-core
+
+    restart: unless-stopped
+
+    # --------------------------------------------------------
+    # APPLICATION PORT
+    # --------------------------------------------------------
+
+    # Expose the API only through the Mac's loopback
+    # interface for local development.
+    ports:
+      - "127.0.0.1:8080:8080"
+
+    # --------------------------------------------------------
+    # ENVIRONMENT CONFIGURATION
+    # --------------------------------------------------------
+
+    environment:
+
+      # Use Docker's internal service name and container
+      # port instead of the host-only localhost:5434 URL.
+      #
+      # Spring Boot environment variables override
+      # corresponding application.yaml properties.
+      SPRING_DATASOURCE_URL: "jdbc:postgresql://postgres:5432/ledgerbase"
+
+      # Reuse the existing database credentials.
+      #
+      # This also satisfies the POSTGRES_PASSWORD
+      # placeholder used by application.yaml.
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
+
+      # JWT signing secret must be provided externally.
+      #
+      # Reuse the same secret as the existing Accounting
+      # Core application; do not commit it to Git.
+      JWT_SECRET_BASE64: "${JWT_SECRET_BASE64:?Set JWT_SECRET_BASE64 in .env}"
+      
+      # ------------------------------------------------------
+      # OPTIONAL KAFKA EVENT PROCESSING
+      # ------------------------------------------------------
+
+      # Enable the Kafka publisher and consumer only
+      # when the corresponding Spring profile is selected.
+      #
+      # Leave the variable unset to use the default
+      # Accounting Core configuration.
+      SPRING_PROFILES_ACTIVE: "${LEDGERBASE_ACCOUNTING_PROFILES:-}"
+
+      # Use Kafka's internal Docker listener rather than
+      # localhost, which would refer to this container.
+      #
+      # The broker must be running and attached to the
+      # same Docker Compose network.
+      LEDGERBASE_KAFKA_BOOTSTRAP_SERVERS: "kafka:19092"
+
+    # --------------------------------------------------------
+    # INFRASTRUCTURE DEPENDENCY
+    # --------------------------------------------------------
+
+    # Wait for PostgreSQL to report ready before starting
+    # the application when dependencies are started by
+    # Compose.
+    depends_on:
+      postgres:
+        condition: service_healthy
+  
+  # ==========================================================
+  # SPRING CLOUD GATEWAY
+  # ==========================================================
+
+  gateway:
+
+    # Gateway is compiled from its own Maven module.
+    #
+    # The repository root is the build context because
+    # the Dockerfile reuses the backend Maven wrapper.
+    image: ledgerbase-gateway:local
+
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+
+    container_name: ledgerbase-gateway
+
+    restart: unless-stopped
+
+    # --------------------------------------------------------
+    # APPLICATION PORT
+    # --------------------------------------------------------
+
+    # Expose Gateway only on host loopback for local use.
+    ports:
+      - "127.0.0.1:8081:8081"
+
+    # --------------------------------------------------------
+    # UPSTREAM SERVICE ROUTING
+    # --------------------------------------------------------
+
+    environment:
+
+      # Listen on the container network interface.
+      #
+      # Binding only to container-local loopback would
+      # prevent published Docker ports from reaching it.
+      SERVER_ADDRESS: "0.0.0.0"
+
+      # Route accounting requests directly to the
+      # Accounting Core container on the same network.
+      LEDGERBASE_CORE_URL: "http://accounting-core:8080"
+
+      # Reporting Service currently runs on macOS.
+      #
+      # Docker Desktop provides host.docker.internal
+      # for reaching services running on the host.
+      #
+      # Route reporting requests directly to the
+      # Reporting Service container over Docker DNS.
+      LEDGERBASE_REPORTING_URL: "http://reporting-service:8082"
+
+    # --------------------------------------------------------
+    # SERVICE DEPENDENCY
+    # --------------------------------------------------------
+
+    # Accounting Core must be started before Gateway.
+    #
+    # Actual API readiness is verified separately.
+    depends_on:
+      accounting-core:
+        condition: service_started
+  
+  # ==========================================================
+  # FINANCIAL REPORTING SERVICE
+  # ==========================================================
+
+  reporting-service:
+
+    # Build an independent Spring Boot reporting image.
+    image: ledgerbase-reporting-service:local
+
+    build:
+      context: .
+      dockerfile: reporting-service/Dockerfile
+
+    container_name: ledgerbase-reporting-service
+
+    restart: unless-stopped
+
+    # --------------------------------------------------------
+    # LOCAL HTTP PORT
+    # --------------------------------------------------------
+
+    ports:
+      - "127.0.0.1:8082:8082"
+
+    # --------------------------------------------------------
+    # APPLICATION CONFIGURATION
+    # --------------------------------------------------------
+
+    environment:
+
+      # The original application.yaml binds to localhost.
+      #
+      # A Dockerized HTTP service must listen on the
+      # container network interface to accept traffic
+      # from Gateway and published host ports.
+      SERVER_ADDRESS: "0.0.0.0"
+
+      # ------------------------------------------------------
+      # POSTGRESQL READ REPLICA
+      # ------------------------------------------------------
+
+      # Connect through Docker service discovery.
+      # Never route reporting reads to the primary
+      # simply to make the container start.
+      SPRING_DATASOURCE_URL: "jdbc:postgresql://postgres-replica:5432/ledgerbase"
+
+      # Preserve the restricted read-only database role.
+      SPRING_DATASOURCE_USERNAME: "ledgerbase_reader"
+
+      # Existing reporting database credentials.
+      POSTGRES_REPLICA_PASSWORD: "${POSTGRES_REPLICA_PASSWORD:?Set POSTGRES_REPLICA_PASSWORD}"
+
+      # ------------------------------------------------------
+      # JWT AND ACCOUNTING CORE AUTHORIZATION
+      # ------------------------------------------------------
+
+      # Use the same signing secret as Accounting Core.
+      JWT_SECRET_BASE64: "${JWT_SECRET_BASE64:?Set JWT_SECRET_BASE64}"
+
+      # Reporting Service validates active sessions and
+      # business access directly through Accounting Core.
+      ACCOUNTING_CORE_BASE_URL: "http://accounting-core:8080"
+
+      # ------------------------------------------------------
+      # REDIS CLUSTER — INITIAL CONTAINER VERIFICATION
+      # ------------------------------------------------------
+
+      # These addresses permit initial discovery of
+      # the existing Redis container.
+      #
+      # The Redis nodes currently advertise 127.0.0.1.
+      # That topology is not yet usable for reliable
+      # cluster operations from this container.
+      SPRING_DATA_REDIS_CLUSTER_NODES: "redis-cluster:7000,redis-cluster:7001,redis-cluster:7002,redis-cluster:7003,redis-cluster:7004,redis-cluster:7005"
+
+      # Retain authentication for future cache tests.
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?Set REDIS_PASSWORD}"
+
+      # Enable the existing revision-aware Trial Balance
+      # cache after configuring Docker Redis address mapping.
+      #
+      # Reporting calculations remain authoritative in
+      # the PostgreSQL read replica.
+      LEDGERBASE_TRIAL_BALANCE_CACHE_ENABLED: "true"
+
+      # Do not expose local-only metrics in Docker.
+      LEDGERBASE_LOCAL_METRICS_ENABLED: "false"
+
+      # Redis nodes advertise localhost addresses.
+      #
+      # Enable Lettuce client-side mapping so the
+      # Reporting Service connects through the
+      # existing Docker Compose service hostname.
+      #
+      # No Redis cluster configuration is modified.
+      LEDGERBASE_REDIS_DOCKER_ADDRESS_MAPPING_ENABLED: "true"
+
+    # --------------------------------------------------------
+    # SERVICE DEPENDENCIES
+    # --------------------------------------------------------
+
+    depends_on:
+
+      # The read replica must already be accepting
+      # connections before Reporting Service starts.
+      postgres-replica:
+        condition: service_healthy
+
+      # Accounting Core provides session verification
+      # and business authorization endpoints.
+      accounting-core:
+        condition: service_started
+  
+  # ==========================================================
+  # REACT FRONTEND
+  # ==========================================================
+  #
+  # Serve the compiled React and TypeScript application
+  # using Nginx.
+  #
+  # Nginx serves frontend assets and forwards API
+  # requests directly to Spring Cloud Gateway.
+  #
+  # The browser communicates with one application
+  # origin, avoiding cross-origin API requirements
+  # for the containerized frontend.
+
+  frontend:
+
+    image: ledgerbase-frontend:local
+
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+
+    container_name: ledgerbase-frontend
+
+    restart: unless-stopped
+
+    # --------------------------------------------------------
+    # FRONTEND HTTP PORT
+    # --------------------------------------------------------
+
+    # Use port 3000 for the Dockerized application.
+    #
+    # The existing Vite development server can
+    # continue using port 5173 independently.
+    #
+    # Bind only to the local development machine.
+    ports:
+      - "127.0.0.1:3000:80"
+
+    # --------------------------------------------------------
+    # BACKEND ROUTING
+    # --------------------------------------------------------
+
+    # frontend/nginx.conf forwards /api/ requests to
+    # the Docker service hostname gateway:8081.
+    #
+    # No backend API address needs to be exposed to
+    # the browser or embedded in the React build.
+
+    # --------------------------------------------------------
+    # SERVICE DEPENDENCY
+    # --------------------------------------------------------
+
+    # Gateway must start before the frontend.
+    #
+    # Application readiness is verified separately
+    # using HTTP requests.
+    depends_on:
+      gateway:
+        condition: service_started

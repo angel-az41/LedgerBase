@@ -179,20 +179,12 @@ export function AuthProvider({
   // USER ACTIVITY TRACKING
   // ==========================================================
 
-  /**
-   * Record recent user interaction without
-   * triggering unnecessary React renders.
-   *
-   * Activity is updated by pointer, keyboard,
-   * scrolling, and browser-focus events.
-   *
-   * This information only determines when the
-   * frontend should attempt automatic renewal.
-   *
-   * It does not replace database session validation.
-   */
-  const lastUserActivityAt =
-    useRef(Date.now())
+  // Track the timestamp of the user's most recent activity.
+  //
+  // Initialize with a stable value during rendering.
+  // The actual timestamp is recorded when the
+  // activity-monitoring effect starts.
+  const lastUserActivityAt = useRef<number>(0)
 
 
   // ==========================================================
