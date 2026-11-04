@@ -1,0 +1,23 @@
+# ============================================================
+# LEDGERBASE — FRONTEND DOCKER BUILD EXCLUSIONS
+# ============================================================
+
+# Installed dependencies and build output.
+node_modules/
+dist/
+coverage/
+
+# Local environment files and secrets.
+.env
+.env.*
+!.env.example
+
+# Editor and operating-system files.
+.vscode/
+.idea/
+.DS_Store
+
+# Git metadata and temporary files.
+.git/
+*.log
+*.tmp

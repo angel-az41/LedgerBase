@@ -272,3 +272,64 @@ services:
       # and business authorization endpoints.
       accounting-core:
         condition: service_started
+  
+  # ==========================================================
+  # REACT FRONTEND
+  # ==========================================================
+  #
+  # Serve the compiled React and TypeScript application
+  # using Nginx.
+  #
+  # Nginx serves frontend assets and forwards API
+  # requests directly to Spring Cloud Gateway.
+  #
+  # The browser communicates with one application
+  # origin, avoiding cross-origin API requirements
+  # for the containerized frontend.
+
+  frontend:
+
+    image: ledgerbase-frontend:local
+
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+
+    container_name: ledgerbase-frontend
+
+    restart: unless-stopped
+
+    # --------------------------------------------------------
+    # FRONTEND HTTP PORT
+    # --------------------------------------------------------
+
+    # Use port 3000 for the Dockerized application.
+    #
+    # The existing Vite development server can
+    # continue using port 5173 independently.
+    #
+    # Bind only to the local development machine.
+    ports:
+      - "127.0.0.1:3000:80"
+
+    # --------------------------------------------------------
+    # BACKEND ROUTING
+    # --------------------------------------------------------
+
+    # frontend/nginx.conf forwards /api/ requests to
+    # the Docker service hostname gateway:8081.
+    #
+    # No backend API address needs to be exposed to
+    # the browser or embedded in the React build.
+
+    # --------------------------------------------------------
+    # SERVICE DEPENDENCY
+    # --------------------------------------------------------
+
+    # Gateway must start before the frontend.
+    #
+    # Application readiness is verified separately
+    # using HTTP requests.
+    depends_on:
+      gateway:
+        condition: service_started
