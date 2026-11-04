@@ -78,12 +78,24 @@ services:
       # Reuse the same secret as the existing Accounting
       # Core application; do not commit it to Git.
       JWT_SECRET_BASE64: "${JWT_SECRET_BASE64:?Set JWT_SECRET_BASE64 in .env}"
+      
+      # ------------------------------------------------------
+      # OPTIONAL KAFKA EVENT PROCESSING
+      # ------------------------------------------------------
 
-      # The initial container verification uses the
-      # standard application profile.
+      # Enable the Kafka publisher and consumer only
+      # when the corresponding Spring profile is selected.
       #
-      # Kafka publishing and consumption will be enabled
-      # after the database connection has been verified.
+      # Leave the variable unset to use the default
+      # Accounting Core configuration.
+      SPRING_PROFILES_ACTIVE: "${LEDGERBASE_ACCOUNTING_PROFILES:-}"
+
+      # Use Kafka's internal Docker listener rather than
+      # localhost, which would refer to this container.
+      #
+      # The broker must be running and attached to the
+      # same Docker Compose network.
+      LEDGERBASE_KAFKA_BOOTSTRAP_SERVERS: "kafka:19092"
 
     # --------------------------------------------------------
     # INFRASTRUCTURE DEPENDENCY

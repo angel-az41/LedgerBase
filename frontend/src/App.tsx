@@ -543,12 +543,26 @@ function App() {
   /**
    * Change the active business using the sidebar selector.
    *
-   * The newly selected ID must exist in the API results.
+   * SECURITY:
    *
-   * Changing businesses resets navigation to Overview
-   * and updates the browser's saved UI preference.
+   * - Only allow businesses returned by the backend.
+   * - Clear previously verified membership information
+   *   when switching to another business.
+   * - Deny write permissions until the new role has
+   *   been verified by the backend.
+   *
+   * UI:
+   *
+   * - Reset navigation to Overview.
+   * - Save the selected business as a local preference.
+   *
+   * This event handler may update React state directly.
    */
   function handleBusinessChange(newBusinessId: number): void {
+
+    // ----------------------------------------------------------
+    // VALIDATE SELECTED BUSINESS
+    // ----------------------------------------------------------
 
     const selectedBusiness =
       businesses.find(
@@ -560,17 +574,36 @@ function App() {
       return
     }
 
-    // --------------------------------------------------------
+    // ----------------------------------------------------------
+    // INVALIDATE PREVIOUS MEMBERSHIP RESULT
+    // ----------------------------------------------------------
+
+    /**
+     * Invalidate the previous role immediately when
+     * the user selects a different business.
+     *
+     * This prevents a rapid switch from Business A
+     * to Business B and back to Business A from
+     * temporarily reusing an older role lookup.
+     *
+     * Do not clear the result when the selected
+     * business has not actually changed.
+     */
+    if (selectedBusiness.id !== selectedBusinessId) {
+      setBusinessRoleLookup(null)
+    }
+
+    // ----------------------------------------------------------
     // UPDATE BUSINESS AND PAGE
-    // --------------------------------------------------------
+    // ----------------------------------------------------------
 
     setSelectedBusinessId(selectedBusiness.id)
 
     setActivePage('overview')
 
-    // --------------------------------------------------------
+    // ----------------------------------------------------------
     // SAVE UI PREFERENCE
-    // --------------------------------------------------------
+    // ----------------------------------------------------------
 
     try {
 
@@ -639,16 +672,16 @@ function App() {
     // REQUIRE VALID BUSINESS AND USER IDENTITIES
     // --------------------------------------------------------
 
-    /**
-     * Do not retrieve membership information until
-     * both the business and authenticated user exist.
-     */
+    // Do not request a membership role unless both
+    // the business and authenticated user are available.
+    //
+    // An existing lookup cannot grant permissions for
+    // a missing identity because currentRoleLookup
+    // validates both identifiers during rendering.
     if (
       businessId === null ||
       authenticatedUserId === null
     ) {
-
-      setBusinessRoleLookup(null)
       return
     }
 
@@ -675,10 +708,16 @@ function App() {
     // PREVENT STALE ASYNCHRONOUS UPDATES
     // --------------------------------------------------------
 
+    // Prevent an outdated asynchronous request from
+    // changing the membership state after a business
+    // or authenticated user has changed.
     let active = true
 
-    // Clear the previous result while requesting a new role.
-    setBusinessRoleLookup(null)
+    // Do not synchronously reset React state here.
+    //
+    // currentRoleLookup already rejects results that
+    // belong to another business or user. The pending
+    // request will publish its own verified result.
 
 
     // --------------------------------------------------------
