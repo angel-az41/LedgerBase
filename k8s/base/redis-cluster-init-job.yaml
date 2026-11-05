@@ -1,0 +1,482 @@
+# ============================================================
+# LEDGERBASE — REDIS CLUSTER INITIALIZATION JOB
+# ============================================================
+#
+# PURPOSE:
+#
+# Initialize and verify the six Redis Cluster nodes
+# deployed by the Kubernetes Redis StatefulSet.
+#
+# EXPECTED TOPOLOGY:
+#
+# - Three Redis primary nodes.
+# - Three Redis replica nodes.
+# - All 16,384 hash slots assigned.
+# - Six connected cluster nodes.
+# - Redis Cluster state: ok.
+#
+# SAFETY:
+#
+# - Wait for all six Redis nodes to become reachable.
+# - Initialize only when every node is completely fresh.
+# - Recognize an already initialized, healthy cluster.
+# - Reject unexpected or partially initialized states.
+# - Never reset or delete existing cluster metadata.
+#
+# AUTHENTICATION:
+#
+# redis-cli reads its password from REDISCLI_AUTH.
+#
+# The password comes from a Kubernetes Secret and
+# must never be stored in Git or printed in logs.
+#
+# COMPATIBILITY:
+#
+# Use POSIX-compatible shell commands and awk syntax
+# supported by the Redis Alpine container image.
+#
+# This Job is a one-time Kubernetes resource.
+# Recreating a completed Job is unnecessary unless
+# explicitly revalidating or reprovisioning the cluster.
+
+
+apiVersion: batch/v1
+kind: Job
+
+metadata:
+  name: redis-cluster-init
+  namespace: ledgerbase
+
+  labels:
+    app.kubernetes.io/name: redis-cluster
+    app.kubernetes.io/component: bootstrap
+
+spec:
+
+  # Allow one retry if initialization fails.
+  backoffLimit: 1
+
+  template:
+
+    metadata:
+      labels:
+        app.kubernetes.io/name: redis-cluster
+        app.kubernetes.io/component: bootstrap
+
+    spec:
+
+      restartPolicy: Never
+
+      # The Job does not need Kubernetes API credentials.
+      automountServiceAccountToken: false
+
+      # Run the bootstrap container without root privileges.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+
+      containers:
+
+        - name: redis-cluster-init
+
+          # ==================================================
+          # REDIS CLIENT IMAGE
+          # ==================================================
+
+          image: redis:7.4-alpine
+          imagePullPolicy: IfNotPresent
+
+          # ==================================================
+          # REDIS AUTHENTICATION
+          # ==================================================
+
+          env:
+
+            # redis-cli automatically reads this variable
+            # when connecting to password-protected nodes.
+            - name: REDISCLI_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: ledgerbase-redis-auth
+                  key: password
+
+          # ==================================================
+          # CLUSTER BOOTSTRAP SCRIPT
+          # ==================================================
+
+          command:
+            - /bin/sh
+            - -ec
+
+          args:
+            - |
+              set -eu
+
+              # ==================================================
+              # REDIS NODE DISCOVERY
+              # ==================================================
+              #
+              # The headless Kubernetes Service provides
+              # stable DNS names for individual Redis Pods.
+              #
+              # Example:
+              #
+              # redis-cluster-0.redis-cluster-headless.ledgerbase.svc.cluster.local
+              #
+              # Each Redis node listens on port 6379.
+
+              BASE_DOMAIN="redis-cluster-headless.ledgerbase.svc.cluster.local"
+
+              SEED="redis-cluster-0.${BASE_DOMAIN}"
+
+              NODES=""
+
+              # ==================================================
+              # WAIT FOR ALL SIX REDIS NODES
+              # ==================================================
+              #
+              # Do not initialize the cluster until all six
+              # Redis servers accept authenticated requests.
+              #
+              # Allow up to 60 attempts per node,
+              # separated by two-second intervals.
+
+              for index in 0 1 2 3 4 5; do
+
+                node="redis-cluster-${index}.${BASE_DOMAIN}"
+
+                NODES="${NODES} ${node}:6379"
+
+                echo "Waiting for ${node}"
+
+                attempt=0
+
+                until redis-cli \
+                  -h "$node" \
+                  -p 6379 \
+                  ping 2>/dev/null | grep -qx PONG; do
+
+                  attempt=$((attempt + 1))
+
+                  if [ "$attempt" -ge 60 ]; then
+
+                    echo "Redis node did not become ready: ${node}" >&2
+
+                    exit 1
+                  fi
+
+                  sleep 2
+                done
+
+              done
+
+              echo "All six Redis nodes are reachable."
+
+              # ==================================================
+              # READ REDIS CLUSTER STATUS FIELDS
+              # ==================================================
+              #
+              # Retrieve one field from Redis CLUSTER INFO.
+              #
+              # Examples:
+              #
+              # cluster_state
+              # cluster_slots_assigned
+              # cluster_known_nodes
+              # cluster_size
+              #
+              # Remove carriage returns from Redis output.
+              #
+              # Keep the awk implementation compatible
+              # with Alpine Linux.
+
+              cluster_field() {
+
+                node="$1"
+                field="$2"
+
+                redis-cli \
+                  -h "$node" \
+                  -p 6379 \
+                  --raw \
+                  cluster info |
+                  awk -F: -v key="$field" '
+                    $1 == key {
+                      gsub(/\r/, "", $2)
+                      print $2
+                      exit
+                    }
+                  '
+              }
+
+              # ==================================================
+              # CHECK EXISTING CLUSTER INITIALIZATION
+              # ==================================================
+              #
+              # HEALTHY INITIALIZED NODE:
+              #
+              # cluster_state:ok
+              # cluster_slots_assigned:16384
+              # cluster_known_nodes:6
+              # cluster_size:3
+              #
+              # COMPLETELY FRESH NODE:
+              #
+              # cluster_state:fail
+              # cluster_slots_assigned:0
+              # cluster_known_nodes:1
+              #
+              # Only initialize if all six nodes are fresh.
+              #
+              # If the cluster is already healthy,
+              # skip initialization and verify topology.
+              #
+              # Reject unexpected intermediate states
+              # instead of automatically resetting nodes.
+
+              fresh_count=0
+              initialized_count=0
+
+              for index in 0 1 2 3 4 5; do
+
+                node="redis-cluster-${index}.${BASE_DOMAIN}"
+
+                state="$(cluster_field "$node" cluster_state)"
+
+                slots="$(cluster_field "$node" cluster_slots_assigned)"
+
+                known="$(cluster_field "$node" cluster_known_nodes)"
+
+                size="$(cluster_field "$node" cluster_size)"
+
+                if [ "$state" = "ok" ] &&
+                   [ "$slots" = "16384" ] &&
+                   [ "$known" = "6" ] &&
+                   [ "$size" = "3" ]; then
+
+                  initialized_count=$((initialized_count + 1))
+
+                elif [ "$state" = "fail" ] &&
+                     [ "$slots" = "0" ] &&
+                     [ "$known" = "1" ]; then
+
+                  fresh_count=$((fresh_count + 1))
+
+                else
+
+                  echo "Unexpected Redis state on ${node}" >&2
+
+                  echo "state=${state}, slots=${slots}, known=${known}, size=${size}" >&2
+
+                  echo "Refusing automatic cluster initialization." >&2
+
+                  exit 1
+                fi
+
+              done
+
+              # ==================================================
+              # INITIALIZE A COMPLETELY FRESH CLUSTER
+              # ==================================================
+              #
+              # redis-cli --cluster create:
+              #
+              # - Joins all six Redis nodes.
+              # - Allocates all 16,384 hash slots.
+              # - Creates three primary nodes.
+              # - Assigns one replica per primary.
+              #
+              # --cluster-yes avoids interactive prompts.
+              #
+              # NODES is intentionally expanded into
+              # separate host:port command arguments.
+              #
+              # Do not execute this command when the
+              # Redis Cluster already contains data
+              # or existing cluster topology metadata.
+
+              if [ "$fresh_count" -eq 6 ]; then
+
+                echo "Initializing Redis Cluster..."
+
+                redis-cli \
+                  --cluster create \
+                  $NODES \
+                  --cluster-replicas 1 \
+                  --cluster-yes
+
+              elif [ "$initialized_count" -eq 6 ]; then
+
+                echo "Redis Cluster already initialized."
+
+              else
+
+                echo "Mixed Redis Cluster state detected." >&2
+
+                exit 1
+              fi
+
+              # ==================================================
+              # WAIT FOR CLUSTER CONVERGENCE
+              # ==================================================
+              #
+              # After initialization, every node must
+              # independently agree on:
+              #
+              # - Cluster state: ok.
+              # - 16,384 assigned hash slots.
+              # - Six known Redis nodes.
+              # - Three primary shards.
+              #
+              # Allow up to 90 attempts with two-second
+              # intervals for cluster gossip and replication
+              # metadata to converge.
+
+              echo "Waiting for Redis Cluster convergence..."
+
+              attempt=0
+
+              healthy_count=0
+
+              while [ "$attempt" -lt 90 ]; do
+
+                healthy_count=0
+
+                for index in 0 1 2 3 4 5; do
+
+                  node="redis-cluster-${index}.${BASE_DOMAIN}"
+
+                  state="$(cluster_field "$node" cluster_state)"
+
+                  slots="$(cluster_field "$node" cluster_slots_assigned)"
+
+                  known="$(cluster_field "$node" cluster_known_nodes)"
+
+                  size="$(cluster_field "$node" cluster_size)"
+
+                  if [ "$state" = "ok" ] &&
+                     [ "$slots" = "16384" ] &&
+                     [ "$known" = "6" ] &&
+                     [ "$size" = "3" ]; then
+
+                    healthy_count=$((healthy_count + 1))
+
+                  fi
+
+                done
+
+                if [ "$healthy_count" -eq 6 ]; then
+
+                  break
+                fi
+
+                attempt=$((attempt + 1))
+
+                sleep 2
+
+              done
+
+              if [ "$healthy_count" -ne 6 ]; then
+
+                echo "Redis Cluster did not converge." >&2
+
+                exit 1
+              fi
+
+              echo "All six Redis nodes report a healthy cluster."
+
+              # ==================================================
+              # VERIFY PRIMARY AND REPLICA COUNTS
+              # ==================================================
+              #
+              # This section fixes the previous Alpine
+              # awk compatibility error.
+              #
+              # CLUSTER NODES returns one row per node.
+              #
+              # Redis node flags may contain values such as:
+              #
+              # - master
+              # - myself,master
+              # - slave
+              #
+              # Verify exactly:
+              #
+              # - Six connected nodes.
+              # - Three primaries.
+              # - Three replicas.
+              #
+              # Use complete comma-separated flag matches
+              # instead of substring matching.
+              #
+              # Keep the final conditional expression
+              # on a single line for Alpine awk compatibility.
+
+              redis-cli \
+                -h "$SEED" \
+                -p 6379 \
+                cluster nodes |
+                awk '
+                  NF {
+                    count++
+
+                    if ($8 != "connected") {
+                      disconnected++
+                    }
+
+                    if ($3 ~ /(^|,)master(,|$)/) {
+                      primaries++
+                    }
+
+                    if ($3 ~ /(^|,)slave(,|$)/) {
+                      replicas++
+                    }
+                  }
+
+                  END {
+                    printf "Redis topology: %d nodes, %d primaries, %d replicas\n", count, primaries, replicas
+
+                    if (count != 6 || primaries != 3 || replicas != 3 || disconnected != 0) {
+                      exit 1
+                    }
+                  }
+                '
+
+              # ==================================================
+              # FINAL CLUSTER STATUS
+              # ==================================================
+              #
+              # Print the authoritative Redis Cluster
+              # status after all checks pass.
+              #
+              # Expected:
+              #
+              # cluster_state:ok
+              # cluster_slots_assigned:16384
+              # cluster_slots_ok:16384
+              # cluster_known_nodes:6
+              # cluster_size:3
+
+              redis-cli \
+                -h "$SEED" \
+                -p 6379 \
+                cluster info
+
+              echo "Redis Cluster initialized and verified successfully."
+
+          # ==================================================
+          # RESOURCE ALLOCATION
+          # ==================================================
+          #
+          # Small resource allocation for the one-time
+          # Redis Cluster initialization process.
+
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+
+            limits:
+              cpu: 250m
+              memory: 256Mi
