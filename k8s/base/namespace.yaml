@@ -1,0 +1,48 @@
+# ============================================================
+# LEDGERBASE — KUBERNETES NAMESPACE
+# ============================================================
+#
+# PURPOSE:
+#
+# Isolate LedgerBase application resources from
+# Kubernetes system components and other projects.
+#
+# The namespace will contain:
+#
+# - Accounting Core
+# - Spring Cloud Gateway
+# - Reporting Service
+# - React frontend
+# - PostgreSQL primary and replica
+# - Redis Cluster
+# - Kafka
+#
+# Kubernetes system components remain in their
+# existing namespaces.
+#
+# This file contains no credentials or database data.
+
+
+# ============================================================
+# LEDGERBASE APPLICATION NAMESPACE
+# ============================================================
+
+apiVersion: v1
+
+kind: Namespace
+
+metadata:
+
+  name: ledgerbase
+
+  # ----------------------------------------------------------
+  # RESOURCE ORGANIZATION
+  # ----------------------------------------------------------
+  #
+  # Labels help identify LedgerBase resources when
+  # inspecting or managing the local Kubernetes cluster.
+
+  labels:
+    app.kubernetes.io/name: ledgerbase
+    app.kubernetes.io/part-of: ledgerbase
+    ledgerbase.io/environment: local
