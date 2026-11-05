@@ -36,6 +36,7 @@ import FiscalYearsPage from './pages/FiscalYearsPage'
 import TrialBalancePage from './pages/TrialBalancePage'
 import IncomeStatementPage from './pages/IncomeStatementPage'
 import BalanceSheetPage from './pages/BalanceSheetPage'
+import FirstBusinessOnboarding from './pages/FirstBusinessOnboarding'
 
 // ============================================================
 // LEDGERBASE — MAIN APPLICATION
@@ -617,6 +618,124 @@ function App() {
       // Local storage is optional.
     }
   }
+
+
+  // ==========================================================
+  // HANDLE FIRST BUSINESS CREATION
+  // ==========================================================
+
+  /**
+   * Activate a newly created business after onboarding.
+   *
+   * The FirstBusinessOnboarding component has already
+   * submitted POST /api/v1/businesses successfully.
+   *
+   * RESPONSIBILITIES:
+   *
+   * - Add the created business to the local directory.
+   * - Select the new business.
+   * - Clear any previously verified membership role.
+   * - Reset navigation to the Overview page.
+   * - Remember the selected business as a UI preference.
+   *
+   * SECURITY:
+   *
+   * This handler never grants OWNER permissions.
+   *
+   * The existing business-role effect independently
+   * verifies the user's membership through:
+   *
+   * GET /api/v1/businesses/{businessId}/my-role
+   *
+   * Until that verification succeeds, accounting
+   * write operations remain unavailable.
+   */
+  function handleBusinessCreated(
+    createdBusiness: Business,
+  ): void {
+
+    // ----------------------------------------------------------
+    // UPDATE AVAILABLE BUSINESSES
+    // ----------------------------------------------------------
+
+    /**
+     * Add the newly created business without requiring
+     * a full browser reload.
+     *
+     * Avoid duplicate entries if the business is
+     * already present in the current state.
+     */
+    setBusinesses((previousBusinesses) => {
+
+      const alreadyExists = previousBusinesses.some(
+        (business) => business.id === createdBusiness.id,
+      )
+
+      if (alreadyExists) {
+        return previousBusinesses
+      }
+
+      return [
+        ...previousBusinesses,
+        createdBusiness,
+      ]
+    })
+
+
+    // ----------------------------------------------------------
+    // INVALIDATE PREVIOUS BUSINESS PERMISSIONS
+    // ----------------------------------------------------------
+
+    /**
+     * Do not carry permissions from a previously
+     * selected business into the new workspace.
+     *
+     * The membership effect will retrieve a fresh
+     * role for the new business.
+     */
+    setBusinessRoleLookup(null)
+
+
+    // ----------------------------------------------------------
+    // ACTIVATE THE CREATED BUSINESS
+    // ----------------------------------------------------------
+
+    setSelectedBusinessId(createdBusiness.id)
+
+
+    // ----------------------------------------------------------
+    // RESET NAVIGATION TO OVERVIEW
+    // ----------------------------------------------------------
+
+    setActivePage('overview')
+
+
+    // ----------------------------------------------------------
+    // REMEMBER SELECTED BUSINESS
+    // ----------------------------------------------------------
+
+    /**
+     * Save only the business ID.
+     *
+     * This is a UI preference, not an authorization
+     * credential. The backend determines which
+     * businesses the user may access.
+     */
+    try {
+
+      window.localStorage.setItem(
+        SELECTED_BUSINESS_STORAGE_KEY,
+        String(createdBusiness.id),
+      )
+
+    } catch {
+
+      // Browser storage is optional.
+      // Business creation and selection still work.
+
+    }
+  }
+
   
   // ==========================================================
   // CURRENT ACCOUNTING BUSINESS
@@ -1300,25 +1419,35 @@ function App() {
 
         )}
 
+        
         {/* ================================================== */}
-        {/* NO BUSINESSES AVAILABLE */}
+        {/* FIRST BUSINESS ONBOARDING */}
         {/* ================================================== */}
+
+        {/*
+          Display business onboarding only when:
+
+          - The business directory has finished loading.
+          - No business-loading error occurred.
+          - The authenticated user has no selected business.
+
+          The onboarding component calls the existing
+          authenticated business creation API.
+
+          After successful creation, App.tsx selects
+          the business and verifies its OWNER membership.
+        */}
 
         {!businessesLoading &&
           !businessesError &&
           businessId === null && (
 
-          <div>
-
-            <h1>No businesses available</h1>
-
-            <p className="page-description">
-              Create a business to begin using LedgerBase.
-            </p>
-
-          </div>
+          <FirstBusinessOnboarding
+            onBusinessCreated={handleBusinessCreated}
+          />
 
         )}
+
 
         {/* ================================================== */}
         {/* VERIFYING BUSINESS ACCESS */}

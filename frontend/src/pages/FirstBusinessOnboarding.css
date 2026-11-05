@@ -1,0 +1,245 @@
+/* ============================================================
+   LEDGERBASE — FIRST BUSINESS ONBOARDING
+   ============================================================ */
+
+/**
+ * Present the initial business setup inside the existing
+ * authenticated LedgerBase workspace.
+ *
+ * Keep the layout consistent with the professional
+ * accounting dashboard and authentication pages.
+ */
+
+.lb-onboarding-page {
+  width: 100%;
+  max-width: 680px;
+  margin: 48px auto;
+}
+
+
+/* ============================================================
+   INTRODUCTION
+   ============================================================ */
+
+.lb-onboarding-intro {
+  margin-bottom: 30px;
+}
+
+.lb-onboarding-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  margin-bottom: 22px;
+  border-radius: 14px;
+  background: #e6f4f1;
+  color: #0f766e;
+}
+
+.lb-onboarding-eyebrow {
+  margin: 0 0 10px;
+  color: #0f766e;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.lb-onboarding-intro h1 {
+  margin: 0 0 12px;
+  color: #172b43;
+  font-size: 30px;
+  line-height: 1.2;
+  letter-spacing: -0.025em;
+}
+
+.lb-onboarding-description {
+  max-width: 520px;
+  margin: 0;
+  color: #64748b;
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+
+/* ============================================================
+   BUSINESS DETAILS CARD
+   ============================================================ */
+
+.lb-onboarding-card {
+  padding: 30px;
+  border: 1px solid #dce4ed;
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 8px 32px rgb(16 35 54 / 4%);
+}
+
+.lb-onboarding-card-heading {
+  margin-bottom: 25px;
+}
+
+.lb-onboarding-card-heading h2 {
+  margin: 0 0 7px;
+  color: #172b43;
+  font-size: 19px;
+  font-weight: 700;
+}
+
+.lb-onboarding-card-heading p {
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+
+/* ============================================================
+   FORM AND FIELDS
+   ============================================================ */
+
+.lb-onboarding-form {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.lb-onboarding-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lb-onboarding-field label {
+  color: #263b53;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.lb-onboarding-field input,
+.lb-onboarding-field select {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid #d5dfe9;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #172b43;
+  font: inherit;
+  font-size: 14px;
+  box-sizing: border-box;
+}
+
+.lb-onboarding-field input:focus,
+.lb-onboarding-field select:focus {
+  outline: 2px solid #0f766e;
+  outline-offset: 1px;
+}
+
+.lb-onboarding-field input:disabled,
+.lb-onboarding-field select:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.lb-onboarding-field-hint {
+  margin: 0;
+  color: #7b8da1;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+
+/* ============================================================
+   ERROR MESSAGE
+   ============================================================ */
+
+.lb-onboarding-error {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fff4f4;
+  color: #b42318;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+
+/* ============================================================
+   PRIMARY ACTION
+   ============================================================ */
+
+.lb-onboarding-submit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 12px 18px;
+  border: 0;
+  border-radius: 8px;
+  background: #0f8279;
+  color: #ffffff;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.lb-onboarding-submit:hover:not(:disabled) {
+  background: #0c7169;
+}
+
+.lb-onboarding-submit:focus-visible {
+  outline: 3px solid #73c7b9;
+  outline-offset: 3px;
+}
+
+.lb-onboarding-submit:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+
+/* ============================================================
+   OWNERSHIP INFORMATION
+   ============================================================ */
+
+.lb-onboarding-security-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  max-width: 560px;
+  margin-top: 22px;
+  color: #64748b;
+}
+
+.lb-onboarding-security-note svg {
+  flex-shrink: 0;
+  color: #0f8279;
+}
+
+.lb-onboarding-security-note p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+
+/* ============================================================
+   RESPONSIVE LAYOUT
+   ============================================================ */
+
+@media (max-width: 640px) {
+  .lb-onboarding-page {
+    margin: 20px auto;
+  }
+
+  .lb-onboarding-card {
+    padding: 22px 18px;
+  }
+
+  .lb-onboarding-intro h1 {
+    font-size: 25px;
+  }
+}
