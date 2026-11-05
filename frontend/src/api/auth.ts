@@ -25,6 +25,55 @@ import { getJson, postJson } from './client'
 
 
 // ============================================================
+// USER REGISTRATION TYPES
+// ============================================================
+
+/**
+ * Information submitted when creating a LedgerBase
+ * user account.
+ *
+ * VALIDATION:
+ *
+ * - Full name: 2–150 characters after trimming.
+ * - Email: valid address, maximum 255 characters.
+ * - Password: minimum 12 characters.
+ *
+ * The backend also enforces BCrypt's 72-byte
+ * password limit.
+ *
+ * Confirm password is deliberately excluded.
+ * It is validated by the React registration form
+ * and must not be sent to the backend.
+ */
+export interface RegisterRequest {
+  fullName: string
+  email: string
+  password: string
+}
+
+/**
+ * Safe identity returned after successful registration.
+ *
+ * HTTP STATUS:
+ *
+ * 201 Created
+ *
+ * SECURITY:
+ *
+ * - No plaintext password.
+ * - No password hash.
+ * - No JWT access token.
+ * - No refresh token.
+ * - No business membership or permissions.
+ */
+export interface RegisterResponse {
+  userId: number
+  email: string
+  fullName: string
+}
+
+
+// ============================================================
 // AUTHENTICATION TYPES
 // ============================================================
 
@@ -56,6 +105,47 @@ export interface RefreshResponse {
   accessToken: string
   tokenType: string
   expiresInSeconds: number
+}
+
+
+// ============================================================
+// REGISTER NEW USER
+// ============================================================
+
+/**
+ * Create a new LedgerBase account.
+ *
+ * ENDPOINT:
+ *
+ * POST /api/v1/auth/register
+ *
+ * WORKFLOW:
+ *
+ * - Send validated account information.
+ * - Reuse the shared JSON HTTP client.
+ * - Receive the newly generated user identity.
+ *
+ * SECURITY:
+ *
+ * - Registration does not require a Bearer JWT.
+ * - Never log the password or request body.
+ * - Never save credentials in browser storage.
+ * - Do not automatically authenticate the user.
+ *
+ * The registration screen will direct the user
+ * to the existing sign-in flow after success.
+ *
+ * @param request registration information
+ * @returns newly created user identity
+ */
+export async function registerAccount(
+  request: RegisterRequest,
+): Promise<RegisterResponse> {
+
+  return postJson<RegisterResponse, RegisterRequest>(
+    '/api/v1/auth/register',
+    request,
+  )
 }
 
 

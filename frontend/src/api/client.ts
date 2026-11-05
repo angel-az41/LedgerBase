@@ -146,35 +146,38 @@ export function clearApiAccessTokenIfCurrent(
 }
 
 
+
 // ============================================================
-// AUTHENTICATION ENDPOINT EXCLUSIONS
+// AUTHENTICATION ENDPOINTS WITHOUT AUTOMATIC BEARER JWT
 // ============================================================
 
 /**
-* These authentication routes must not receive
-* an automatically attached access JWT.
-*
-* LOGIN:
-*
-* Uses email and password credentials.
-*
-* REFRESH:
-*
-* Uses the HttpOnly refresh cookie to obtain
-* a replacement access JWT.
-*
-* LOGOUT:
-*
-* Uses the refresh cookie to revoke the
-* PostgreSQL authentication session.
-*
-* The /auth/me endpoint is deliberately not
-* excluded because it requires a Bearer JWT.
-*
-* Its API helper can also supply a specific
-* Authorization header explicitly.
-*/
-const COOKIE_AUTH_ENDPOINTS = new Set<string>([
+ * Authentication operations that must not receive
+ * the globally stored access JWT automatically.
+ *
+ * REGISTER:
+ *
+ * - Creates a user without an existing session.
+ * - Requires no Bearer token.
+ *
+ * LOGIN:
+ *
+ * - Authenticates using email and password.
+ *
+ * REFRESH:
+ *
+ * - Uses an HttpOnly refresh cookie.
+ *
+ * LOGOUT:
+ *
+ * - Uses the refresh cookie to revoke the session.
+ *
+ * The /api/v1/auth/me endpoint is deliberately
+ * excluded from this set because it requires
+ * an authenticated Bearer JWT.
+ */
+const NO_BEARER_AUTH_ENDPOINTS = new Set<string>([
+  '/api/v1/auth/register',
   '/api/v1/auth/login',
   '/api/v1/auth/refresh',
   '/api/v1/auth/logout',
@@ -269,23 +272,34 @@ function buildRequestHeaders(
   const endpointPath =
     path.split('?')[0]
 
-  const isCookieAuthEndpoint =
-    COOKIE_AUTH_ENDPOINTS.has(endpointPath)
+  // Determine whether automatic Bearer authentication
+  // should be excluded for this authentication endpoint.
+  const isNoBearerAuthEndpoint =
+    NO_BEARER_AUTH_ENDPOINTS.has(endpointPath)
 
 
   // ----------------------------------------------------------
   // ATTACH VERIFIED ACCESS TOKEN
   // ----------------------------------------------------------
 
+  /**
+   * Attach the active JWT only to eligible API requests.
+   *
+   * Registration, login, refresh, and logout must not
+   * automatically inherit the existing access token.
+   *
+   * Explicit Authorization headers take precedence.
+   */
   if (
     accessToken !== null &&
     isBackendApiPath &&
-    !isCookieAuthEndpoint &&
+    !isNoBearerAuthEndpoint &&
     !hasExplicitAuthorization
   ) {
 
-    headers.Authorization =
-      `Bearer ${accessToken}`
+    // Attach the current authenticated user's JWT.
+    headers.Authorization = `Bearer ${accessToken}`
+
   }
 
 
@@ -293,8 +307,13 @@ function buildRequestHeaders(
   // RETURN COMPLETE HEADERS
   // ----------------------------------------------------------
 
+  /**
+   * Return the final HTTP headers after applying
+   * LedgerBase's authentication rules.
+   */
   return headers
-}
+
+  }
 
 
 // ============================================================

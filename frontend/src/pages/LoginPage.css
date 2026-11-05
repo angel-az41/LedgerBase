@@ -463,3 +463,88 @@
     font-size: 26px;
   }
 }
+
+
+/* ============================================================
+   REGISTRATION SUCCESS MESSAGE
+   ============================================================ */
+
+/**
+ * Confirmation displayed after a new LedgerBase user
+ * account has been successfully created.
+ *
+ * The message appears above the existing login form.
+ */
+
+.lb-login-registration-success {
+  margin-bottom: 22px;
+  padding: 14px 16px;
+  border: 1px solid #99d5c9;
+  border-radius: 10px;
+  background: #f0faf7;
+  color: #145c52;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.lb-login-registration-success strong {
+  display: block;
+  margin-bottom: 4px;
+  font-weight: 650;
+}
+
+.lb-login-registration-success p {
+  margin: 0;
+}
+
+
+/* ============================================================
+   LOGIN TO REGISTRATION NAVIGATION
+   ============================================================ */
+
+/**
+ * Secondary action shown below the login button.
+ *
+ * Reuses the same restrained teal interaction
+ * language as the LedgerBase registration screen.
+ */
+
+.lb-login-register-switch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+
+  margin-top: 22px;
+
+  font-size: 13px;
+  color: #64748b;
+}
+
+.lb-login-register-switch button {
+  border: 0;
+  background: transparent;
+  padding: 2px 4px;
+
+  color: #0f766e;
+  font: inherit;
+  font-weight: 600;
+
+  cursor: pointer;
+}
+
+.lb-login-register-switch button:hover {
+  text-decoration: underline;
+}
+
+.lb-login-register-switch button:focus-visible {
+  outline: 2px solid #0f766e;
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.lb-login-register-switch button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

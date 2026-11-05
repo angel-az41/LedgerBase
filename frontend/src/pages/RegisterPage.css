@@ -1,0 +1,141 @@
+/* ============================================================
+   LEDGERBASE — REGISTRATION PAGE LAYOUT
+   ============================================================ */
+
+/**
+ * Reuse the existing centered authentication layout.
+ *
+ * The registration card naturally needs more height
+ * than login because it contains additional fields.
+ *
+ * However, the card itself should not be forced
+ * to fill the entire viewport.
+ */
+.lb-register-page {
+  min-height: 100vh;
+  height: auto;
+  padding-top: 24px;
+  padding-bottom: 24px;
+}
+
+
+/* ============================================================
+   REGISTRATION CARD DIMENSIONS
+   ============================================================ */
+
+/**
+ * Allow the card to fit its actual content.
+ *
+ * Removing the previous 100vh minimum height
+ * restores a compact, centered card similar
+ * to the LedgerBase login page.
+ */
+.lb-register-page .lb-login-layout {
+  min-height: 0;
+  height: auto;
+}
+
+
+/* ============================================================
+   REGISTRATION FORM SPACING
+   ============================================================ */
+
+/**
+ * Slightly reduce vertical padding because
+ * registration contains more fields than login.
+ *
+ * Preserve the existing input styling, panel
+ * width, typography, and branding.
+ */
+.lb-register-form-content {
+  padding-top: 28px;
+  padding-bottom: 28px;
+}
+
+
+/* ============================================================
+   REGISTRATION FORM SPACING
+   ============================================================ */
+
+/**
+ * Give the longer registration form enough
+ * vertical breathing room without changing
+ * the login page's original layout.
+ */
+
+.lb-register-form-content {
+  padding-top: 32px;
+  padding-bottom: 32px;
+}
+
+
+/* ============================================================
+   PASSWORD HELPER TEXT
+   ============================================================ */
+
+.lb-register-field-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #64748b;
+}
+
+
+/* ============================================================
+   SIGN-IN NAVIGATION
+   ============================================================ */
+
+/**
+ * Display a secondary sign-in action below
+ * the primary Create Account button.
+ */
+
+.lb-register-switch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 22px;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.lb-register-switch button {
+  border: 0;
+  background: transparent;
+  color: #0f766e;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.lb-register-switch button:hover {
+  text-decoration: underline;
+}
+
+.lb-register-switch button:focus-visible {
+  outline: 2px solid #0f766e;
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.lb-register-switch button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+
+/* ============================================================
+   RESPONSIVE ADJUSTMENTS
+   ============================================================ */
+
+@media (max-width: 640px) {
+
+  .lb-register-form-content {
+    padding-top: 24px;
+    padding-bottom: 32px;
+  }
+
+}

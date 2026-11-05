@@ -37,7 +37,36 @@ import './LoginPage.css'
  * Backend authorization is responsible for protecting
  * financial APIs independently of this UI.
  */
-function LoginPage() {
+
+// ============================================================
+// LOGIN PAGE PROPS
+// ============================================================
+
+interface LoginPageProps {
+
+  /**
+   * Switch to the public user registration screen.
+   */
+  onCreateAccount: () => void
+
+  /**
+   * Email returned by a successful registration.
+   *
+   * Only used to prefill the login form and show
+   * a confirmation message.
+   */
+  registeredEmail: string | null
+}
+
+
+// ============================================================
+// LOGIN PAGE COMPONENT
+// ============================================================
+
+function LoginPage({
+  onCreateAccount,
+  registeredEmail,
+}: LoginPageProps) {
 
   // ==========================================================
   // AUTHENTICATION ACTIONS
@@ -50,7 +79,13 @@ function LoginPage() {
   // FORM STATE
   // ==========================================================
 
-  const [email, setEmail] = useState('')
+  /**
+   * Prefill the registered email after account creation.
+   *
+   * Passwords are never transferred from registration.
+   */
+  const [email, setEmail] =
+    useState(registeredEmail ?? '')
 
   const [password, setPassword] = useState('')
 
@@ -253,6 +288,29 @@ function LoginPage() {
 
 
             {/* ================================================ */}
+            {/* REGISTRATION SUCCESS MESSAGE */}
+            {/* ================================================ */}
+
+            {registeredEmail && (
+
+              <div
+                className="lb-login-registration-success"
+                role="status"
+              >
+
+                <strong>Account created successfully.</strong>
+
+                <p>
+                  Your LedgerBase account is ready.
+                  Sign in with your new credentials.
+                </p>
+
+              </div>
+
+            )}
+
+
+            {/* ================================================ */}
             {/* AUTHENTICATION FORM */}
             {/* ================================================ */}
 
@@ -392,6 +450,27 @@ function LoginPage() {
               </button>
 
             </form>
+
+
+            {/* ================================================ */}
+            {/* CREATE ACCOUNT NAVIGATION */}
+            {/* ================================================ */}
+
+            <div className="lb-login-register-switch">
+
+              <span>
+                New to LedgerBase?
+              </span>
+
+              <button
+                type="button"
+                disabled={isSigningIn}
+                onClick={onCreateAccount}
+              >
+                Create an account
+              </button>
+
+            </div>
 
 
             {/* ================================================ */}
