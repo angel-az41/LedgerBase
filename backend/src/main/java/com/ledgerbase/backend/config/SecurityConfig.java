@@ -153,16 +153,27 @@ public class SecurityConfig {
                 // PUBLIC AUTHENTICATION ENDPOINTS
                 // ---------------------------------------------
 
+                // ---------------------------------------------
+                // PUBLIC AUTHENTICATION ENDPOINTS
+                // ---------------------------------------------
+
                 /**
-                 * These endpoints must be reachable without
-                 * an existing access JWT.
+                 * Allow unauthenticated access only to the
+                 * explicitly listed authentication endpoints.
                  *
-                 * Their own controllers and services perform
-                 * the relevant authentication and cookie
-                 * security checks.
+                 * REGISTER:
+                 *
+                 * - Creates a new user without an existing JWT.
+                 * - Enforces registration validation and trusted
+                 *   request-origin checks inside the controller.
+                 * - Does not grant business membership.
+                 *
+                 * Existing login, refresh, and logout behavior
+                 * remains unchanged.
                  */
                 .requestMatchers(
                     HttpMethod.POST,
+                    "/api/v1/auth/register",
                     "/api/v1/auth/login",
                     "/api/v1/auth/refresh",
                     "/api/v1/auth/logout"

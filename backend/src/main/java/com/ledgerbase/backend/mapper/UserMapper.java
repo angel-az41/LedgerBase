@@ -2,7 +2,9 @@ package com.ledgerbase.backend.mapper;
 
 import com.ledgerbase.backend.model.User;
 
+import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Options;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Result;
 import org.apache.ibatis.annotations.ResultMap;
@@ -65,7 +67,7 @@ public interface UserMapper {
             full_name,
             created_at
         FROM users
-        WHERE email = #{email}
+        WHERE LOWER(BTRIM(email)) = #{email}
         LIMIT 1
         """)
     @Results(
@@ -128,4 +130,53 @@ public interface UserMapper {
     User findById(
         @Param("userId") Long userId
     );
+
+    // ========================================================
+    // INSERT NEW USER
+    // ========================================================
+
+    /**
+     * Insert a newly registered user into PostgreSQL.
+     *
+     * DATABASE TABLE:
+     *
+     * users
+     *
+     * SECURITY:
+     *
+     * - The service must normalize email addresses
+     *   before calling this method.
+     * - passwordHash must already contain a BCrypt hash.
+     * - Never store plaintext passwords.
+     * - The database enforces unique email addresses.
+     *
+     * GENERATED ID:
+     *
+     * PostgreSQL generates the user's primary key.
+     *
+     * MyBatis retrieves the generated ID and assigns
+     * it to the User object's id property.
+     *
+     * @param user validated user containing the
+     *             normalized email, full name, and
+     *             encoded password
+     */
+    @Insert("""
+        INSERT INTO users (
+            email,
+            password_hash,
+            full_name
+        )
+        VALUES (
+            #{email},
+            #{passwordHash},
+            #{fullName}
+        )
+        """)
+    @Options(
+        useGeneratedKeys = true,
+        keyProperty = "id",
+        keyColumn = "id"
+    )
+    void insertUser(User user);
 }

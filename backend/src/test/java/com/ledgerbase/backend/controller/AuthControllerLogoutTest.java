@@ -4,6 +4,7 @@ import com.ledgerbase.backend.service.AuthenticationService;
 import com.ledgerbase.backend.service.AuthSessionService;
 import com.ledgerbase.backend.service.AuthRequestOriginValidator;
 import com.ledgerbase.backend.service.JwtTokenService;
+import com.ledgerbase.backend.service.RegistrationService;
 import com.ledgerbase.backend.service.RefreshCookieService;
 
 import jakarta.servlet.http.Cookie;
@@ -126,6 +127,7 @@ class AuthControllerLogoutTest {
         AuthController controller =
             new AuthController(
                 mock(AuthenticationService.class),
+                mock(RegistrationService.class),
                 jwtTokenService,
                 authSessionService,
                 refreshCookieService,

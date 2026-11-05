@@ -7,6 +7,7 @@ import com.ledgerbase.backend.service.AuthenticationService;
 import com.ledgerbase.backend.service.AuthSessionService;
 import com.ledgerbase.backend.service.AuthRequestOriginValidator;
 import com.ledgerbase.backend.service.JwtTokenService;
+import com.ledgerbase.backend.service.RegistrationService;
 import com.ledgerbase.backend.service.RefreshCookieService;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -21,6 +22,8 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.UUID;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -236,6 +239,7 @@ class AuthControllerTest {
         AuthController controller =
             new AuthController(
                 authenticationService,
+                mock(RegistrationService.class),
                 jwtTokenService,
                 authSessionService,
                 refreshCookieService,

@@ -8,6 +8,7 @@ import com.ledgerbase.backend.model.User;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
+import java.util.Locale;
 import java.util.UUID;
 
 // ============================================================
@@ -124,15 +125,15 @@ public class AuthenticationService {
         // LOOK UP USER
         // ====================================================
 
-        // Trim surrounding whitespace from email.
+        // Normalize the submitted email consistently.
         //
-        // Do not change email case here because the
-        // current database uses exact email matching.
+        // Email identity is case-insensitive for LedgerBase.
+        // The same normalization will be used during
+        // registration and login.
         //
-        // We will establish consistent case-insensitive
-        // lookup and uniqueness rules separately.
-
-        String normalizedEmail = email.trim();
+        // Locale.ROOT avoids language-specific casing rules.
+        String normalizedEmail =
+            email.trim().toLowerCase(Locale.ROOT);
 
         User user = userMapper.findByEmail(
             normalizedEmail

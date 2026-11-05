@@ -3,6 +3,8 @@ package com.ledgerbase.backend.controller;
 import com.ledgerbase.backend.dto.AuthenticatedUser;
 import com.ledgerbase.backend.dto.LoginRequest;
 import com.ledgerbase.backend.dto.LoginResponse;
+import com.ledgerbase.backend.dto.RegisterRequest;
+import com.ledgerbase.backend.dto.RegisterResponse;
 import com.ledgerbase.backend.dto.RefreshResponse;
 
 import com.ledgerbase.backend.exception.InvalidCredentialsException;
@@ -11,6 +13,7 @@ import com.ledgerbase.backend.service.AuthenticationService;
 import com.ledgerbase.backend.service.AuthSessionService;
 import com.ledgerbase.backend.service.AuthRequestOriginValidator;
 import com.ledgerbase.backend.service.JwtTokenService;
+import com.ledgerbase.backend.service.RegistrationService;
 import com.ledgerbase.backend.service.RefreshCookieService;
 
 import jakarta.servlet.http.HttpServletResponse;
@@ -103,6 +106,8 @@ public class AuthController {
 
     private final AuthenticationService authenticationService;
 
+    private final RegistrationService registrationService;
+
     private final JwtTokenService jwtTokenService;
 
     private final AuthSessionService authSessionService;
@@ -118,6 +123,7 @@ public class AuthController {
 
     public AuthController(
         AuthenticationService authenticationService,
+        RegistrationService registrationService,
         JwtTokenService jwtTokenService,
         AuthSessionService authSessionService,
         RefreshCookieService refreshCookieService,
@@ -125,10 +131,115 @@ public class AuthController {
     ) {
 
         this.authenticationService = authenticationService;
+        this.registrationService = registrationService;
         this.jwtTokenService = jwtTokenService;
         this.authSessionService = authSessionService;
         this.refreshCookieService = refreshCookieService;
         this.originValidator = originValidator;
+    }
+
+
+    // ========================================================
+    // USER REGISTRATION ENDPOINT
+    // ========================================================
+
+    /**
+     * POST /api/v1/auth/register
+     *
+     * Create a new LedgerBase user account.
+     *
+     * WORKFLOW:
+     *
+     * - Validate the incoming request.
+     * - Validate the browser's request origin.
+     * - Delegate user creation to RegistrationService.
+     * - Return the newly created user's safe identity.
+     *
+     * SUCCESS:
+     *
+     * HTTP 201 Created.
+     *
+     * FAILURE:
+     *
+     * HTTP 400 — Invalid registration information.
+     * HTTP 403 — Missing or untrusted request origin.
+     * HTTP 409 — Duplicate email address.
+     *
+     * SECURITY:
+     *
+     * - Registration does not require an existing JWT.
+     * - Password hashing occurs in RegistrationService.
+     * - Password hashes are never returned.
+     * - No authentication session is created.
+     * - No existing business permissions are granted.
+     *
+     * The user must sign in through the existing
+     * POST /api/v1/auth/login endpoint afterward.
+     */
+    @PostMapping("/register")
+    public ResponseEntity<RegisterResponse> register(
+
+        @Valid @RequestBody
+        RegisterRequest request,
+
+        @RequestHeader(
+            value = HttpHeaders.ORIGIN,
+            required = false
+        )
+        String requestOrigin
+
+    ) {
+
+        // ====================================================
+        // VALIDATE TRUSTED REQUEST ORIGIN
+        // ====================================================
+
+        /**
+         * Reuse the existing authentication origin policy.
+         *
+         * This prevents untrusted browser origins
+         * from submitting registration requests.
+         *
+         * Origin validation is not a substitute for
+         * rate limiting or other abuse protections.
+         */
+        validateTrustedOrigin(requestOrigin);
+
+
+        // ====================================================
+        // CREATE NEW USER
+        // ====================================================
+
+        /**
+         * RegistrationService handles:
+         *
+         * - Email normalization.
+         * - Password byte-length validation.
+         * - BCrypt password hashing.
+         * - PostgreSQL user insertion.
+         * - Database-enforced email uniqueness.
+         */
+        RegisterResponse response =
+            registrationService.register(request);
+
+
+        // ====================================================
+        // RETURN SUCCESSFUL REGISTRATION
+        // ====================================================
+
+        /**
+         * Return HTTP 201 with the new user's identity.
+         *
+         * Authentication credentials are not issued.
+         *
+         * Prevent browsers and intermediaries from
+         * caching registration responses.
+         */
+        return ResponseEntity
+            .status(HttpStatus.CREATED)
+            .cacheControl(CacheControl.noStore())
+            .header("Pragma", "no-cache")
+            .body(response);
     }
 
 
