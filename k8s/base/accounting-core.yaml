@@ -1,0 +1,318 @@
+# ============================================================
+# LEDGERBASE — ACCOUNTING CORE KUBERNETES DEPLOYMENT
+# ============================================================
+#
+# PURPOSE:
+#
+# Deploy the Spring Boot Accounting Core service into
+# the LedgerBase Kubernetes namespace.
+#
+# RESPONSIBILITIES:
+#
+# - User registration and JWT authentication
+# - Business-scoped authorization
+# - Chart of Accounts and journal transactions
+# - Financial accounting operations
+# - PostgreSQL schema migrations through Flyway
+#
+# ARCHITECTURE:
+#
+# Accounting Core -> PostgreSQL Primary
+#
+# Redis and Kafka are not required for this initial
+# deployment. Their Kubernetes integration will be
+# configured separately.
+#
+# SECURITY:
+#
+# - PostgreSQL credentials come from Kubernetes Secrets.
+# - JWT signing credentials come from Kubernetes Secrets.
+# - The application runs as a non-root user.
+# - The service is accessible only inside Kubernetes.
+#
+# No existing Docker Compose configuration is modified.
+
+
+# ============================================================
+# ACCOUNTING CORE DEPLOYMENT
+# ============================================================
+
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: accounting-core
+  namespace: ledgerbase
+
+  labels:
+    app.kubernetes.io/name: accounting-core
+    app.kubernetes.io/part-of: ledgerbase
+
+spec:
+
+  # ==========================================================
+  # APPLICATION INSTANCE COUNT
+  # ==========================================================
+  #
+  # Start with one instance.
+  #
+  # We will evaluate scaling after verifying database
+  # connectivity, Flyway migrations, and application health.
+
+  replicas: 1
+
+  revisionHistoryLimit: 3
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: accounting-core
+
+  template:
+
+    metadata:
+      labels:
+        app.kubernetes.io/name: accounting-core
+        app.kubernetes.io/part-of: ledgerbase
+
+    spec:
+
+      # ======================================================
+      # POD SECURITY
+      # ======================================================
+      #
+      # Accounting Core does not require direct access
+      # to the Kubernetes API.
+      #
+      # Disable the automatic ServiceAccount token mount.
+
+      automountServiceAccountToken: false
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+
+      terminationGracePeriodSeconds: 30
+
+      containers:
+
+        - name: accounting-core
+
+          # ==================================================
+          # APPLICATION IMAGE
+          # ==================================================
+          #
+          # This image was built locally and loaded
+          # into kind using:
+          #
+          # kind load docker-image \
+          #   ledgerbase-accounting-core:local \
+          #   --name ledgerbase-local
+          #
+          # Do not pull a potentially different image
+          # from an external registry.
+
+          image: ledgerbase-accounting-core:local
+          imagePullPolicy: Never
+
+          # ==================================================
+          # APPLICATION PORT
+          # ==================================================
+
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+
+          # ==================================================
+          # SPRING BOOT ENVIRONMENT
+          # ==================================================
+
+          env:
+
+            # ------------------------------------------------
+            # POSTGRESQL PRIMARY CONNECTION
+            # ------------------------------------------------
+            #
+            # Kubernetes DNS resolves "postgres" to
+            # the primary database Service.
+            #
+            # Never use localhost:5434 inside a Pod.
+
+            - name: SPRING_DATASOURCE_URL
+              value: jdbc:postgresql://postgres:5432/ledgerbase
+
+            - name: SPRING_DATASOURCE_USERNAME
+              value: ledgerbase
+
+            # Match the POSTGRES_PASSWORD placeholder
+            # in backend/application.yaml.
+            #
+            # Reuse the existing primary database Secret.
+
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ledgerbase-postgres-auth
+                  key: password
+
+            # ------------------------------------------------
+            # JWT SIGNING KEY
+            # ------------------------------------------------
+            #
+            # The Kubernetes environment uses its own
+            # signing key, separate from Docker Compose.
+            #
+            # Reporting Service will later reference
+            # this same Secret.
+
+            - name: JWT_SECRET_BASE64
+              valueFrom:
+                secretKeyRef:
+                  name: ledgerbase-jwt-auth
+                  key: secret-base64
+
+            # ------------------------------------------------
+            # HTTP SERVER
+            # ------------------------------------------------
+            #
+            # Listen on all container network interfaces
+            # so the Kubernetes Service can reach the API.
+
+            - name: SERVER_ADDRESS
+              value: "0.0.0.0"
+
+            # ------------------------------------------------
+            # SPRING PROFILES
+            # ------------------------------------------------
+            #
+            # No additional profile is activated here.
+            #
+            # In particular, do not activate the Kafka
+            # outbox profile until the Kubernetes Kafka
+            # broker is configured and running.
+
+          # ==================================================
+          # CONTAINER SECURITY
+          # ==================================================
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+
+          # ==================================================
+          # RESOURCE REQUESTS AND LIMITS
+          # ==================================================
+          #
+          # Initial allocations for local Kubernetes
+          # development.
+          #
+          # Adjust based on measured JVM memory and CPU use.
+
+          resources:
+            requests:
+              cpu: 150m
+              memory: 384Mi
+
+            limits:
+              cpu: "1"
+              memory: 1Gi
+
+          # ==================================================
+          # STARTUP PROBE
+          # ==================================================
+          #
+          # Allow Java startup and Flyway migrations
+          # to complete before activating the other probes.
+          #
+          # TCP checks whether the application has opened
+          # its HTTP listening port.
+
+          startupProbe:
+            tcpSocket:
+              port: http
+
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 60
+
+          # ==================================================
+          # READINESS PROBE
+          # ==================================================
+          #
+          # Actuator reports whether Accounting Core
+          # is healthy enough to receive traffic.
+          #
+          # If Spring Security blocks this endpoint,
+          # inspect the response before changing probes.
+
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: http
+
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          # ==================================================
+          # LIVENESS PROBE
+          # ==================================================
+          #
+          # Confirm the application continues listening.
+          #
+          # This check avoids restarting Accounting Core
+          # solely because an external database is
+          # temporarily unavailable.
+
+          livenessProbe:
+            tcpSocket:
+              port: http
+
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+
+---
+
+# ============================================================
+# ACCOUNTING CORE INTERNAL SERVICE
+# ============================================================
+#
+# PURPOSE:
+#
+# Provide a stable internal DNS name for Accounting Core.
+#
+# Other Kubernetes services will connect through:
+#
+# http://accounting-core:8080
+#
+# Spring Cloud Gateway and Reporting Service will use
+# this address after they are deployed.
+#
+# ClusterIP prevents direct external exposure.
+
+apiVersion: v1
+kind: Service
+
+metadata:
+  name: accounting-core
+  namespace: ledgerbase
+
+  labels:
+    app.kubernetes.io/name: accounting-core
+    app.kubernetes.io/part-of: ledgerbase
+
+spec:
+  type: ClusterIP
+
+  selector:
+    app.kubernetes.io/name: accounting-core
+
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
