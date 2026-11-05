@@ -1,0 +1,179 @@
+# ============================================================
+# LEDGERBASE — POSTGRESQL REPLICATION ROLE BOOTSTRAP
+# ============================================================
+#
+# PURPOSE:
+#
+# Create the dedicated PostgreSQL role used by
+# the physical streaming replica.
+#
+# SECURITY:
+#
+# - Read credentials from Kubernetes Secrets.
+# - Never store actual passwords in this manifest.
+# - Grant LOGIN and REPLICATION privileges only.
+# - Do not grant SUPERUSER privileges.
+#
+# This Job does not modify accounting tables or
+# existing PostgreSQL data.
+#
+# Run after the PostgreSQL primary is ready.
+
+
+apiVersion: batch/v1
+kind: Job
+
+metadata:
+  name: postgres-replication-role
+  namespace: ledgerbase
+
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/component: replication-bootstrap
+
+spec:
+
+  # Retry a failed bootstrap at most once.
+  backoffLimit: 1
+
+  template:
+
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres
+        app.kubernetes.io/component: replication-bootstrap
+
+    spec:
+
+      restartPolicy: Never
+
+      containers:
+
+        - name: replication-role-bootstrap
+
+          # Use the matching PostgreSQL client version.
+          image: postgres:17
+
+          # ==================================================
+          # PRIMARY DATABASE CONNECTION
+          # ==================================================
+
+          env:
+
+            - name: PGHOST
+              value: postgres
+
+            - name: PGPORT
+              value: "5432"
+
+            - name: PGDATABASE
+              value: ledgerbase
+
+            - name: PGUSER
+              value: ledgerbase
+
+            # Administrative connection password.
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ledgerbase-postgres-auth
+                  key: password
+
+          # ==================================================
+          # REPLICATION PASSWORD SECRET
+          # ==================================================
+          #
+          # The file contains the .pgpass entry created
+          # earlier for ledgerbase_replicator.
+          #
+          # It is mounted read-only and never copied
+          # into a Git-tracked configuration file.
+
+          volumeMounts:
+            - name: replication-credential
+              mountPath: /run/ledgerbase-replication
+              readOnly: true
+
+          # ==================================================
+          # CREATE OR UPDATE REPLICATION ROLE
+          # ==================================================
+          #
+          # The password is read directly from the
+          # mounted Secret inside psql.
+          #
+          # PostgreSQL format(... %L) safely quotes
+          # the password as an SQL string literal.
+          #
+          # \gexec executes generated SQL statements.
+          #
+          # This makes role setup repeatable without
+          # printing the password to the Job logs.
+
+          command:
+            - /bin/sh
+            - -ec
+
+          args:
+            - |
+              set -eu
+
+              # Verify the expected credential format.
+              grep -q \
+                '^postgres:5432:replication:ledgerbase_replicator:[0-9a-f]\{64\}$' \
+                /run/ledgerbase-replication/pgpass
+
+              psql -X -v ON_ERROR_STOP=1 <<'SQL'
+
+              -- Store the replication password as a
+              -- private psql variable, not SQL source.
+
+              \set replication_password `cut -d: -f5 /run/ledgerbase-replication/pgpass`
+
+              -- Ensure PostgreSQL stores a SCRAM hash.
+
+              SET password_encryption = 'scram-sha-256';
+
+              -- Create the role only if it is missing.
+
+              SELECT format(
+                'CREATE ROLE ledgerbase_replicator WITH LOGIN REPLICATION PASSWORD %L',
+                :'replication_password'
+              )
+              WHERE NOT EXISTS (
+                SELECT 1
+                FROM pg_catalog.pg_roles
+                WHERE rolname = 'ledgerbase_replicator'
+              )
+              \gexec
+
+              -- Ensure an existing role has the
+              -- correct replication password.
+
+              SELECT format(
+                'ALTER ROLE ledgerbase_replicator WITH LOGIN REPLICATION PASSWORD %L',
+                :'replication_password'
+              )
+              \gexec
+
+              SQL
+
+              echo "PostgreSQL replication role configured."
+
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+
+            limits:
+              cpu: 250m
+              memory: 256Mi
+
+      # ======================================================
+      # MOUNT THE EXISTING REPLICATION SECRET
+      # ======================================================
+
+      volumes:
+        - name: replication-credential
+          secret:
+            secretName: ledgerbase-postgres-replication
+            defaultMode: 0400

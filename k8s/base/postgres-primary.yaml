@@ -142,10 +142,31 @@ spec:
       labels:
         app.kubernetes.io/name: postgres
         app.kubernetes.io/component: primary
-
+    
     spec:
 
       terminationGracePeriodSeconds: 60
+
+      # ======================================================
+      # POSTGRESQL AUTHENTICATION CONFIGURATION
+      # ======================================================
+      #
+      # Mount the replication authentication rules from
+      # the ConfigMap.
+      #
+      # The ConfigMap is stored separately from the
+      # persistent database files.
+      #
+      # No database data is overwritten.
+
+      volumes:
+        - name: postgres-hba-config
+          configMap:
+            name: ledgerbase-postgres-hba
+
+            items:
+              - key: pg_hba.conf
+                path: pg_hba.conf
 
       containers:
 
@@ -213,27 +234,69 @@ spec:
           #
           # Replica credentials and pg_hba configuration
           # will be added during the replication phase.
-
+          
           args:
             - postgres
+
+            # Generate WAL for physical replication.
             - -c
             - wal_level=replica
+
+            # Allow WAL sender connections.
             - -c
             - max_wal_senders=10
+
+            # Support physical replication slots.
             - -c
             - max_replication_slots=10
+
+            # Preserve baseline WAL retention.
             - -c
             - wal_keep_size=256MB
+
+            # Bound replication-slot WAL retention.
             - -c
             - max_slot_wal_keep_size=1GB
+
+            # ==================================================
+            # EXTERNAL AUTHENTICATION CONFIGURATION
+            # ==================================================
+            #
+            # Use the Kubernetes-managed pg_hba.conf.
+            #
+            # That file includes the existing authentication
+            # rules stored in the PostgreSQL data directory.
+
+            - -c
+            - hba_file=/etc/ledgerbase-postgres/pg_hba.conf
+
 
           # ==================================================
           # PERSISTENT DATABASE STORAGE
           # ==================================================
-
+          
           volumeMounts:
+
+            # ==================================================
+            # PERSISTENT DATABASE STORAGE
+            # ==================================================
+
             - name: postgres-data
               mountPath: /var/lib/postgresql/data
+
+            # ==================================================
+            # POSTGRESQL AUTHENTICATION RULES
+            # ==================================================
+            #
+            # Read-only Kubernetes ConfigMap.
+            #
+            # The mounted file is separate from the
+            # generated authentication file in PGDATA.
+
+            - name: postgres-hba-config
+              mountPath: /etc/ledgerbase-postgres
+              readOnly: true
+              
 
           # ==================================================
           # RESOURCE CONFIGURATION
