@@ -184,7 +184,7 @@ spec:
             # Reporting calculations use PostgreSQL.
 
             - name: LEDGERBASE_TRIAL_BALANCE_CACHE_ENABLED
-              value: "false"
+              value: "true"
 
             - name: MANAGEMENT_HEALTH_REDIS_ENABLED
               value: "false"
@@ -200,6 +200,50 @@ spec:
 
             - name: LEDGERBASE_LOCAL_METRICS_ENABLED
               value: "false"
+            
+            # ------------------------------------------------
+            # REDIS CLUSTER — KUBERNETES NODE DISCOVERY
+            # ------------------------------------------------
+            #
+            # Override the localhost Redis seed nodes
+            # defined in Reporting Service application.yaml.
+            #
+            # Each StatefulSet Pod has a stable DNS name.
+            #
+            # Spring Data Redis/Lettuce discovers the
+            # complete cluster topology using these seeds.
+            #
+            # All Redis nodes listen on port 6379.
+            #
+            # Do not use localhost or Docker host ports.
+
+            - name: SPRING_DATA_REDIS_CLUSTER_NODES
+              value: >-
+                redis-cluster-0.redis-cluster-headless.ledgerbase.svc.cluster.local:6379,
+                redis-cluster-1.redis-cluster-headless.ledgerbase.svc.cluster.local:6379,
+                redis-cluster-2.redis-cluster-headless.ledgerbase.svc.cluster.local:6379,
+                redis-cluster-3.redis-cluster-headless.ledgerbase.svc.cluster.local:6379,
+                redis-cluster-4.redis-cluster-headless.ledgerbase.svc.cluster.local:6379,
+                redis-cluster-5.redis-cluster-headless.ledgerbase.svc.cluster.local:6379
+
+            # ------------------------------------------------
+            # REDIS AUTHENTICATION
+            # ------------------------------------------------
+            #
+            # Keep the existing application.yaml placeholder:
+            #
+            # spring.data.redis.password: ${REDIS_PASSWORD:}
+            #
+            # Load the password from the same Kubernetes
+            # Secret used by the six Redis Cluster nodes.
+            #
+            # Never embed credentials in this YAML file.
+
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ledgerbase-redis-auth
+                  key: password
 
           # ==================================================
           # CONTAINER SECURITY
