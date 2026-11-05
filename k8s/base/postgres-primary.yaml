@@ -1,0 +1,338 @@
+# ============================================================
+# LEDGERBASE — POSTGRESQL PRIMARY
+# ============================================================
+#
+# PURPOSE:
+#
+# Deploy the primary PostgreSQL 17 database in Kubernetes.
+#
+# The primary handles:
+#
+# - LedgerBase accounting writes
+# - Financial ACID transactions
+# - Flyway schema migrations
+# - WAL generation for physical streaming replication
+#
+# This is a separate local development database.
+#
+# It does not access or modify existing Docker Compose
+# PostgreSQL volumes.
+#
+# This single-instance deployment is not production HA.
+
+
+# ============================================================
+# HEADLESS SERVICE — STABLE POD IDENTITY
+# ============================================================
+#
+# StatefulSets use a headless Service to provide stable
+# DNS identities for individual Pods.
+#
+# The PostgreSQL primary Pod will be:
+#
+# postgres-0.postgres-headless.ledgerbase.svc.cluster.local
+
+apiVersion: v1
+kind: Service
+
+metadata:
+  name: postgres-headless
+  namespace: ledgerbase
+
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/component: primary
+
+spec:
+  clusterIP: None
+
+  selector:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/component: primary
+
+  ports:
+    - name: postgresql
+      port: 5432
+      targetPort: 5432
+
+---
+
+# ============================================================
+# PRIMARY DATABASE SERVICE
+# ============================================================
+#
+# Application services connect through:
+#
+# postgres:5432
+#
+# This Service exposes PostgreSQL inside Kubernetes.
+#
+# It does not publish the database to the Mac or Internet.
+
+apiVersion: v1
+kind: Service
+
+metadata:
+  name: postgres
+  namespace: ledgerbase
+
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/component: primary
+
+spec:
+  type: ClusterIP
+
+  selector:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/component: primary
+
+  ports:
+    - name: postgresql
+      port: 5432
+      targetPort: 5432
+
+---
+
+# ============================================================
+# POSTGRESQL PRIMARY STATEFULSET
+# ============================================================
+#
+# A StatefulSet provides:
+#
+# - Stable Pod identity
+# - Persistent volume ownership
+# - Controlled database lifecycle
+#
+# Database files survive ordinary Pod replacement.
+#
+# IMPORTANT:
+#
+# Do not delete database PVCs to troubleshoot problems.
+
+apiVersion: apps/v1
+kind: StatefulSet
+
+metadata:
+  name: postgres
+  namespace: ledgerbase
+
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/component: primary
+
+spec:
+
+  # ==========================================================
+  # PRIMARY INSTANCE COUNT
+  # ==========================================================
+
+  replicas: 1
+
+  serviceName: postgres-headless
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+      app.kubernetes.io/component: primary
+
+  template:
+
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres
+        app.kubernetes.io/component: primary
+
+    spec:
+
+      terminationGracePeriodSeconds: 60
+
+      containers:
+
+        - name: postgres
+
+          image: postgres:17
+
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: postgresql
+              containerPort: 5432
+
+          # ==================================================
+          # DATABASE ENVIRONMENT
+          # ==================================================
+
+          env:
+
+            - name: POSTGRES_DB
+              value: ledgerbase
+
+            - name: POSTGRES_USER
+              value: ledgerbase
+
+            # Read the password from a Kubernetes Secret.
+            #
+            # No actual credentials appear in this manifest.
+
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ledgerbase-postgres-auth
+                  key: password
+
+            # Keep database files in a subdirectory of
+            # the persistent volume.
+            #
+            # This avoids initialization problems caused
+            # by unexpected files at the mount root.
+
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+
+          # ==================================================
+          # WAL STREAMING REPLICATION CONFIGURATION
+          # ==================================================
+          #
+          # Preserve the settings from Docker Compose.
+          #
+          # wal_level:
+          #   Generate WAL for streaming replication.
+          #
+          # max_wal_senders:
+          #   Permit replication connections.
+          #
+          # max_replication_slots:
+          #   Support physical replication slots.
+          #
+          # wal_keep_size:
+          #   Retain a baseline of recent WAL.
+          #
+          # max_slot_wal_keep_size:
+          #   Bound retained WAL at checkpoint time.
+          #
+          # Replica credentials and pg_hba configuration
+          # will be added during the replication phase.
+
+          args:
+            - postgres
+            - -c
+            - wal_level=replica
+            - -c
+            - max_wal_senders=10
+            - -c
+            - max_replication_slots=10
+            - -c
+            - wal_keep_size=256MB
+            - -c
+            - max_slot_wal_keep_size=1GB
+
+          # ==================================================
+          # PERSISTENT DATABASE STORAGE
+          # ==================================================
+
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+
+          # ==================================================
+          # RESOURCE CONFIGURATION
+          # ==================================================
+          #
+          # Reasonable initial resources for a local
+          # development database.
+          #
+          # Adjust after observing actual resource use.
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+
+            limits:
+              cpu: "1"
+              memory: 1Gi
+
+          # ==================================================
+          # STARTUP HEALTH CHECK
+          # ==================================================
+          #
+          # Allow PostgreSQL time to initialize a new
+          # database directory before health enforcement.
+
+          startupProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -U ledgerbase -d ledgerbase
+
+            periodSeconds: 5
+            failureThreshold: 30
+
+          # ==================================================
+          # READINESS CHECK
+          # ==================================================
+          #
+          # Only route application traffic to PostgreSQL
+          # when it is accepting connections.
+
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -U ledgerbase -d ledgerbase
+
+            periodSeconds: 5
+            timeoutSeconds: 5
+
+          # ==================================================
+          # LIVENESS CHECK
+          # ==================================================
+          #
+          # Restart the container if PostgreSQL becomes
+          # persistently unresponsive.
+
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -U ledgerbase -d ledgerbase
+
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+
+  # ==========================================================
+  # PERSISTENT VOLUME CLAIM
+  # ==========================================================
+  #
+  # Each StatefulSet Pod receives its own persistent volume.
+  #
+  # StorageClass:
+  #   standard — kind local-path provisioner
+  #
+  # Data:
+  #   Separate from Docker Compose postgres_data.
+  #
+  # This local volume is not a backup.
+  #
+  # Deleting the kind cluster can destroy its underlying
+  # local storage even if a PVC previously existed.
+
+  volumeClaimTemplates:
+
+    - metadata:
+        name: postgres-data
+
+      spec:
+        accessModes:
+          - ReadWriteOnce
+
+        storageClassName: standard
+
+        resources:
+          requests:
+            storage: 5Gi
