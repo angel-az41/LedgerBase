@@ -171,6 +171,29 @@ spec:
                 secretKeyRef:
                   name: ledgerbase-jwt-auth
                   key: secret-base64
+            
+            # ------------------------------------------------
+            # TRUSTED AUTHENTICATION REQUEST ORIGINS
+            # ------------------------------------------------
+            #
+            # The Kubernetes React frontend is exposed on
+            # http://localhost:3001 through the kind node.
+            #
+            # The backend validates the browser Origin
+            # header before registration, login, refresh,
+            # and logout operations.
+            #
+            # Allow only the exact Kubernetes frontend
+            # origin in this local deployment.
+            #
+            # Docker Compose and Vite use their own
+            # Accounting Core configuration.
+            #
+            # For external deployment, replace this with
+            # the actual trusted HTTPS application origin.
+
+            - name: LEDGERBASE_AUTH_ALLOWED_ORIGINS
+              value: "http://localhost:3001"
 
             # ------------------------------------------------
             # HTTP SERVER
