@@ -1,0 +1,276 @@
+# ============================================================
+# LEDGERBASE — REPORTING DATABASE READER BOOTSTRAP
+# ============================================================
+#
+# PURPOSE:
+#
+# Create a restricted PostgreSQL login for the
+# independent LedgerBase Reporting Service.
+#
+# The role is provisioned on the PRIMARY database.
+# PostgreSQL streaming replication propagates its
+# role and permission changes to the read replica.
+#
+# SECURITY:
+#
+# - Credentials come from Kubernetes Secrets.
+# - No passwords are stored in Git.
+# - No SUPERUSER, CREATEDB, CREATEROLE, or REPLICATION.
+# - Grant only required SELECT column privileges.
+# - Do not grant write access to financial tables.
+#
+# Flyway V12 conditionally skipped its grant because
+# this role did not exist during fresh initialization.
+#
+# This Job applies that permission explicitly without
+# editing or rerunning historical Flyway migrations.
+
+
+apiVersion: batch/v1
+kind: Job
+
+metadata:
+  name: postgres-reporting-reader
+  namespace: ledgerbase
+
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/component: reporting-bootstrap
+
+spec:
+  backoffLimit: 1
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres
+        app.kubernetes.io/component: reporting-bootstrap
+
+    spec:
+
+      # The Job does not need Kubernetes API credentials.
+      automountServiceAccountToken: false
+
+      restartPolicy: Never
+
+      containers:
+        - name: reporting-reader-bootstrap
+
+          image: postgres:17
+          imagePullPolicy: IfNotPresent
+
+          # ==================================================
+          # PRIMARY DATABASE CONNECTION
+          # ==================================================
+
+          env:
+            - name: PGHOST
+              value: postgres
+
+            - name: PGPORT
+              value: "5432"
+
+            - name: PGDATABASE
+              value: ledgerbase
+
+            - name: PGUSER
+              value: ledgerbase
+
+            # Administrative password for configuring
+            # PostgreSQL roles and permissions.
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ledgerbase-postgres-auth
+                  key: password
+
+          # ==================================================
+          # REPORTING PASSWORD SECRET
+          # ==================================================
+
+          volumeMounts:
+            - name: reporting-password
+              mountPath: /run/ledgerbase-reporting
+              readOnly: true
+
+          # ==================================================
+          # ROLE CREATION AND LEAST-PRIVILEGE GRANTS
+          # ==================================================
+
+          command:
+            - /bin/sh
+            - -ec
+
+          args:
+            - |
+              set -eu
+
+              # Validate the generated 64-character
+              # hexadecimal password without printing it.
+
+              if ! grep -Eq '^[0-9a-f]{64}$' \
+                /run/ledgerbase-reporting/password; then
+
+                echo "Invalid reporting password format." >&2
+                exit 1
+              fi
+
+              # Connect to the primary as the database
+              # administrator. Stop on any SQL error.
+
+              psql -X -v ON_ERROR_STOP=1 <<'SQL'
+
+              -- ==================================================
+              -- READ THE REPORTING PASSWORD SECURELY
+              -- ==================================================
+              --
+              -- psql reads the mounted Secret internally.
+              -- Never echo the password or generated SQL.
+
+              \set reporting_password `cat /run/ledgerbase-reporting/password`
+
+              SET password_encryption = 'scram-sha-256';
+
+              -- ==================================================
+              -- CREATE RESTRICTED READER ROLE
+              -- ==================================================
+              --
+              -- CREATE ROLE runs only if the role is absent.
+              -- The generated SQL is executed via \gexec.
+              --
+              -- Do not add a semicolon before \gexec.
+
+              SELECT format(
+                'CREATE ROLE ledgerbase_reader WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD %L',
+                :'reporting_password'
+              )
+              WHERE NOT EXISTS (
+                SELECT 1
+                FROM pg_catalog.pg_roles
+                WHERE rolname = 'ledgerbase_reader'
+              )
+              \gexec
+
+              -- ==================================================
+              -- SYNCHRONIZE ROLE ATTRIBUTES AND PASSWORD
+              -- ==================================================
+
+              SELECT format(
+                'ALTER ROLE ledgerbase_reader WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD %L',
+                :'reporting_password'
+              )
+              \gexec
+
+              -- Default to read-only transactions as
+              -- defense in depth for new reader sessions.
+              --
+              -- PostgreSQL standby mode independently
+              -- prevents writes to the replica.
+
+              ALTER ROLE ledgerbase_reader
+                SET default_transaction_read_only = on;
+
+              -- ==================================================
+              -- DATABASE AND SCHEMA ACCESS
+              -- ==================================================
+
+              GRANT CONNECT
+                ON DATABASE ledgerbase
+                TO ledgerbase_reader;
+
+              GRANT USAGE
+                ON SCHEMA public
+                TO ledgerbase_reader;
+
+              -- ==================================================
+              -- CHART OF ACCOUNTS READ PERMISSIONS
+              -- ==================================================
+              --
+              -- Used by TrialBalanceMapper.xml.
+
+              GRANT SELECT (
+                id,
+                business_id,
+                code,
+                name,
+                account_type,
+                is_active
+              )
+              ON TABLE public.accounts
+              TO ledgerbase_reader;
+
+              -- ==================================================
+              -- LEDGER ENTRY READ PERMISSIONS
+              -- ==================================================
+              --
+              -- Used to calculate debit and credit totals.
+
+              GRANT SELECT (
+                business_id,
+                account_id,
+                transaction_id,
+                debit,
+                credit
+              )
+              ON TABLE public.ledger_entries
+              TO ledgerbase_reader;
+
+              -- ==================================================
+              -- TRANSACTION READ PERMISSIONS
+              -- ==================================================
+              --
+              -- Used for POSTED status and reporting dates.
+
+              GRANT SELECT (
+                id,
+                business_id,
+                status,
+                transaction_date
+              )
+              ON TABLE public.transactions
+              TO ledgerbase_reader;
+
+              -- ==================================================
+              -- REPORTING REVISION READ PERMISSIONS
+              -- ==================================================
+              --
+              -- Reapply the intended V12 permission,
+              -- which was skipped during fresh initialization.
+              --
+              -- Used to identify the business's current
+              -- reporting revision for cache correctness.
+
+              GRANT SELECT (
+                id,
+                reporting_revision
+              )
+              ON TABLE public.businesses
+              TO ledgerbase_reader;
+
+              SQL
+
+              echo "Reporting reader role and permissions configured."
+
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+
+            limits:
+              cpu: 250m
+              memory: 256Mi
+
+      # ======================================================
+      # KUBERNETES REPORTING PASSWORD SECRET
+      # ======================================================
+
+      volumes:
+        - name: reporting-password
+          secret:
+            secretName: ledgerbase-reporting-db-auth
+
+            defaultMode: 0400
+
+            items:
+              - key: password
+                path: password
