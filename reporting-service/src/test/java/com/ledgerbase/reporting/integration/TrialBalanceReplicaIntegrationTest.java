@@ -3,6 +3,7 @@ package com.ledgerbase.reporting.integration;
 import com.ledgerbase.reporting.model.TrialBalanceRow;
 import com.ledgerbase.reporting.service.TrialBalanceService;
 
+import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.junit.jupiter.api.Test;
 
 import org.springframework.beans.factory.annotation.Autowired;
@@ -14,26 +15,27 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * ============================================================
- * LEDGERBASE — TRIAL BALANCE REPLICA INTEGRATION TEST
- * ============================================================
- *
- * Verifies the Reporting Service's real database integration.
- *
- * Test responsibilities:
- *
- * - Start the Reporting Service application context.
- * - Confirm PostgreSQL is operating as a standby.
- * - Confirm database connections are read-only.
- * - Execute the Trial Balance query through MyBatis.
- *
- * This test requires the local PostgreSQL read replica.
- *
- * It does not create, modify, or delete accounting records.
- */
+// ============================================================
+// LEDGERBASE — TRIAL BALANCE REPLICA INTEGRATION TEST
+// ============================================================
+// This test requires a real PostgreSQL streaming replica.
+//
+// Ordinary CI runs do not provision a PostgreSQL standby.
+// Enable this test explicitly when the replica and required
+// database credentials are available.
+//
+// To enable:
+// LEDGERBASE_REPLICA_IT=true
+//
+// The test is skipped when the variable is not set.
+// This does not disable other Reporting Service tests.
+
+@EnabledIfEnvironmentVariable(
+    named = "LEDGERBASE_REPLICA_IT",
+    matches = "true"
+)
 @SpringBootTest(
-        webEnvironment = SpringBootTest.WebEnvironment.NONE
+    webEnvironment = SpringBootTest.WebEnvironment.NONE
 )
 class TrialBalanceReplicaIntegrationTest {
 
