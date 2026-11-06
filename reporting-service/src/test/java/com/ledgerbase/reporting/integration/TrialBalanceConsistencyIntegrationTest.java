@@ -7,6 +7,7 @@ import org.apache.ibatis.mapping.BoundSql;
 import org.apache.ibatis.mapping.MappedStatement;
 import org.apache.ibatis.session.SqlSessionFactory;
 
+import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.junit.jupiter.api.Test;
 
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,21 +27,23 @@ import static org.junit.jupiter.api.Assertions.*;
  * LEDGERBASE — TRIAL BALANCE FINANCIAL CONSISTENCY TEST
  * ============================================================
  *
- * Compares Trial Balance results from:
+ * This integration test compares Trial Balance results
+ * between a PostgreSQL primary and its streaming replica.
  *
- * - PostgreSQL primary: reference financial data.
- * - PostgreSQL replica: Reporting Service query results.
+ * It requires both databases, reporting credentials,
+ * and a stable financial dataset.
  *
- * This integration test uses the same SQL on both databases,
- * preventing duplicate accounting logic inside the test.
- *
- * The primary connection exists only in this test.
- * Production reporting remains replica-only.
- *
- * Run against a stable local dataset with replication caught up.
+ * Ordinary CI does not provide these dependencies.
+ * Run explicitly with LEDGERBASE_REPLICA_IT=true
+ * when the complete replication environment is available.
  */
+
+@EnabledIfEnvironmentVariable(
+    named = "LEDGERBASE_REPLICA_IT",
+    matches = "true"
+)
 @SpringBootTest(
-        webEnvironment = SpringBootTest.WebEnvironment.NONE
+    webEnvironment = SpringBootTest.WebEnvironment.NONE
 )
 class TrialBalanceConsistencyIntegrationTest {
 
