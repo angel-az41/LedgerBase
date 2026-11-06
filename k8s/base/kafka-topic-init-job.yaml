@@ -1,0 +1,115 @@
+# ============================================================
+# LEDGERBASE — KAFKA FINANCIAL TOPIC INITIALIZATION
+# ============================================================
+#
+# PURPOSE:
+#
+# Ensure the financial event topic exists before enabling
+# Accounting Core's transactional outbox publisher.
+#
+# BEHAVIOR:
+#
+# - Wait for the Kubernetes Kafka broker to respond.
+# - Create the transaction-posted topic if it is missing.
+# - Preserve an existing topic and its messages.
+# - Verify the topic configuration.
+#
+# This Job is safe to run again when reprovisioning the
+# local development environment.
+#
+# It does not delete Kafka topics or broker storage.
+
+apiVersion: batch/v1
+kind: Job
+
+metadata:
+  name: kafka-topic-init
+  namespace: ledgerbase
+
+  labels:
+    app.kubernetes.io/name: kafka-topic-init
+    app.kubernetes.io/part-of: ledgerbase
+
+spec:
+  backoffLimit: 3
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kafka-topic-init
+        app.kubernetes.io/part-of: ledgerbase
+
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+
+      containers:
+        - name: kafka-topic-init
+          image: apache/kafka:4.2.2
+          imagePullPolicy: IfNotPresent
+
+          command:
+            - /bin/sh
+            - -ec
+
+          args:
+            - |
+              # ==================================================
+              # WAIT FOR THE KAFKA BROKER
+              # ==================================================
+
+              attempt=0
+
+              until /opt/kafka/bin/kafka-topics.sh \
+                --bootstrap-server kafka:9092 \
+                --list >/dev/null 2>&1; do
+
+                attempt=$((attempt + 1))
+
+                if [ "$attempt" -ge 60 ]; then
+                  echo "Kafka broker did not become available."
+                  exit 1
+                fi
+
+                echo "Waiting for Kafka broker..."
+                sleep 5
+              done
+
+              # ==================================================
+              # CREATE THE FINANCIAL EVENT TOPIC
+              # ==================================================
+              #
+              # --if-not-exists preserves an existing topic.
+
+              /opt/kafka/bin/kafka-topics.sh \
+                --bootstrap-server kafka:9092 \
+                --create \
+                --if-not-exists \
+                --topic ledgerbase.transaction-posted.v1 \
+                --partitions 1 \
+                --replication-factor 1
+
+              # ==================================================
+              # VERIFY TOPIC METADATA
+              # ==================================================
+
+              /opt/kafka/bin/kafka-topics.sh \
+                --bootstrap-server kafka:9092 \
+                --describe \
+                --topic ledgerbase.transaction-posted.v1
+
+              echo "LedgerBase Kafka topic verified successfully."
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+
+            limits:
+              cpu: "1"
+              memory: 512Mi

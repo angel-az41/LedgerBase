@@ -1,0 +1,30 @@
+# ============================================================
+# LEDGERBASE — LOCAL KAFKA KRAFT CLUSTER ID
+# ============================================================
+#
+# PURPOSE:
+# Preserve the stable identity of the local Kafka cluster.
+#
+# IMPORTANT:
+# This value must match the Kafka metadata already stored
+# in the existing kafka-data-kafka-0 persistent volume.
+#
+# Do not regenerate this ID while that volume exists.
+#
+# This ConfigMap is intended for the local kind environment.
+# Other independent environments should provision their own
+# cluster identity.
+
+apiVersion: v1
+kind: ConfigMap
+
+metadata:
+  name: ledgerbase-kafka-cluster-id
+  namespace: ledgerbase
+
+  labels:
+    app.kubernetes.io/name: kafka
+    app.kubernetes.io/part-of: ledgerbase
+
+data:
+  cluster-id: "Fibka0DLSRG1jfSa9U85Lg"
