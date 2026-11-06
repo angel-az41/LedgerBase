@@ -1,0 +1,39 @@
+# ============================================================
+# LEDGERBASE — GRAFANA DASHBOARD FILE PROVISIONING
+# ============================================================
+#
+# PURPOSE:
+# Load the version-controlled LedgerBase System Overview
+# dashboard from the JSON file mounted into the Grafana Pod.
+#
+# DEPLOYMENT:
+# Apply this ConfigMap before restarting Grafana.
+# The dashboard JSON is provisioned through a second ConfigMap
+# created from k8s/base/grafana-dashboard.json.
+#
+# GRAFANA:
+# Poll dashboard files every 30 seconds. Changes are managed
+# in Git rather than edited permanently in the Grafana UI.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-config
+  namespace: ledgerbase
+  labels:
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/part-of: ledgerbase
+data:
+  dashboard-provider.yaml: |
+    apiVersion: 1
+
+    providers:
+      - name: LedgerBase
+        orgId: 1
+        folder: LedgerBase
+        type: file
+        disableDeletion: false
+        updateIntervalSeconds: 30
+        allowUiUpdates: false
+        options:
+          path: /etc/grafana/ledgerbase-dashboards
