@@ -196,6 +196,24 @@
             <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
 
+        <!-- ======================================================== -->
+        <!-- PROMETHEUS — APPLICATION METRICS EXPORT                   -->
+        <!-- ======================================================== -->
+        <!--
+            Micrometer exports Spring Boot application metrics in
+            Prometheus format.
+
+            Prometheus will collect JVM, HTTP request, and other
+            available application metrics through Actuator.
+
+            Spring Boot manages the compatible Micrometer version.
+        -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
     </dependencies>
 
     <!-- ====================================================== -->

@@ -221,6 +221,22 @@ public class SecurityConfig {
                     "/actuator/health"
                 ).permitAll()
 
+                // ============================================================
+                // PROMETHEUS — INTERNAL APPLICATION METRICS
+                // ============================================================
+                //
+                // Allow Prometheus to scrape read-only application metrics.
+                //
+                // In Kubernetes, access will be through the internal
+                // Accounting Core Service, not the public React frontend.
+                //
+                // Financial API endpoints remain protected by JWT and
+                // business-scoped role-based authorization.
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/actuator/prometheus"
+                ).permitAll()
+
 
                 // ---------------------------------------------
                 // AUTHENTICATED ACTUATOR ENDPOINTS

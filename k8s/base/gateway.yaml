@@ -138,6 +138,21 @@ spec:
             - name: LEDGERBASE_REPORTING_URL
               value: "http://reporting-service:8082"
 
+            # ============================================================
+            # PROMETHEUS — ACTUATOR METRICS EXPOSURE
+            # ============================================================
+            #
+            # Expose only health and Prometheus monitoring endpoints.
+            #
+            # The Prometheus server will scrape the internal Kubernetes
+            # Services directly, without going through the React frontend.
+            #
+            # Endpoint access must also be permitted by the relevant
+            # Spring Security configuration.
+
+            - name: MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE
+              value: "health,prometheus"
+
           # ==================================================
           # CONTAINER SECURITY
           # ==================================================
