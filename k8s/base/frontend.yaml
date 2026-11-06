@@ -1,0 +1,220 @@
+# ============================================================
+# LEDGERBASE — REACT FRONTEND
+# ============================================================
+#
+# PURPOSE:
+#
+# Deploy the compiled React application using Nginx.
+#
+# ARCHITECTURE:
+#
+# Browser
+#   |
+#   v
+# localhost:3001
+#   |
+#   v
+# kind node port 30080
+#   |
+#   v
+# Frontend Nginx (80)
+#   |
+#   +--> Static React application
+#   |
+#   +--> /api/* requests
+#           |
+#           v
+#         Spring Cloud Gateway (8081)
+#
+# FRONTEND CONFIGURATION:
+#
+# Reuse frontend/nginx.conf from the existing Docker
+# image. Nginx resolves gateway through Kubernetes DNS.
+#
+# Browser requests use the same origin for application
+# pages and financial API requests.
+#
+# SECURITY:
+#
+# - No Kubernetes API credentials are mounted.
+# - No database credentials or JWT signing keys
+#   are present in the frontend container.
+# - Authentication and authorization remain enforced
+#   by the backend services.
+#
+# This manifest preserves the existing Nginx image's
+# runtime user and port 80 requirements. A separate
+# non-root Nginx image can be introduced during
+# container hardening.
+
+
+# ============================================================
+# FRONTEND DEPLOYMENT
+# ============================================================
+
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: frontend
+  namespace: ledgerbase
+
+  labels:
+    app.kubernetes.io/name: frontend
+    app.kubernetes.io/part-of: ledgerbase
+
+spec:
+  replicas: 1
+
+  revisionHistoryLimit: 3
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: frontend
+
+  template:
+
+    metadata:
+      labels:
+        app.kubernetes.io/name: frontend
+        app.kubernetes.io/part-of: ledgerbase
+
+    spec:
+
+      # Frontend does not access the Kubernetes API.
+      automountServiceAccountToken: false
+
+      terminationGracePeriodSeconds: 30
+
+      containers:
+
+        - name: frontend
+
+          # ==================================================
+          # CONTAINER IMAGE
+          # ==================================================
+
+          image: ledgerbase-frontend:local
+          imagePullPolicy: Never
+
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+
+          # ==================================================
+          # RESOURCE ALLOCATION
+          # ==================================================
+
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+
+            limits:
+              cpu: 500m
+              memory: 256Mi
+
+          # ==================================================
+          # STARTUP PROBE
+          # ==================================================
+          #
+          # Allow Nginx time to start and serve
+          # the compiled React index page.
+
+          startupProbe:
+            httpGet:
+              path: /
+              port: http
+
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 30
+
+          # ==================================================
+          # READINESS PROBE
+          # ==================================================
+          #
+          # Check whether Nginx can serve frontend
+          # content before accepting browser traffic.
+          #
+          # Backend availability is tested separately.
+
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          # ==================================================
+          # LIVENESS PROBE
+          # ==================================================
+          #
+          # Restart the container if Nginx stops
+          # serving HTTP requests.
+
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+
+---
+
+# ============================================================
+# FRONTEND NODEPORT SERVICE
+# ============================================================
+#
+# PURPOSE:
+#
+# Make the local React application accessible
+# from the developer's macOS browser.
+#
+# PORT MAPPING:
+#
+# Mac localhost:3001
+#     |
+#     v
+# kind control-plane:30080
+#     |
+#     v
+# Kubernetes frontend Service:80
+#     |
+#     v
+# Nginx Pod:80
+#
+# The matching kind extraPortMappings configuration
+# must already exist in the cluster.
+#
+# This is local development exposure, not a
+# production Internet-facing deployment.
+
+apiVersion: v1
+kind: Service
+
+metadata:
+  name: frontend
+  namespace: ledgerbase
+
+  labels:
+    app.kubernetes.io/name: frontend
+    app.kubernetes.io/part-of: ledgerbase
+
+spec:
+  type: NodePort
+
+  selector:
+    app.kubernetes.io/name: frontend
+
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: http
+      nodePort: 30080

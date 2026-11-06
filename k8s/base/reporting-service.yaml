@@ -1,0 +1,381 @@
+# ============================================================
+# LEDGERBASE — FINANCIAL REPORTING SERVICE
+# ============================================================
+#
+# PURPOSE:
+#
+# Deploy the independent Spring Boot Reporting Service
+# into the LedgerBase Kubernetes namespace.
+#
+# ARCHITECTURE:
+#
+# Reporting Service
+#     |
+#     +--> PostgreSQL Read Replica
+#     |      Restricted ledgerbase_reader account
+#     |
+#     +--> Accounting Core
+#            JWT session and business authorization
+#
+# SECURITY:
+#
+# - Use the restricted PostgreSQL reporting account.
+# - Read database credentials from Kubernetes Secrets.
+# - Reuse Accounting Core's JWT signing Secret.
+# - Preserve business-scoped report authorization.
+# - Do not expose reporting APIs outside Kubernetes.
+#
+# CACHE:
+#
+# Redis caching is disabled for this initial deployment.
+# The Redis Cluster will be configured separately.
+#
+# Docker Compose configuration is not modified.
+
+
+# ============================================================
+# REPORTING SERVICE DEPLOYMENT
+# ============================================================
+
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: reporting-service
+  namespace: ledgerbase
+
+  labels:
+    app.kubernetes.io/name: reporting-service
+    app.kubernetes.io/part-of: ledgerbase
+
+spec:
+
+  # Begin with one instance for local verification.
+  replicas: 1
+
+  revisionHistoryLimit: 3
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: reporting-service
+
+  template:
+
+    metadata:
+      labels:
+        app.kubernetes.io/name: reporting-service
+        app.kubernetes.io/part-of: ledgerbase
+
+    spec:
+
+      # Reporting Service does not require access
+      # to the Kubernetes API server.
+      automountServiceAccountToken: false
+
+      # Match the non-root user used by the
+      # existing Java application Docker image.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+
+      terminationGracePeriodSeconds: 30
+
+      containers:
+
+        - name: reporting-service
+
+          # ==================================================
+          # CONTAINER IMAGE
+          # ==================================================
+          #
+          # The image is built locally and loaded into kind.
+          # Prevent Kubernetes from pulling a different image.
+
+          image: ledgerbase-reporting-service:local
+          imagePullPolicy: Never
+
+          ports:
+            - name: http
+              containerPort: 8082
+              protocol: TCP
+
+          # ==================================================
+          # APPLICATION CONFIGURATION
+          # ==================================================
+
+          env:
+
+            # ------------------------------------------------
+            # POSTGRESQL READ REPLICA
+            # ------------------------------------------------
+            #
+            # Use the replica Service, not the primary.
+            #
+            # Reporting calculations must remain on
+            # the read-only PostgreSQL standby.
+
+            - name: SPRING_DATASOURCE_URL
+              value: jdbc:postgresql://postgres-replica:5432/ledgerbase
+
+            # Dedicated restricted database role.
+            - name: SPRING_DATASOURCE_USERNAME
+              value: ledgerbase_reader
+
+            # Keep the existing application.yaml
+            # POSTGRES_REPLICA_PASSWORD placeholder.
+            #
+            # The password comes from the Kubernetes
+            # Secret created during reader provisioning.
+
+            - name: POSTGRES_REPLICA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ledgerbase-reporting-db-auth
+                  key: password
+
+            # ------------------------------------------------
+            # ACCOUNTING CORE AUTHORIZATION
+            # ------------------------------------------------
+            #
+            # Reporting Service validates sessions and
+            # business permissions through Accounting Core.
+            #
+            # Do not send these calls through Gateway.
+
+            - name: ACCOUNTING_CORE_BASE_URL
+              value: http://accounting-core:8080
+
+            # ------------------------------------------------
+            # JWT SIGNING SECRET
+            # ------------------------------------------------
+            #
+            # Use the same signing key as Accounting Core.
+            # Reporting Service must validate its tokens.
+
+            - name: JWT_SECRET_BASE64
+              valueFrom:
+                secretKeyRef:
+                  name: ledgerbase-jwt-auth
+                  key: secret-base64
+
+            # ------------------------------------------------
+            # HTTP BINDING
+            # ------------------------------------------------
+            #
+            # Override the localhost binding used
+            # by local Spring Boot development.
+            #
+            # Kubernetes Services require the application
+            # to accept traffic on the Pod interface.
+
+            - name: SERVER_ADDRESS
+              value: "0.0.0.0"
+
+            # ------------------------------------------------
+            # REDIS CACHE CONFIGURATION
+            # ------------------------------------------------
+            #
+            # Redis Cluster has not been deployed yet.
+            #
+            # Disable report caching and Redis health
+            # checks for this initial deployment.
+            #
+            # Reporting calculations use PostgreSQL.
+
+            - name: LEDGERBASE_TRIAL_BALANCE_CACHE_ENABLED
+              value: "true"
+
+            - name: MANAGEMENT_HEALTH_REDIS_ENABLED
+              value: "false"
+
+            # ------------------------------------------------
+            # ACTUATOR METRICS
+            # ------------------------------------------------
+            #
+            # Keep local-only metrics access disabled.
+            #
+            # Kubernetes monitoring will be configured
+            # separately with appropriate access controls.
+
+            - name: LEDGERBASE_LOCAL_METRICS_ENABLED
+              value: "false"
+            
+            # ------------------------------------------------
+            # REDIS CLUSTER — KUBERNETES NODE DISCOVERY
+            # ------------------------------------------------
+            #
+            # Override the localhost Redis seed nodes
+            # defined in Reporting Service application.yaml.
+            #
+            # Each StatefulSet Pod has a stable DNS name.
+            #
+            # Spring Data Redis/Lettuce discovers the
+            # complete cluster topology using these seeds.
+            #
+            # All Redis nodes listen on port 6379.
+            #
+            # Do not use localhost or Docker host ports.
+
+            - name: SPRING_DATA_REDIS_CLUSTER_NODES
+              value: >-
+                redis-cluster-0.redis-cluster-headless.ledgerbase.svc.cluster.local:6379,
+                redis-cluster-1.redis-cluster-headless.ledgerbase.svc.cluster.local:6379,
+                redis-cluster-2.redis-cluster-headless.ledgerbase.svc.cluster.local:6379,
+                redis-cluster-3.redis-cluster-headless.ledgerbase.svc.cluster.local:6379,
+                redis-cluster-4.redis-cluster-headless.ledgerbase.svc.cluster.local:6379,
+                redis-cluster-5.redis-cluster-headless.ledgerbase.svc.cluster.local:6379
+
+            # ------------------------------------------------
+            # REDIS AUTHENTICATION
+            # ------------------------------------------------
+            #
+            # Keep the existing application.yaml placeholder:
+            #
+            # spring.data.redis.password: ${REDIS_PASSWORD:}
+            #
+            # Load the password from the same Kubernetes
+            # Secret used by the six Redis Cluster nodes.
+            #
+            # Never embed credentials in this YAML file.
+
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ledgerbase-redis-auth
+                  key: password
+
+            # ============================================================
+            # PROMETHEUS — ACTUATOR METRICS EXPOSURE
+            # ============================================================
+            #
+            # Expose only health and Prometheus monitoring endpoints.
+            #
+            # The Prometheus server will scrape the internal Kubernetes
+            # Services directly, without going through the React frontend.
+            #
+            # Endpoint access must also be permitted by the relevant
+            # Spring Security configuration.
+
+            - name: MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE
+              value: "health,prometheus"
+
+          # ==================================================
+          # CONTAINER SECURITY
+          # ==================================================
+
+          securityContext:
+            allowPrivilegeEscalation: false
+
+            capabilities:
+              drop:
+                - ALL
+
+          # ==================================================
+          # RESOURCE ALLOCATION
+          # ==================================================
+          #
+          # Initial local development resources.
+          #
+          # Adjust based on observed JVM usage.
+
+          resources:
+            requests:
+              cpu: 150m
+              memory: 384Mi
+
+            limits:
+              cpu: "1"
+              memory: 1Gi
+
+          # ==================================================
+          # STARTUP PROBE
+          # ==================================================
+          #
+          # Give Spring Boot time to initialize
+          # database connections and security components.
+
+          startupProbe:
+            tcpSocket:
+              port: http
+
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 60
+
+          # ==================================================
+          # READINESS PROBE
+          # ==================================================
+          #
+          # Reporting Service already allows unauthenticated
+          # access to GET /actuator/health.
+          #
+          # Its configured health response includes
+          # database availability while Redis health
+          # checks are disabled.
+          #
+          # The Pod should receive traffic only after
+          # its health endpoint reports success.
+
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: http
+
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          # ==================================================
+          # LIVENESS PROBE
+          # ==================================================
+          #
+          # Check whether the Java HTTP server is alive.
+          #
+          # A temporary replica outage should affect
+          # readiness rather than repeatedly restarting
+          # the reporting process.
+
+          livenessProbe:
+            tcpSocket:
+              port: http
+
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+
+---
+
+# ============================================================
+# REPORTING SERVICE INTERNAL SERVICE
+# ============================================================
+#
+# Kubernetes DNS:
+#
+# http://reporting-service:8082
+#
+# Spring Cloud Gateway will later use this address
+# to route Trial Balance reporting requests.
+
+apiVersion: v1
+kind: Service
+
+metadata:
+  name: reporting-service
+  namespace: ledgerbase
+
+  labels:
+    app.kubernetes.io/name: reporting-service
+    app.kubernetes.io/part-of: ledgerbase
+
+spec:
+  type: ClusterIP
+
+  selector:
+    app.kubernetes.io/name: reporting-service
+
+  ports:
+    - name: http
+      port: 8082
+      targetPort: http
+      protocol: TCP

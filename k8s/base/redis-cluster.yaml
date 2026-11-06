@@ -1,0 +1,409 @@
+# ============================================================
+# LEDGERBASE — KUBERNETES REDIS CLUSTER
+# ============================================================
+#
+# PURPOSE:
+#
+# Run six independent Redis Cluster nodes:
+#
+# - Three primary nodes
+# - Three replica nodes
+#
+# Each Redis process runs in its own Kubernetes Pod.
+#
+# The Redis Cluster bootstrap Job will assign
+# primary/replica roles and hash slots separately.
+#
+# NETWORKING:
+#
+# Client port: 6379
+# Cluster bus: 16379
+#
+# Redis nodes advertise Kubernetes-reachable
+# IP addresses and stable DNS hostnames.
+#
+# SECURITY:
+#
+# - Password loaded from Kubernetes Secret.
+# - Non-root runtime.
+# - No Kubernetes API credentials.
+# - No public Redis Service.
+#
+# PERSISTENCE:
+#
+# Redis Cluster node identities are stored on PVCs.
+# Cache values remain disposable and are not persisted.
+#
+# This is a local development deployment.
+# Production requires multi-node placement,
+# network policies, TLS, and operational backups.
+
+
+# ============================================================
+# REDIS CLUSTER HEADLESS SERVICE
+# ============================================================
+
+apiVersion: v1
+kind: Service
+
+metadata:
+  name: redis-cluster-headless
+  namespace: ledgerbase
+
+  labels:
+    app.kubernetes.io/name: redis-cluster
+    app.kubernetes.io/part-of: ledgerbase
+
+spec:
+
+  # A headless Service exposes individual Pod addresses
+  # instead of routing all traffic through one ClusterIP.
+  clusterIP: None
+
+  # Allow peer DNS records to exist before Pods
+  # become Ready, supporting cluster initialization.
+  publishNotReadyAddresses: true
+
+  selector:
+    app.kubernetes.io/name: redis-cluster
+
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+      protocol: TCP
+
+    - name: cluster-bus
+      port: 16379
+      targetPort: cluster-bus
+      protocol: TCP
+
+---
+
+# ============================================================
+# REDIS CLUSTER STATEFULSET
+# ============================================================
+
+apiVersion: apps/v1
+kind: StatefulSet
+
+metadata:
+  name: redis-cluster
+  namespace: ledgerbase
+
+  labels:
+    app.kubernetes.io/name: redis-cluster
+    app.kubernetes.io/part-of: ledgerbase
+
+spec:
+
+  serviceName: redis-cluster-headless
+
+  replicas: 6
+
+  revisionHistoryLimit: 3
+
+  # Start all Redis instances independently.
+  #
+  # Cluster initialization is performed later.
+  podManagementPolicy: Parallel
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis-cluster
+
+  template:
+
+    metadata:
+      labels:
+        app.kubernetes.io/name: redis-cluster
+        app.kubernetes.io/part-of: ledgerbase
+
+    spec:
+
+      automountServiceAccountToken: false
+
+      # Run Redis as a non-root application user.
+      #
+      # fsGroup permits access to mounted data volumes.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+
+      terminationGracePeriodSeconds: 30
+
+      containers:
+
+        - name: redis
+
+          # ==================================================
+          # REDIS IMAGE
+          # ==================================================
+
+          image: redis:7.4-alpine
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: redis
+              containerPort: 6379
+              protocol: TCP
+
+            - name: cluster-bus
+              containerPort: 16379
+              protocol: TCP
+
+          # ==================================================
+          # ENVIRONMENT VARIABLES
+          # ==================================================
+
+          env:
+
+            # Name of this StatefulSet Pod.
+            #
+            # Examples:
+            # redis-cluster-0
+            # redis-cluster-1
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+
+            # Current Kubernetes Pod IP.
+            #
+            # Redis announces this address for
+            # cluster node-to-node communication.
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+
+            # Password for Redis clients and
+            # primary-to-replica authentication.
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ledgerbase-redis-auth
+                  key: password
+
+            # redis-cli automatically uses this
+            # credential for authenticated probes.
+            - name: REDISCLI_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: ledgerbase-redis-auth
+                  key: password
+
+          # ==================================================
+          # REDIS STARTUP CONFIGURATION
+          # ==================================================
+          #
+          # Generate redis.conf at startup.
+          #
+          # Configuration is stored in an ephemeral
+          # memory-backed directory, not in Git or PVC.
+          #
+          # Persistent cluster identity remains in
+          # /data/nodes.conf.
+          #
+          # Every Pod runs one Redis process on 6379.
+
+          command:
+            - /bin/sh
+            - -ec
+
+          args:
+            - |
+              set -eu
+              umask 077
+
+              : "${REDIS_PASSWORD:?Missing Redis password}"
+              : "${POD_NAME:?Missing Pod name}"
+              : "${POD_IP:?Missing Pod IP}"
+
+              # Require the generated hexadecimal
+              # password without displaying its value.
+
+              if ! printf '%s' "$REDIS_PASSWORD" |
+                grep -Eq '^[0-9a-f]{64}$'; then
+
+                echo "Invalid Redis password format." >&2
+                exit 1
+              fi
+
+              # Stable DNS identity for this Pod.
+              #
+              # Redis clients can use these hostnames
+              # when discovering cluster topology.
+
+              POD_DNS="${POD_NAME}.redis-cluster-headless.ledgerbase.svc.cluster.local"
+
+              CONFIG_FILE="/run/ledgerbase-redis/redis.conf"
+
+              # Generate runtime Redis configuration.
+              #
+              # Cache data is intentionally disposable.
+              # Cluster topology metadata is persistent.
+
+              cat > "$CONFIG_FILE" <<EOF
+              bind 0.0.0.0
+              port 6379
+              protected-mode yes
+
+              daemonize no
+              logfile ""
+              dir /data
+
+              requirepass ${REDIS_PASSWORD}
+              masterauth ${REDIS_PASSWORD}
+
+              cluster-enabled yes
+              cluster-config-file /data/nodes.conf
+              cluster-node-timeout 5000
+
+              cluster-announce-ip ${POD_IP}
+              cluster-announce-port 6379
+              cluster-announce-bus-port 16379
+              cluster-announce-hostname ${POD_DNS}
+              cluster-preferred-endpoint-type hostname
+
+              appendonly no
+              save ""
+
+              maxmemory 96mb
+              maxmemory-policy allkeys-lru
+              EOF
+
+              echo "Starting Redis Cluster node ${POD_NAME}"
+
+              exec redis-server "$CONFIG_FILE"
+
+          # ==================================================
+          # STORAGE MOUNTS
+          # ==================================================
+
+          volumeMounts:
+
+            # Persist node IDs and cluster topology.
+            - name: redis-data
+              mountPath: /data
+
+            # Keep generated configuration in memory.
+            - name: runtime-config
+              mountPath: /run/ledgerbase-redis
+
+          # ==================================================
+          # CONTAINER SECURITY
+          # ==================================================
+
+          securityContext:
+            allowPrivilegeEscalation: false
+
+            capabilities:
+              drop:
+                - ALL
+
+          # ==================================================
+          # RESOURCES
+          # ==================================================
+          #
+          # Small resource allocation for local kind.
+          #
+          # Redis data memory is limited to 96 MiB;
+          # total container memory includes additional
+          # process and replication overhead.
+
+          resources:
+            requests:
+              cpu: 25m
+              memory: 80Mi
+
+            limits:
+              cpu: 250m
+              memory: 256Mi
+
+          # ==================================================
+          # STARTUP PROBE
+          # ==================================================
+
+          startupProbe:
+            tcpSocket:
+              port: redis
+
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 30
+
+          # ==================================================
+          # READINESS PROBE
+          # ==================================================
+          #
+          # Check Redis availability and authentication.
+          #
+          # This intentionally does not require a
+          # healthy Redis Cluster yet.
+          #
+          # The bootstrap Job runs only after all six
+          # Redis processes become available.
+
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -ec
+                - redis-cli -p 6379 ping | grep -qx PONG
+
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          # ==================================================
+          # LIVENESS PROBE
+          # ==================================================
+
+          livenessProbe:
+            tcpSocket:
+              port: redis
+
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 6
+
+      # ======================================================
+      # EPHEMERAL CONFIGURATION STORAGE
+      # ======================================================
+
+      volumes:
+        - name: runtime-config
+          emptyDir:
+            medium: Memory
+
+  # ==========================================================
+  # PERSISTENT NODE IDENTITY
+  # ==========================================================
+  #
+  # Each of the six Pods receives a separate PVC.
+  #
+  # Example:
+  # redis-data-redis-cluster-0
+  # redis-data-redis-cluster-1
+  #
+  # Redis Cluster metadata must survive Pod restarts.
+  #
+  # Cache keys themselves do not require persistence.
+
+  volumeClaimTemplates:
+
+    - metadata:
+        name: redis-data
+
+      spec:
+        accessModes:
+          - ReadWriteOnce
+
+        storageClassName: standard
+
+        resources:
+          requests:
+            storage: 1Gi

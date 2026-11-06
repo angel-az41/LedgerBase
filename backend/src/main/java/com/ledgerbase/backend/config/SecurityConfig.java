@@ -195,22 +195,67 @@ public class SecurityConfig {
                     "/api/v1/health/**"
                 ).permitAll()
 
+                
+                // ---------------------------------------------
+                // PUBLIC KUBERNETES HEALTH CHECK
+                // ---------------------------------------------
+
+                /**
+                 * Allow Kubernetes readiness probes to
+                 * check Accounting Core without a JWT.
+                 *
+                 * GET /actuator/health:
+                 *
+                 * - Returns the application's health status.
+                 * - Allows Kubernetes to determine whether
+                 *   this Pod can receive application traffic.
+                 * - Does not grant access to financial APIs.
+                 *
+                 * Only the exact health endpoint is public.
+                 *
+                 * More detailed Actuator health paths and
+                 * other monitoring endpoints remain protected.
+                 */
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/actuator/health"
+                ).permitAll()
+
+                // ============================================================
+                // PROMETHEUS — INTERNAL APPLICATION METRICS
+                // ============================================================
+                //
+                // Allow Prometheus to scrape read-only application metrics.
+                //
+                // In Kubernetes, access will be through the internal
+                // Accounting Core Service, not the public React frontend.
+                //
+                // Financial API endpoints remain protected by JWT and
+                // business-scoped role-based authorization.
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/actuator/prometheus"
+                ).permitAll()
+
 
                 // ---------------------------------------------
                 // AUTHENTICATED ACTUATOR ENDPOINTS
                 // ---------------------------------------------
 
                 /**
-                 * Preserve authenticated access to health
-                 * and info without exposing other Actuator
-                 * endpoints through a broad wildcard.
+                 * Continue requiring authentication for
+                 * additional health details and application
+                 * information.
                  *
-                 * This is separate from the public
-                 * /api/v1/health endpoints.
+                 * SECURITY:
+                 *
+                 * Do not permit all /actuator/** endpoints.
+                 *
+                 * Unknown endpoints remain denied by the
+                 * explicit deny-by-default fallback.
                  */
                 .requestMatchers(
                     HttpMethod.GET,
-                    "/actuator/health",
                     "/actuator/health/**",
                     "/actuator/info"
                 ).authenticated()

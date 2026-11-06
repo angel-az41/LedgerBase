@@ -1,0 +1,66 @@
+# ============================================================
+# LEDGERBASE — LOCAL KUBERNETES CLUSTER
+# ============================================================
+#
+# PURPOSE:
+#
+# Run LedgerBase in a local kind Kubernetes cluster.
+#
+# kind creates Kubernetes nodes as Docker containers.
+#
+# This configuration is independent of the existing
+# Docker Compose development environment.
+#
+# DATABASE SAFETY:
+#
+# Creating this cluster does not migrate, modify, or
+# delete existing Docker Compose database volumes.
+
+
+# ============================================================
+# CLUSTER CONFIGURATION
+# ============================================================
+
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+
+
+# ============================================================
+# CONTROL PLANE NODE
+# ============================================================
+#
+# Start with a single Kubernetes control-plane node.
+#
+# This is sufficient for initial local deployment and
+# application integration testing.
+#
+# It is not a production high-availability cluster.
+
+nodes:
+  - role: control-plane
+
+    # ========================================================
+    # LOCAL FRONTEND PORT MAPPING
+    # ========================================================
+    #
+    # Docker Compose currently uses localhost:3000.
+    #
+    # Kubernetes will use localhost:3001 to avoid
+    # conflicting with the existing frontend.
+    #
+    # hostPort:
+    #   Browser-facing port on the Mac.
+    #
+    # containerPort:
+    #   Port exposed on the kind node.
+    #
+    # The frontend Kubernetes Service will later
+    # use NodePort 30080.
+    #
+    # Bind only to localhost for local development.
+
+    extraPortMappings:
+      - containerPort: 30080
+        hostPort: 3001
+        listenAddress: "127.0.0.1"
+        protocol: TCP

@@ -1,0 +1,74 @@
+# ============================================================
+# LEDGERBASE — POSTGRESQL PRIMARY AUTHENTICATION
+# ============================================================
+#
+# PURPOSE:
+#
+# Configure physical streaming replication access
+# for the LedgerBase Kubernetes PostgreSQL primary.
+#
+# SECURITY:
+#
+# - Only the dedicated replication role is authorized.
+# - Use SCRAM-SHA-256 password authentication.
+# - Restrict connections to the local kind Pod CIDR.
+# - Preserve existing PostgreSQL authentication rules.
+#
+# No passwords or other credentials are stored here.
+#
+# NETWORK:
+#
+# The current local kind node uses:
+#
+# 10.244.0.0/24
+#
+# This configuration is specific to the local cluster.
+# Update it if the Kubernetes Pod network changes.
+
+
+# ============================================================
+# POSTGRESQL AUTHENTICATION CONFIGMAP
+# ============================================================
+
+apiVersion: v1
+kind: ConfigMap
+
+metadata:
+  name: ledgerbase-postgres-hba
+  namespace: ledgerbase
+
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/component: primary
+
+data:
+
+  # ==========================================================
+  # CUSTOM PG_HBA CONFIGURATION
+  # ==========================================================
+  #
+  # PostgreSQL reads authentication rules in order.
+  #
+  # FIRST:
+  # Allow physical replication using the dedicated
+  # replication role from the local Kubernetes network.
+  #
+  # THEN:
+  # Include the original authentication file generated
+  # by PostgreSQL when its data directory was created.
+  #
+  # This preserves existing local and application
+  # database authentication behavior.
+
+  pg_hba.conf: |
+    # ========================================================
+    # LEDGERBASE — PHYSICAL STREAMING REPLICATION
+    # ========================================================
+
+    host replication ledgerbase_replicator 10.244.0.0/24 scram-sha-256
+
+    # ========================================================
+    # PRESERVE EXISTING POSTGRESQL AUTHENTICATION
+    # ========================================================
+
+    include /var/lib/postgresql/data/pgdata/pg_hba.conf

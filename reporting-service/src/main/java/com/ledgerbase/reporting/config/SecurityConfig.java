@@ -134,6 +134,20 @@ public class SecurityConfig {
                     "/actuator/health/**"
                 ).permitAll()
 
+                // ============================================================
+                // PROMETHEUS — REPORTING SERVICE METRICS
+                // ============================================================
+                //
+                // Expose read-only performance and JVM metrics for internal
+                // Kubernetes monitoring.
+                //
+                // Do not change Trial Balance authentication, business
+                // authorization, or reporting data access restrictions.
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/actuator/prometheus"
+                ).permitAll()
+
                 // ------------------------------------------------
                 // LOCAL-ONLY ACTUATOR METRICS
                 // ------------------------------------------------

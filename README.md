@@ -107,7 +107,8 @@ the repository.
 | Distributed Caching | Redis Cluster, Spring Data Redis, Lettuce |
 | Asynchronous Messaging | Apache Kafka, Transactional Outbox, Idempotent Consumer |
 | Authentication and Authorization | JWT, Business-Scoped RBAC |
-| Development Infrastructure | Docker, Docker Compose |
+| Infrastructure & Orchestration | Docker, Docker Compose, Kubernetes (kind) |
+| Monitoring & Observability | Prometheus, Grafana, Spring Boot Actuator, Micrometer |
 | Build Tools | Maven, npm |
 | Testing | JUnit, Mockito, Spring Boot Integration Tests |
 | Version Control | Git, GitHub |
@@ -746,8 +747,16 @@ LedgerBase/
 │   │   └── utils/
 │   └── package.json
 │
+├── reporting-service/
+├── gateway/
+├── k8s/
+│   ├── base/
+│   └── kind/
+│
 ├── docs/
-│   └── accounting-demo.md
+│   ├── accounting-demo.md
+│   ├── architecture.md
+│   └── kubernetes-deployment.md
 │
 ├── docker-compose.yml
 └── README.md
@@ -960,6 +969,54 @@ can be demonstrated.
 
 ---
 
+## Local Kubernetes Deployment
+
+LedgerBase runs as a multi-service financial accounting
+platform on a local kind Kubernetes cluster.
+
+The deployment includes:
+
+- Spring Cloud Gateway and Accounting Core.
+- Independent Reporting Service.
+- PostgreSQL 17 with WAL streaming replication.
+- Six-node Redis Cluster with revision-aware caching.
+- Apache Kafka with transactional outbox and idempotent consumer.
+- Prometheus and Grafana monitoring.
+- React and TypeScript frontend served by Nginx.
+
+### Local Access
+
+| Service | Address |
+|---|---|
+| LedgerBase | http://localhost:3001 |
+| Prometheus | http://localhost:19090 |
+| Grafana | http://localhost:13000 |
+
+Prometheus and Grafana require local Kubernetes port forwarding.
+
+### Verified Deployment
+
+The local Kubernetes deployment was validated on November 6, 2026.
+
+All six Deployments and four StatefulSets were ready,
+four initialization Jobs completed, and eleven PVCs were bound.
+
+PostgreSQL replication, Redis Cluster caching, Kafka event
+processing, JWT protection, and Prometheus/Grafana monitoring
+were successfully verified.
+
+### Deployment Documentation
+
+See the [Kubernetes Deployment Guide](docs/kubernetes-deployment.md)
+for the architecture, prerequisites, installation instructions,
+verification commands, and troubleshooting.
+
+> Note: This is a single-node local Kubernetes deployment
+> intended for development and portfolio demonstration,
+> not a production high-availability environment.
+
+---
+
 ## Testing
 
 ### Backend Tests
@@ -1121,19 +1178,20 @@ Potential future extensions include:
 
 ### Distributed Systems and Infrastructure
 
-LedgerBase already implements Spring Cloud microservices,
+LedgerBase implements Spring Cloud microservices,
 PostgreSQL read replication, Redis Cluster caching,
-and Kafka-based asynchronous financial event processing.
+Kafka-based asynchronous financial event processing,
+and local Kubernetes deployment with Prometheus/Grafana
+monitoring.
 
 Potential future engineering extensions include:
 
-- Container orchestration with Kubernetes.
 - Automated CI/CD pipelines.
-- Prometheus and Grafana observability.
 - Distributed tracing and operational alerting.
 - Additional concurrency and failure-recovery testing.
 - Production-grade Kafka security and dead-letter handling.
-- Production deployment and infrastructure hardening.
+- Multi-node Kubernetes deployment and autoscaling.
+- Production infrastructure hardening and disaster recovery.
 
 ---
 

@@ -1,0 +1,364 @@
+# ============================================================
+# LEDGERBASE — POSTGRESQL READ REPLICA
+# ============================================================
+#
+# PURPOSE:
+#
+# Deploy a PostgreSQL 17 physical streaming replica.
+#
+# ARCHITECTURE:
+#
+# PostgreSQL Primary
+#       |
+#       | WAL streaming
+#       v
+# PostgreSQL Read Replica
+#       |
+#       v
+# Reporting Service
+#
+# The replica uses:
+#
+# - Its own persistent storage.
+# - A dedicated replication role.
+# - Kubernetes-managed credentials.
+# - The existing LedgerBase startup script.
+#
+# DATABASE SAFETY:
+#
+# Never initialize an independent database here.
+# Never overwrite an existing replica data directory.
+# Never mount the primary database's PVC.
+
+
+# ============================================================
+# REPLICA HEADLESS SERVICE
+# ============================================================
+
+apiVersion: v1
+kind: Service
+
+metadata:
+  name: postgres-replica-headless
+  namespace: ledgerbase
+
+  labels:
+    app.kubernetes.io/name: postgres-replica
+
+spec:
+  clusterIP: None
+
+  selector:
+    app.kubernetes.io/name: postgres-replica
+
+  ports:
+    - name: postgresql
+      port: 5432
+      targetPort: 5432
+
+---
+
+# ============================================================
+# REPLICA APPLICATION SERVICE
+# ============================================================
+#
+# Reporting Service will connect through:
+#
+# postgres-replica:5432
+#
+# This internal Service must never point to the primary.
+
+apiVersion: v1
+kind: Service
+
+metadata:
+  name: postgres-replica
+  namespace: ledgerbase
+
+  labels:
+    app.kubernetes.io/name: postgres-replica
+
+spec:
+  type: ClusterIP
+
+  selector:
+    app.kubernetes.io/name: postgres-replica
+
+  ports:
+    - name: postgresql
+      port: 5432
+      targetPort: 5432
+
+---
+
+# ============================================================
+# POSTGRESQL REPLICA STATEFULSET
+# ============================================================
+
+apiVersion: apps/v1
+kind: StatefulSet
+
+metadata:
+  name: postgres-replica
+  namespace: ledgerbase
+
+  labels:
+    app.kubernetes.io/name: postgres-replica
+
+spec:
+
+  # One standby uses one dedicated physical
+  # replication slot.
+  #
+  # Do not scale this StatefulSet above one replica
+  # without introducing unique replication slots.
+
+  replicas: 1
+
+  serviceName: postgres-replica-headless
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres-replica
+
+  template:
+
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres-replica
+    
+    spec:
+
+      terminationGracePeriodSeconds: 60
+
+      # ======================================================
+      # DISABLE AUTOMATIC SERVICE ACCOUNT TOKEN MOUNT
+      # ======================================================
+      #
+      # PostgreSQL does not communicate with the
+      # Kubernetes API server.
+      #
+      # Kubernetes normally mounts API credentials under:
+      #
+      # /var/run/secrets/kubernetes.io/serviceaccount
+      #
+      # Our replication password is mounted read-only
+      # at /run/secrets.
+      #
+      # Because /var/run points to /run, these mounts
+      # conflict and prevent the container from starting.
+      #
+      # Disable the unnecessary API token mount.
+      #
+      # The PostgreSQL replication Secret remains mounted
+      # independently and is not affected.
+
+      automountServiceAccountToken: false
+
+      terminationGracePeriodSeconds: 60
+
+      # ======================================================
+      # STARTUP SCRIPT AND CREDENTIAL VOLUMES
+      # ======================================================
+
+      volumes:
+
+        # Reuse the existing LedgerBase replica script.
+        - name: replica-startup
+          configMap:
+            name: ledgerbase-postgres-replica-startup
+
+        # Mount the replication password file at the
+        # exact location expected by the existing script.
+        #
+        # The script copies this file to a PostgreSQL-
+        # owned .pgpass with mode 0600.
+
+        - name: replication-credential
+          secret:
+            secretName: ledgerbase-postgres-replication
+            defaultMode: 0400
+
+            items:
+              - key: pgpass
+                path: replica_pgpass
+
+      containers:
+
+        - name: postgres-replica
+
+          image: postgres:17
+
+          imagePullPolicy: IfNotPresent
+
+          # ==================================================
+          # REPLICA INITIALIZATION
+          # ==================================================
+          #
+          # Run the existing startup script using Bash.
+          #
+          # That script:
+          #
+          # - Checks whether PGDATA is initialized.
+          # - Creates a base backup from postgres:5432.
+          # - Configures standby.signal.
+          # - Uses ledgerbase_replica_slot.
+          # - Starts PostgreSQL in hot standby mode.
+          #
+          # The official PostgreSQL image initially
+          # runs this script as root so it can prepare
+          # filesystem permissions, then its entrypoint
+          # starts PostgreSQL as the postgres user.
+
+          command:
+            - /bin/bash
+            - /usr/local/bin/start-replica.sh
+
+          # ==================================================
+          # REPLICA DATABASE DIRECTORY
+          # ==================================================
+          #
+          # Match the primary's PGDATA subdirectory.
+          #
+          # The startup script will not initialize an
+          # independent PostgreSQL database.
+
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+
+          ports:
+            - name: postgresql
+              containerPort: 5432
+
+          # ==================================================
+          # STORAGE AND CONFIGURATION MOUNTS
+          # ==================================================
+
+          volumeMounts:
+
+            # Independent persistent replica storage.
+            - name: replica-data
+              mountPath: /var/lib/postgresql/data
+
+            # Existing LedgerBase startup script.
+            - name: replica-startup
+              mountPath: /usr/local/bin/start-replica.sh
+              subPath: start-replica.sh
+              readOnly: true
+
+            # Replication credential used by pg_basebackup.
+            - name: replication-credential
+              mountPath: /run/secrets
+              readOnly: true
+
+          # ==================================================
+          # RESOURCE REQUESTS AND LIMITS
+          # ==================================================
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          
+          # ==================================================
+          # STARTUP PROBE
+          # ==================================================
+          #
+          # Confirm PostgreSQL is accepting connections.
+          #
+          # Always specify the actual PostgreSQL role
+          # and database. The cluster was initialized
+          # using POSTGRES_USER=ledgerbase.
+          #
+          # This avoids attempts to authenticate as
+          # the container's root or postgres OS users.
+
+          startupProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - pg_isready -h 127.0.0.1 -p 5432 -U ledgerbase -d ledgerbase
+
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 120
+
+          # ==================================================
+          # READINESS PROBE
+          # ==================================================
+          #
+          # The replica must be in PostgreSQL recovery mode
+          # before it can serve read-only reporting queries.
+          #
+          # Use the actual ledgerbase database role.
+          #
+          # The Pod becomes Ready only if the query
+          # successfully returns PostgreSQL boolean true.
+
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  test "$(
+                    gosu postgres psql \
+                      -X \
+                      -U ledgerbase \
+                      -d ledgerbase \
+                      -Atqc "SELECT pg_is_in_recovery()"
+                  )" = "t"
+
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          # ==================================================
+          # LIVENESS PROBE
+          # ==================================================
+          #
+          # Verify PostgreSQL continues accepting
+          # connections using the correct database role.
+
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - pg_isready -h 127.0.0.1 -p 5432 -U ledgerbase -d ledgerbase
+
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+
+  # ==========================================================
+  # INDEPENDENT PERSISTENT REPLICA STORAGE
+  # ==========================================================
+  #
+  # The replica must never share the primary PVC.
+  #
+  # This storage belongs only to postgres-replica-0.
+  #
+  # The local kind StorageClass is not a backup
+  # or production disaster-recovery solution.
+
+  volumeClaimTemplates:
+
+    - metadata:
+        name: replica-data
+
+      spec:
+        accessModes:
+          - ReadWriteOnce
+
+        storageClassName: standard
+
+        resources:
+          requests:
+            storage: 5Gi

@@ -1,0 +1,272 @@
+# ============================================================
+# LEDGERBASE — SPRING CLOUD API GATEWAY
+# ============================================================
+#
+# PURPOSE:
+#
+# Deploy Spring Cloud Gateway as the internal routing
+# layer for LedgerBase's Kubernetes application.
+#
+# REQUEST FLOW:
+#
+# React / Nginx
+#       |
+#       v
+# Spring Cloud Gateway
+#       |
+#       +--> Accounting Core
+#       |      Authentication and accounting APIs
+#       |
+#       +--> Reporting Service
+#              Trial Balance via PostgreSQL replica
+#
+# SECURITY:
+#
+# - Backend JWT and RBAC checks remain authoritative.
+# - Gateway preserves Authorization headers.
+# - The Gateway Service is internal to Kubernetes.
+# - No Kubernetes API token is required.
+#
+# The existing Spring Cloud Gateway routing
+# configuration is reused without modification.
+
+
+# ============================================================
+# GATEWAY DEPLOYMENT
+# ============================================================
+
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: gateway
+  namespace: ledgerbase
+
+  labels:
+    app.kubernetes.io/name: gateway
+    app.kubernetes.io/part-of: ledgerbase
+
+spec:
+
+  # One instance for initial local verification.
+  replicas: 1
+
+  revisionHistoryLimit: 3
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gateway
+
+  template:
+
+    metadata:
+      labels:
+        app.kubernetes.io/name: gateway
+        app.kubernetes.io/part-of: ledgerbase
+
+    spec:
+
+      # Gateway does not need Kubernetes API credentials.
+      automountServiceAccountToken: false
+
+      # Match the existing Java container runtime user.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+
+      terminationGracePeriodSeconds: 30
+
+      containers:
+
+        - name: gateway
+
+          # ==================================================
+          # CONTAINER IMAGE
+          # ==================================================
+          #
+          # Built from gateway/Dockerfile and loaded
+          # into the local kind cluster.
+
+          image: ledgerbase-gateway:local
+          imagePullPolicy: Never
+
+          ports:
+            - name: http
+              containerPort: 8081
+              protocol: TCP
+
+          # ==================================================
+          # SPRING CLOUD GATEWAY CONFIGURATION
+          # ==================================================
+
+          env:
+
+            # ------------------------------------------------
+            # HTTP LISTEN ADDRESS
+            # ------------------------------------------------
+            #
+            # Override the localhost binding used in
+            # application.yaml during local development.
+            #
+            # Kubernetes Services connect to the Pod IP.
+
+            - name: SERVER_ADDRESS
+              value: "0.0.0.0"
+
+            # ------------------------------------------------
+            # ACCOUNTING CORE UPSTREAM
+            # ------------------------------------------------
+            #
+            # All /api/v1/** requests except the
+            # specialized Trial Balance route are
+            # forwarded to this Kubernetes Service.
+
+            - name: LEDGERBASE_CORE_URL
+              value: "http://accounting-core:8080"
+
+            # ------------------------------------------------
+            # REPORTING SERVICE UPSTREAM
+            # ------------------------------------------------
+            #
+            # GET Trial Balance requests are forwarded
+            # to the independent Reporting Service.
+            #
+            # Authorization remains enforced by
+            # Reporting Service and Accounting Core.
+
+            - name: LEDGERBASE_REPORTING_URL
+              value: "http://reporting-service:8082"
+
+            # ============================================================
+            # PROMETHEUS — ACTUATOR METRICS EXPOSURE
+            # ============================================================
+            #
+            # Expose only health and Prometheus monitoring endpoints.
+            #
+            # The Prometheus server will scrape the internal Kubernetes
+            # Services directly, without going through the React frontend.
+            #
+            # Endpoint access must also be permitted by the relevant
+            # Spring Security configuration.
+
+            - name: MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE
+              value: "health,prometheus"
+
+          # ==================================================
+          # CONTAINER SECURITY
+          # ==================================================
+
+          securityContext:
+            allowPrivilegeEscalation: false
+
+            capabilities:
+              drop:
+                - ALL
+
+          # ==================================================
+          # RESOURCE ALLOCATION
+          # ==================================================
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+
+            limits:
+              cpu: "1"
+              memory: 768Mi
+
+          # ==================================================
+          # STARTUP PROBE
+          # ==================================================
+          #
+          # Allow time for Spring Cloud Gateway to
+          # initialize its routing infrastructure.
+
+          startupProbe:
+            tcpSocket:
+              port: http
+
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 60
+
+          # ==================================================
+          # READINESS PROBE
+          # ==================================================
+          #
+          # Gateway exposes Actuator health.
+          #
+          # The HTTP endpoint must return a successful
+          # status before Kubernetes routes traffic.
+          #
+          # If authorization blocks this endpoint,
+          # inspect the response before changing security.
+
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: http
+
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          # ==================================================
+          # LIVENESS PROBE
+          # ==================================================
+          #
+          # Verify that the Gateway HTTP server
+          # continues accepting connections.
+
+          livenessProbe:
+            tcpSocket:
+              port: http
+
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+
+---
+
+# ============================================================
+# GATEWAY INTERNAL SERVICE
+# ============================================================
+#
+# PURPOSE:
+#
+# Provide an internal endpoint for React/Nginx.
+#
+# DNS:
+#
+# gateway.ledgerbase.svc.cluster.local
+#
+# Same-namespace clients may use:
+#
+# http://gateway:8081
+#
+# Do not expose Gateway directly to the Internet.
+
+apiVersion: v1
+kind: Service
+
+metadata:
+  name: gateway
+  namespace: ledgerbase
+
+  labels:
+    app.kubernetes.io/name: gateway
+    app.kubernetes.io/part-of: ledgerbase
+
+spec:
+  type: ClusterIP
+
+  selector:
+    app.kubernetes.io/name: gateway
+
+  ports:
+    - name: http
+      port: 8081
+      targetPort: http
+      protocol: TCP
