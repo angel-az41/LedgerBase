@@ -1,0 +1,551 @@
+# ============================================================
+# LEDGERBASE — CONTINUOUS INTEGRATION
+# ============================================================
+#
+# PURPOSE:
+#
+# Automatically verify LedgerBase whenever code is pushed
+# or a pull request targets the main branch.
+#
+# VALIDATION:
+#
+# - Accounting Core Java tests with isolated PostgreSQL.
+# - Reporting Service and API Gateway Maven checks.
+# - React and TypeScript production build.
+# - Kubernetes YAML and Grafana JSON syntax validation.
+#
+# SECURITY:
+#
+# - Read-only repository access.
+# - No production credentials.
+# - No access to the local kind cluster.
+# - Disposable PostgreSQL database for tests.
+#
+# Continuous deployment is configured separately.
+
+name: LedgerBase CI
+
+# ============================================================
+# WORKFLOW TRIGGERS
+# ============================================================
+
+on:
+
+  # Run CI when opening or updating PRs targeting main.
+  pull_request:
+    branches:
+      - main
+
+  # Run CI when changes are pushed to main or feature branches.
+  push:
+    branches:
+      - main
+      - "feature/**"
+
+  # Allow manual execution from GitHub Actions.
+  workflow_dispatch:
+
+# ============================================================
+# REPOSITORY PERMISSIONS
+# ============================================================
+#
+# Tests and builds only need repository read access.
+
+permissions:
+  contents: read
+
+# ============================================================
+# CONCURRENCY CONTROL
+# ============================================================
+#
+# Cancel obsolete workflow runs after newer commits
+# are pushed to the same branch or PR reference.
+
+concurrency:
+  group: ledgerbase-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  # ==========================================================
+  # ACCOUNTING CORE — JAVA AND POSTGRESQL TESTS
+  # ==========================================================
+
+  accounting-core:
+
+    name: Accounting Core Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    # --------------------------------------------------------
+    # TEST ENVIRONMENT
+    # --------------------------------------------------------
+    #
+    # These credentials belong only to the disposable
+    # PostgreSQL service in this GitHub Actions job.
+    #
+    # They are not development or Kubernetes credentials.
+
+    env:
+      SPRING_PROFILES_ACTIVE: test
+      POSTGRES_PASSWORD: ci-only-test-password
+
+    # --------------------------------------------------------
+    # POSTGRESQL SERVICE CONTAINER
+    # --------------------------------------------------------
+    #
+    # GitHub starts a fresh PostgreSQL 17 container.
+    #
+    # Its database and port match:
+    # backend/src/test/resources/application-test.yaml
+    #
+    # The service is removed when the job finishes.
+
+    services:
+
+      postgres:
+        image: postgres:17
+
+        env:
+          POSTGRES_USER: ledgerbase
+          POSTGRES_PASSWORD: ci-only-test-password
+          POSTGRES_DB: ledgerbase_test
+
+        ports:
+          - 5434:5432
+
+        options: >-
+          --health-cmd "pg_isready -U ledgerbase -d ledgerbase_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+
+      # ------------------------------------------------------
+      # CHECK OUT REPOSITORY
+      # ------------------------------------------------------
+
+      - name: Checkout source code
+        uses: actions/checkout@v7
+
+      # ------------------------------------------------------
+      # CONFIGURE JAVA
+      # ------------------------------------------------------
+      #
+      # LedgerBase uses Java 25.
+      #
+      # Cache Maven dependencies to reduce repeated downloads.
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+          cache-dependency-path: backend/pom.xml
+
+      # ------------------------------------------------------
+      # VERIFY JAVA VERSION
+      # ------------------------------------------------------
+
+      - name: Show Java version
+        run: java -version
+
+      # ------------------------------------------------------
+      # RUN ACCOUNTING CORE TESTS
+      # ------------------------------------------------------
+      #
+      # Maven executes the configured automated tests.
+      #
+      # The Spring test profile connects to the disposable
+      # ledgerbase_test PostgreSQL database.
+      #
+      # Tests may also start their own disposable containers
+      # through Testcontainers when required.
+
+      - name: Run Accounting Core tests
+        run: |
+          ./backend/mvnw \
+            -B \
+            -ntp \
+            -f backend/pom.xml \
+            clean verify
+
+  # ==========================================================
+  # REPORTING SERVICE AND API GATEWAY
+  # ==========================================================
+  #
+  # Verify the two independent Spring Boot modules.
+  #
+  # These Maven checks do not deploy services to Kubernetes.
+  #
+  # If future integration tests require external databases,
+  # provide isolated test services rather than connecting to
+  # the live PostgreSQL replica.
+
+  java-services:
+
+    name: Reporting and Gateway Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+
+      - name: Checkout source code
+        uses: actions/checkout@v7
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+          cache-dependency-path: |
+            reporting-service/pom.xml
+            gateway/pom.xml
+
+      # ------------------------------------------------------
+      # REPORTING SERVICE
+      # ------------------------------------------------------
+
+      - name: Verify Reporting Service
+        run: |
+          ./backend/mvnw \
+            -B \
+            -ntp \
+            -f reporting-service/pom.xml \
+            clean verify
+
+      # ------------------------------------------------------
+      # SPRING CLOUD GATEWAY
+      # ------------------------------------------------------
+
+      - name: Verify API Gateway
+        run: |
+          ./backend/mvnw \
+            -B \
+            -ntp \
+            -f gateway/pom.xml \
+            clean verify
+
+  # ==========================================================
+  # FRONTEND — REACT AND TYPESCRIPT
+  # ==========================================================
+  #
+  # Install frontend dependencies from package-lock.json,
+  # compile TypeScript, and create the Vite production build.
+
+  frontend:
+
+    name: Frontend Production Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+
+      - name: Checkout source code
+        uses: actions/checkout@v7
+
+      # ------------------------------------------------------
+      # CONFIGURE NODE.JS
+      # ------------------------------------------------------
+      #
+      # Use Node.js 24 and cache npm dependencies.
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # ------------------------------------------------------
+      # INSTALL DEPENDENCIES
+      # ------------------------------------------------------
+      #
+      # npm ci installs exact versions from package-lock.json.
+      #
+      # It is preferable to npm install in CI because it
+      # fails when the lockfile and package.json disagree.
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # ------------------------------------------------------
+      # BUILD FRONTEND
+      # ------------------------------------------------------
+      #
+      # Runs TypeScript compilation and the Vite build.
+
+      - name: Build React frontend
+        run: npm run build
+
+  # ==========================================================
+  # CONFIGURATION VALIDATION
+  # ==========================================================
+  #
+  # Validate version-controlled infrastructure configuration
+  # without connecting to a Kubernetes cluster.
+  #
+  # YAML syntax checks do not replace Kubernetes API schema
+  # validation or live deployment smoke tests.
+
+  configuration:
+
+    name: Kubernetes and Grafana Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+
+      - name: Checkout source code
+        uses: actions/checkout@v7
+
+      # ------------------------------------------------------
+      # GRAFANA DASHBOARD JSON
+      # ------------------------------------------------------
+
+      - name: Validate Grafana dashboard JSON
+        run: |
+          python3 -m json.tool \
+            k8s/base/grafana-dashboard.json \
+            > /dev/null
+
+      # ------------------------------------------------------
+      # KUBERNETES YAML SYNTAX
+      # ------------------------------------------------------
+      #
+      # Parse all YAML files under k8s/.
+      #
+      # This catches malformed YAML before a deployment,
+      # but does not check resource schemas against the
+      # Kubernetes API.
+
+      - name: Install YAML parser
+        run: python3 -m pip install --quiet PyYAML
+
+      - name: Validate Kubernetes YAML syntax
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import yaml
+
+          # Find Kubernetes and kind YAML configuration files.
+          files = sorted(
+              list(Path("k8s").rglob("*.yaml"))
+              + list(Path("k8s").rglob("*.yml"))
+          )
+
+          if not files:
+              raise SystemExit("No Kubernetes YAML files found.")
+
+          # Validate each file, including multi-document YAML.
+          for path in files:
+              with path.open(encoding="utf-8") as stream:
+                  documents = list(yaml.safe_load_all(stream))
+
+              if not any(isinstance(doc, dict) for doc in documents):
+                  raise ValueError(
+                      f"{path} contains no YAML configuration."
+                  )
+
+              print(f"Validated: {path}")
+
+          print(f"Validated {len(files)} YAML files.")
+          PY
+      
+      # ------------------------------------------------------
+      # RELEASE DEPLOYMENT SCRIPT VALIDATION
+      # ------------------------------------------------------
+      #
+      # Validate shell syntax without executing a deployment.
+      #
+      # CI never accesses the developer's local kind cluster.
+
+      - name: Validate local deployment script
+        run: |
+          bash -n scripts/deploy-kind-from-ghcr.sh
+  
+  # ==========================================================
+  # DOCKER IMAGE BUILD AND GHCR PUBLISHING
+  # ==========================================================
+  #
+  # PURPOSE:
+  #
+  # Build container images for all LedgerBase services.
+  #
+  # SAFETY:
+  #
+  # - Wait for all existing CI jobs to pass.
+  # - Build images on feature branches and pull requests.
+  # - Publish images only on pushes to main.
+  # - Never connect to or deploy to the kind cluster.
+  #
+  # REGISTRY:
+  #
+  # GitHub Container Registry (GHCR).
+  #
+  # IMAGE VERSIONING:
+  #
+  # - Immutable commit-SHA tags for traceability.
+  # - Latest tag for the newest successful main build.
+  #
+  # PLATFORMS:
+  #
+  # - linux/amd64 for common x86-64 systems.
+  # - linux/arm64 for ARM64 systems, including Apple Silicon.
+
+  docker-images:
+
+    name: Docker Image - ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    # --------------------------------------------------------
+    # DEPENDENCY GATE
+    # --------------------------------------------------------
+    #
+    # Do not build or publish images unless all four
+    # independent CI verification jobs pass.
+
+    needs:
+      - accounting-core
+      - java-services
+      - frontend
+      - configuration
+
+    # --------------------------------------------------------
+    # GITHUB TOKEN PERMISSIONS
+    # --------------------------------------------------------
+    #
+    # Read source code and permit registry publication.
+    #
+    # Publishing is separately restricted to main.
+
+    permissions:
+      contents: read
+      packages: write
+
+    # --------------------------------------------------------
+    # BUILD MATRIX
+    # --------------------------------------------------------
+    #
+    # Build four service images independently.
+    #
+    # The build context for Accounting Core is backend/.
+    # Reporting Service and Gateway use the repository root
+    # because they reuse backend's Maven wrapper.
+    #
+    # The frontend uses frontend/ as its build context.
+
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+
+      matrix:
+        include:
+
+          - service: accounting-core
+            context: ./backend
+            dockerfile: ./backend/Dockerfile
+
+          - service: reporting-service
+            context: .
+            dockerfile: ./reporting-service/Dockerfile
+
+          - service: gateway
+            context: .
+            dockerfile: ./gateway/Dockerfile
+
+          - service: frontend
+            context: ./frontend
+            dockerfile: ./frontend/Dockerfile
+
+    steps:
+
+      # ------------------------------------------------------
+      # CHECK OUT SOURCE CODE
+      # ------------------------------------------------------
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      # ------------------------------------------------------
+      # MULTI-ARCHITECTURE BUILD SUPPORT
+      # ------------------------------------------------------
+      #
+      # QEMU permits ARM64 image builds on GitHub's
+      # x86-64 Linux runners.
+      #
+      # Cross-architecture compilation may take longer
+      # than a native local Docker build.
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      # ------------------------------------------------------
+      # GHCR AUTHENTICATION
+      # ------------------------------------------------------
+      #
+      # Authenticate only when publishing from main.
+      #
+      # The automatically generated GITHUB_TOKEN is used;
+      # no personal access token is required for publishing
+      # packages associated with this repository.
+
+      - name: Log in to GitHub Container Registry
+        if: >-
+          github.event_name == 'push' &&
+          github.ref == 'refs/heads/main'
+        uses: docker/login-action@v4
+
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ------------------------------------------------------
+      # BUILD AND CONDITIONALLY PUBLISH
+      # ------------------------------------------------------
+      #
+      # Feature branches and pull requests:
+      # - Build the images.
+      # - Do not publish them.
+      #
+      # Pushes to main:
+      # - Build and publish each image to GHCR.
+      # - Add a commit-specific SHA tag and latest.
+      #
+      # Every image is linked to the source repository.
+
+      - name: Build and publish ${{ matrix.service }}
+        uses: docker/build-push-action@v7
+
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+
+          platforms: linux/amd64,linux/arm64
+
+          push: >-
+            ${{
+              github.event_name == 'push' &&
+              github.ref == 'refs/heads/main'
+            }}
+
+          tags: |
+            ghcr.io/angel-az41/ledgerbase-${{ matrix.service }}:sha-${{ github.sha }}
+            ghcr.io/angel-az41/ledgerbase-${{ matrix.service }}:latest
+
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.title=LedgerBase ${{ matrix.service }}
