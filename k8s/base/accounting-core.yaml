@@ -215,6 +215,37 @@ spec:
             # outbox profile until the Kubernetes Kafka
             # broker is configured and running.
 
+            # ============================================================
+            # KAFKA — TRANSACTIONAL OUTBOX INTEGRATION
+            # ============================================================
+            #
+            # Activate the existing Kafka outbox Spring profile.
+            #
+            # This profile enables:
+            # - PostgreSQL transactional outbox polling.
+            # - Reliable Kafka event publication.
+            # - Idempotent Kafka event consumption.
+            #
+            # The application publishes events only after the
+            # corresponding financial transaction has committed.
+
+            - name: SPRING_PROFILES_ACTIVE
+              value: "kafka-outbox"
+
+            # ------------------------------------------------------------
+            # KAFKA BROKER DISCOVERY
+            # ------------------------------------------------------------
+            #
+            # Connect to the internal Kubernetes Kafka Service.
+            #
+            # Kafka advertises kafka:9092, which is reachable by
+            # other Pods inside the ledgerbase namespace.
+            #
+            # No public broker port is required.
+
+            - name: LEDGERBASE_KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka:9092"
+
           # ==================================================
           # CONTAINER SECURITY
           # ==================================================
