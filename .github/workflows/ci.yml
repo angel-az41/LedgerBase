@@ -358,3 +358,182 @@ jobs:
 
           print(f"Validated {len(files)} YAML files.")
           PY
+  
+  # ==========================================================
+  # DOCKER IMAGE BUILD AND GHCR PUBLISHING
+  # ==========================================================
+  #
+  # PURPOSE:
+  #
+  # Build container images for all LedgerBase services.
+  #
+  # SAFETY:
+  #
+  # - Wait for all existing CI jobs to pass.
+  # - Build images on feature branches and pull requests.
+  # - Publish images only on pushes to main.
+  # - Never connect to or deploy to the kind cluster.
+  #
+  # REGISTRY:
+  #
+  # GitHub Container Registry (GHCR).
+  #
+  # IMAGE VERSIONING:
+  #
+  # - Immutable commit-SHA tags for traceability.
+  # - Latest tag for the newest successful main build.
+  #
+  # PLATFORMS:
+  #
+  # - linux/amd64 for common x86-64 systems.
+  # - linux/arm64 for ARM64 systems, including Apple Silicon.
+
+  docker-images:
+
+    name: Docker Image - ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    # --------------------------------------------------------
+    # DEPENDENCY GATE
+    # --------------------------------------------------------
+    #
+    # Do not build or publish images unless all four
+    # independent CI verification jobs pass.
+
+    needs:
+      - accounting-core
+      - java-services
+      - frontend
+      - configuration
+
+    # --------------------------------------------------------
+    # GITHUB TOKEN PERMISSIONS
+    # --------------------------------------------------------
+    #
+    # Read source code and permit registry publication.
+    #
+    # Publishing is separately restricted to main.
+
+    permissions:
+      contents: read
+      packages: write
+
+    # --------------------------------------------------------
+    # BUILD MATRIX
+    # --------------------------------------------------------
+    #
+    # Build four service images independently.
+    #
+    # The build context for Accounting Core is backend/.
+    # Reporting Service and Gateway use the repository root
+    # because they reuse backend's Maven wrapper.
+    #
+    # The frontend uses frontend/ as its build context.
+
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+
+      matrix:
+        include:
+
+          - service: accounting-core
+            context: ./backend
+            dockerfile: ./backend/Dockerfile
+
+          - service: reporting-service
+            context: .
+            dockerfile: ./reporting-service/Dockerfile
+
+          - service: gateway
+            context: .
+            dockerfile: ./gateway/Dockerfile
+
+          - service: frontend
+            context: ./frontend
+            dockerfile: ./frontend/Dockerfile
+
+    steps:
+
+      # ------------------------------------------------------
+      # CHECK OUT SOURCE CODE
+      # ------------------------------------------------------
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      # ------------------------------------------------------
+      # MULTI-ARCHITECTURE BUILD SUPPORT
+      # ------------------------------------------------------
+      #
+      # QEMU permits ARM64 image builds on GitHub's
+      # x86-64 Linux runners.
+      #
+      # Cross-architecture compilation may take longer
+      # than a native local Docker build.
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      # ------------------------------------------------------
+      # GHCR AUTHENTICATION
+      # ------------------------------------------------------
+      #
+      # Authenticate only when publishing from main.
+      #
+      # The automatically generated GITHUB_TOKEN is used;
+      # no personal access token is required for publishing
+      # packages associated with this repository.
+
+      - name: Log in to GitHub Container Registry
+        if: >-
+          github.event_name == 'push' &&
+          github.ref == 'refs/heads/main'
+        uses: docker/login-action@v4
+
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ------------------------------------------------------
+      # BUILD AND CONDITIONALLY PUBLISH
+      # ------------------------------------------------------
+      #
+      # Feature branches and pull requests:
+      # - Build the images.
+      # - Do not publish them.
+      #
+      # Pushes to main:
+      # - Build and publish each image to GHCR.
+      # - Add a commit-specific SHA tag and latest.
+      #
+      # Every image is linked to the source repository.
+
+      - name: Build and publish ${{ matrix.service }}
+        uses: docker/build-push-action@v7
+
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+
+          platforms: linux/amd64,linux/arm64
+
+          push: >-
+            ${{
+              github.event_name == 'push' &&
+              github.ref == 'refs/heads/main'
+            }}
+
+          tags: |
+            ghcr.io/angel-az41/ledgerbase-${{ matrix.service }}:sha-${{ github.sha }}
+            ghcr.io/angel-az41/ledgerbase-${{ matrix.service }}:latest
+
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.title=LedgerBase ${{ matrix.service }}
