@@ -171,6 +171,18 @@ jobs:
             -ntp \
             -f backend/pom.xml \
             clean verify
+    
+      # ------------------------------------------------------
+      # RELEASE DEPLOYMENT SCRIPT VALIDATION
+      # ------------------------------------------------------
+      #
+      # Validate shell syntax without executing a deployment.
+      #
+      # CI never accesses the developer's local kind cluster.
+
+      - name: Validate local deployment script
+        run: |
+          bash -n scripts/deploy-kind-from-ghcr.sh
 
   # ==========================================================
   # REPORTING SERVICE AND API GATEWAY
