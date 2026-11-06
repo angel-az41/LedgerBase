@@ -14,9 +14,12 @@
 # - Requires an explicit 40-character Git commit SHA.
 # - Requires an explicit --deploy command to make changes.
 # - Verifies the active Kubernetes context.
+# - Detects the target Kubernetes node architecture.
+# - Loads architecture-specific images into kind.
 # - Preserves PostgreSQL, Redis, and Kafka workloads.
 # - Does not delete PVCs, Secrets, or ConfigMaps.
 # - Waits for each application Deployment to become ready.
+# - Verifies database health and JWT protection.
 #
 # Images must already have been published to GHCR by
 # the successful GitHub Actions workflow on main.
@@ -98,9 +101,11 @@ if [[ "$ARCH" != "arm64" && "$ARCH" != "amd64" ]]; then
   exit 1
 fi
 
+PLATFORM="linux/$ARCH"
+
 echo "Cluster: $CLUSTER_NAME"
 echo "Namespace: $NAMESPACE"
-echo "Platform: linux/$ARCH"
+echo "Platform: $PLATFORM"
 echo "Commit: $COMMIT_SHA"
 
 # ============================================================
@@ -143,6 +148,47 @@ if [[ "$MODE" == "--plan" ]]; then
 fi
 
 # ============================================================
+# VERIFY DEPLOYMENT-ONLY PREREQUISITES
+# ============================================================
+#
+# These tools are required only for an actual deployment.
+#
+# The read-only --plan mode does not require them.
+
+if ! command -v curl >/dev/null 2>&1; then
+  echo "Error: curl is not installed."
+  exit 1
+fi
+
+# ============================================================
+# PREPARE TEMPORARY IMAGE ARCHIVE DIRECTORY
+# ============================================================
+#
+# Docker Desktop may retain a multi-platform image index
+# even when pulling a specific architecture.
+#
+# Passing that image directly to kind load docker-image
+# can cause missing content digest errors.
+#
+# Instead, export only the target node architecture and
+# import the resulting archive into kind.
+#
+# A private temporary directory holds the archives.
+# The EXIT trap removes it on success or failure.
+
+IMAGE_ARCHIVE_DIR="$(mktemp -d \
+  "${TMPDIR:-/tmp}/ledgerbase-kind-images.XXXXXXXX")"
+
+cleanup_image_archives() {
+  if [[ -n "${IMAGE_ARCHIVE_DIR:-}" &&
+        -d "$IMAGE_ARCHIVE_DIR" ]]; then
+    rm -rf -- "$IMAGE_ARCHIVE_DIR"
+  fi
+}
+
+trap cleanup_image_archives EXIT
+
+# ============================================================
 # DOWNLOAD AND LOAD ALL IMAGES
 # ============================================================
 #
@@ -150,23 +196,43 @@ fi
 #
 # This helps avoid partially deploying a release because
 # a later service image could not be downloaded.
+#
+# Each image is exported for the Kubernetes node platform,
+# preventing kind from importing unavailable architectures.
 
 for service in "${SERVICES[@]}"; do
   image="$REGISTRY/ledgerbase-$service:sha-$COMMIT_SHA"
+  image_archive="$IMAGE_ARCHIVE_DIR/$service-$ARCH.tar"
 
   echo ""
-  echo "Pulling $image"
+  echo "Pulling $image for $PLATFORM..."
 
   docker pull \
-    --platform "linux/$ARCH" \
+    --platform "$PLATFORM" \
     "$image"
 
-  echo "Loading image into kind..."
+  echo "Exporting $PLATFORM image archive..."
 
-  kind load docker-image \
-    "$image" \
+  docker image save \
+    --platform "$PLATFORM" \
+    --output "$image_archive" \
+    "$image"
+
+  echo "Loading $service image archive into kind..."
+
+  kind load image-archive \
+    "$image_archive" \
     --name "$CLUSTER_NAME"
+
+  # The archive is no longer needed after a successful
+  # import. The EXIT trap handles cleanup on failure.
+  rm -f -- "$image_archive"
+
+  echo "Image loaded successfully: $service"
 done
+
+echo ""
+echo "All release images loaded into kind."
 
 # ============================================================
 # UPDATE APPLICATION DEPLOYMENTS
@@ -199,22 +265,36 @@ for service in "${SERVICES[@]}"; do
     echo "Inspect the Pods and consider rollout undo."
     exit 1
   fi
+
+  echo "Deployment ready: $service"
 done
 
 # ============================================================
 # VERIFY BASIC APPLICATION CONNECTIVITY
 # ============================================================
+#
+# The frontend must be reachable on localhost:3001.
+#
+# This normally requires the existing kind port-forward
+# configuration to remain active during deployment.
 
 echo ""
 echo "Checking LedgerBase database health..."
 
-curl --fail --silent --show-error \
+curl \
+  --fail \
+  --silent \
+  --show-error \
+  --max-time 15 \
   http://localhost:3001/api/v1/health/database
 
 echo ""
 echo "Checking unauthenticated financial API protection..."
 
-STATUS="$(curl --silent \
+STATUS="$(curl \
+  --silent \
+  --show-error \
+  --max-time 15 \
   --output /dev/null \
   --write-out '%{http_code}' \
   http://localhost:3001/api/v1/businesses)"
@@ -224,6 +304,15 @@ if [[ "$STATUS" != "401" ]]; then
   exit 1
 fi
 
+# ============================================================
+# DEPLOYMENT COMPLETE
+# ============================================================
+
 echo ""
 echo "LedgerBase release deployment completed."
+echo "Cluster: $CLUSTER_NAME"
+echo "Namespace: $NAMESPACE"
+echo "Platform: $PLATFORM"
 echo "Commit: $COMMIT_SHA"
+echo "All four application Deployments are ready."
+echo "Database connectivity and JWT protection verified."
