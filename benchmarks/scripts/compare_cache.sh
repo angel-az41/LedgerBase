@@ -1,18 +1,30 @@
 #!/usr/bin/env bash
 
 # ============================================================
-# LEDGERBASE — AUTOMATED REDIS CACHE BENCHMARK
+# LEDGERBASE — REPEATED REDIS CACHE BENCHMARK
 # ============================================================
 #
-# Compare Redis-enabled and uncached Trial Balance reporting.
+# Compare Trial Balance reporting with Redis enabled
+# and disabled in the local Kubernetes deployment.
 #
-# Safety:
-# - Validate JWT authentication and remaining lifetime.
-# - Preserve the original Kubernetes cache setting.
-# - Restart metrics port-forward after each rollout.
-# - Reject failed HTTP requests and failed checks.
-# - Restore configuration on normal exit or interruption.
-# - Save all experimental artifacts outside Git.
+# EXPERIMENT DESIGN:
+#
+# Round 1: Redis ON  -> Redis OFF
+# Round 2: Redis OFF -> Redis ON
+# Round 3: Redis ON  -> Redis OFF
+#
+# Each invocation executes exactly one round.
+#
+# SAFETY:
+#
+# - Validate authentication before testing.
+# - Require a sufficiently fresh JWT.
+# - Verify accounting totals before each benchmark.
+# - Preserve all results in a unique directory.
+# - Capture process-local Prometheus counters.
+# - Manage the metrics port-forward automatically.
+# - Restore the original cache setting on exit.
+# - Never store credentials in result files.
 #
 # Run from the LedgerBase repository root.
 #
@@ -20,30 +32,43 @@
 
 set -Eeuo pipefail
 
+# ============================================================
+# EXPERIMENT CONFIGURATION
+# ============================================================
+
 NAMESPACE="ledgerbase"
 DEPLOYMENT="reporting-service"
 
 BASE_URL="http://127.0.0.1:3001"
+
 METRICS_PORT="18084"
+
 METRICS_URL="http://127.0.0.1:${METRICS_PORT}/actuator/prometheus"
 
 BUSINESS_ID="${BUSINESS_ID:-3}"
 AS_OF_DATE="${AS_OF_DATE:-2026-10-31}"
 
+ROUND="${ROUND:-1}"
+
+EXPECTED_TOTAL="523190.19"
+EXPECTED_ACCOUNT_COUNT=100
+
 K6_SCRIPT="benchmarks/k6/reporting.js"
-RESULTS_DIR="benchmarks/results/cache-comparison"
+
+RESULTS_ROOT="benchmarks/results/cache-comparison"
 
 METRICS_PID=""
 RESTORE_NEEDED="false"
 ORIGINAL_CACHE_STATE=""
+ROUND_DIR=""
 
 # ============================================================
-# PREREQUISITES
+# VALIDATE PREREQUISITES
 # ============================================================
 
 for command in kubectl k6 jq curl python3; do
     if ! command -v "$command" >/dev/null 2>&1; then
-        echo "Missing command: $command" >&2
+        echo "Missing required command: $command" >&2
         exit 1
     fi
 done
@@ -54,18 +79,22 @@ if [[ -z "${ACCESS_TOKEN:-}" ]]; then
 fi
 
 if [[ ! -f "$K6_SCRIPT" ]]; then
-    echo "Missing k6 script: $K6_SCRIPT" >&2
+    echo "Missing benchmark script: $K6_SCRIPT" >&2
     exit 1
 fi
 
-mkdir -p "$RESULTS_DIR"
+if [[ ! "$ROUND" =~ ^[123]$ ]]; then
+    echo "ROUND must be 1, 2, or 3." >&2
+    exit 1
+fi
 
 # ============================================================
-# READ CURRENT KUBERNETES CACHE SETTING
+# READ KUBERNETES CONFIGURATION
 # ============================================================
 
 get_cache_state() {
-    kubectl -n "$NAMESPACE" get deployment "$DEPLOYMENT" \
+    kubectl -n "$NAMESPACE" \
+        get deployment "$DEPLOYMENT" \
         -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="LEDGERBASE_TRIAL_BALANCE_CACHE_ENABLED")].value}'
 }
 
@@ -73,14 +102,42 @@ ORIGINAL_CACHE_STATE="$(get_cache_state)"
 
 if [[ "$ORIGINAL_CACHE_STATE" != "true" &&
       "$ORIGINAL_CACHE_STATE" != "false" ]]; then
-    echo "Invalid original cache state." >&2
+    echo "Unable to determine original cache state." >&2
     exit 1
 fi
 
-echo "Original cache state: $ORIGINAL_CACHE_STATE"
+# Our controlled experiment starts from the known
+# cache-enabled local deployment.
+if [[ "$ORIGINAL_CACHE_STATE" != "true" ]]; then
+    echo "Expected initial cache setting: true" >&2
+    echo "Actual: $ORIGINAL_CACHE_STATE" >&2
+    exit 1
+fi
 
 # ============================================================
-# METRICS PORT-FORWARD LIFECYCLE
+# CREATE UNIQUE RESULTS DIRECTORY
+# ============================================================
+
+mkdir -p "$RESULTS_ROOT"
+
+# mktemp prevents accidental overwrites, including
+# when two runs begin in the same second.
+ROUND_DIR="$(
+    mktemp -d \
+        "$RESULTS_ROOT/round-${ROUND}-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX"
+)"
+
+echo "=========================================="
+echo "LedgerBase Cache Benchmark"
+echo "=========================================="
+echo "Round: $ROUND"
+echo "Business: $BUSINESS_ID"
+echo "Reporting date: $AS_OF_DATE"
+echo "Original cache state: $ORIGINAL_CACHE_STATE"
+echo "Results: $ROUND_DIR"
+
+# ============================================================
+# METRICS PORT-FORWARD MANAGEMENT
 # ============================================================
 
 stop_metrics_forward() {
@@ -94,26 +151,28 @@ stop_metrics_forward() {
 start_metrics_forward() {
     stop_metrics_forward
 
-    # Target the active Deployment's Pod after rollout.
-    # Use a separate metrics port from manual diagnostics.
+    # The Deployment resolves to its current Pod.
+    # Start a new forward after each Kubernetes rollout.
     kubectl -n "$NAMESPACE" port-forward \
         "deployment/$DEPLOYMENT" \
         "${METRICS_PORT}:8082" \
         --address 127.0.0.1 \
-        > "$RESULTS_DIR/port-forward.log" 2>&1 &
+        > "$ROUND_DIR/port-forward.log" 2>&1 &
 
     METRICS_PID=$!
 
-    # Poll until the fresh forwarding connection responds.
     for attempt in {1..30}; do
         if ! kill -0 "$METRICS_PID" 2>/dev/null; then
-            echo "Metrics port-forward exited." >&2
-            cat "$RESULTS_DIR/port-forward.log" >&2
+            echo "Port-forward exited unexpectedly." >&2
+            cat "$ROUND_DIR/port-forward.log" >&2
             return 1
         fi
 
-        if curl -fsS --max-time 3 \
-            "$METRICS_URL" -o /dev/null 2>/dev/null; then
+        if curl -fsS \
+            --max-time 3 \
+            "$METRICS_URL" \
+            -o /dev/null 2>/dev/null; then
+
             echo "Prometheus metrics endpoint ready."
             return 0
         fi
@@ -121,16 +180,16 @@ start_metrics_forward() {
         sleep 1
     done
 
-    echo "Metrics endpoint did not become ready." >&2
+    echo "Prometheus endpoint unavailable." >&2
     return 1
 }
 
 # ============================================================
-# RESTORE KUBERNETES ON EXIT
+# AUTOMATIC RESTORATION
 # ============================================================
 
 cleanup() {
-    local original_exit_code=$?
+    local exit_code=$?
 
     trap - EXIT INT TERM
     set +e
@@ -139,36 +198,37 @@ cleanup() {
 
     if [[ "$RESTORE_NEEDED" == "true" ]]; then
         echo ""
-        echo "Restoring cache=$ORIGINAL_CACHE_STATE..."
+        echo "Restoring original cache configuration..."
 
         kubectl -n "$NAMESPACE" set env \
             "deployment/$DEPLOYMENT" \
             "LEDGERBASE_TRIAL_BALANCE_CACHE_ENABLED=$ORIGINAL_CACHE_STATE"
 
-        local update_status=$?
+        local update_result=$?
 
         kubectl -n "$NAMESPACE" rollout status \
             "deployment/$DEPLOYMENT" \
             --timeout=180s
 
-        local rollout_status=$?
-        local restored_state
+        local rollout_result=$?
 
-        restored_state="$(get_cache_state)"
-        local verify_status=$?
+        local actual_state
+        actual_state="$(get_cache_state)"
+        local read_result=$?
 
-        if [[ "$update_status" -ne 0 ||
-              "$rollout_status" -ne 0 ||
-              "$verify_status" -ne 0 ||
-              "$restored_state" != "$ORIGINAL_CACHE_STATE" ]]; then
-            echo "WARNING: Cache restoration not verified!" >&2
-            original_exit_code=1
+        if [[ "$update_result" -ne 0 ||
+              "$rollout_result" -ne 0 ||
+              "$read_result" -ne 0 ||
+              "$actual_state" != "$ORIGINAL_CACHE_STATE" ]]; then
+
+            echo "WARNING: Cache restoration not verified." >&2
+            exit_code=1
         else
-            echo "Original Kubernetes cache setting restored."
+            echo "Cache restored and verified: $actual_state"
         fi
     fi
 
-    exit "$original_exit_code"
+    exit "$exit_code"
 }
 
 trap cleanup EXIT
@@ -176,78 +236,126 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 # ============================================================
-# JWT LIFETIME VERIFICATION
+# CHECK JWT EXPIRATION
 # ============================================================
 
 check_token_lifetime() {
-    # Decode JWT payload locally. This is only a preflight
-    # expiration check; Spring Security remains responsible
-    # for cryptographic authentication and authorization.
-    python3 - <<'PY'
+    local minimum_seconds="$1"
+
+    MIN_JWT_SECONDS="$minimum_seconds" python3 - <<'PY'
 import base64
 import json
 import os
 import sys
 import time
 
+# This is a local expiration check, not JWT
+# signature verification.
+# Spring Security validates the actual JWT.
+
 token = os.environ["ACCESS_TOKEN"]
 
 try:
     payload_part = token.split(".")[1]
-    padded = payload_part + "=" * (-len(payload_part) % 4)
+
+    padded = (
+        payload_part
+        + "=" * (-len(payload_part) % 4)
+    )
 
     payload = json.loads(
         base64.urlsafe_b64decode(padded)
     )
 
-    remaining = int(payload["exp"] - time.time())
+    remaining = int(
+        payload["exp"] - time.time()
+    )
 
-except (IndexError, KeyError, ValueError, TypeError):
-    print("Unable to inspect JWT expiration.", file=sys.stderr)
-    sys.exit(1)
-
-# Allow enough time for warm-up and a 30-second k6 run.
-# The caller specifies the minimum remaining lifetime.
-# Individual runs need less time than the full comparison.
-minimum_seconds = int(
-    os.environ.get("MIN_JWT_SECONDS", "120")
-)
-
-if remaining < minimum_seconds:
+except (
+    IndexError,
+    KeyError,
+    ValueError,
+    TypeError,
+):
     print(
-        f"JWT has only {remaining}s remaining; "
-        f"at least {minimum_seconds}s required.",
+        "Unable to inspect JWT expiration.",
         file=sys.stderr,
     )
     sys.exit(1)
 
-print(f"JWT lifetime remaining: {remaining}s")
+minimum = int(
+    os.environ["MIN_JWT_SECONDS"]
+)
+
+if remaining < minimum:
+    print(
+        f"JWT remaining: {remaining}s; "
+        f"required: {minimum}s.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+print(
+    f"JWT remaining: {remaining}s"
+)
 PY
 }
 
 # ============================================================
-# AUTHENTICATED REPORT VERIFICATION
+# VERIFY REPORTING AND ACCOUNTING CORRECTNESS
 # ============================================================
 
 verify_reporting() {
+    local response_file
+
+    response_file="$(mktemp)"
+
     local status
 
     status=$(
-        curl --silent --show-error --max-time 15 \
-            -o /dev/null \
-            -w '%{http_code}' \
+        curl --silent --show-error \
+            --max-time 15 \
+            --output "$response_file" \
+            --write-out '%{http_code}' \
             "$BASE_URL/api/v1/businesses/$BUSINESS_ID/reports/trial-balance?asOfDate=$AS_OF_DATE" \
             -H "Authorization: Bearer $ACCESS_TOKEN"
-    )
+    ) || {
+        rm -f "$response_file"
+        return 1
+    }
 
     if [[ "$status" != "200" ]]; then
-        echo "Reporting verification failed: HTTP $status" >&2
+        echo "Reporting request returned HTTP $status" >&2
+        rm -f "$response_file"
         return 1
     fi
+
+    # Validate the actual accounting result.
+    # Do not treat arbitrary HTTP 200 responses as valid.
+    if ! jq -e \
+        --argjson business "$BUSINESS_ID" \
+        --arg reportingDate "$AS_OF_DATE" \
+        --arg total "$EXPECTED_TOTAL" \
+        --argjson count "$EXPECTED_ACCOUNT_COUNT" \
+        '
+        .businessId == $business
+        and .asOfDate == $reportingDate
+        and .balanced == true
+        and .totalDebits == $total
+        and .totalCredits == $total
+        and (.rows | length) == $count
+        ' "$response_file" > /dev/null; then
+
+        echo "Trial Balance correctness verification failed." >&2
+        rm -f "$response_file"
+        return 1
+    fi
+
+    rm -f "$response_file"
 }
 
 # ============================================================
-# SWITCH CACHE CONFIGURATION
+# SWITCH REDIS CACHE STATE
 # ============================================================
 
 set_cache_state() {
@@ -259,6 +367,8 @@ set_cache_state() {
     current="$(get_cache_state)"
 
     if [[ "$current" != "$desired" ]]; then
+        # Set this before making changes so cleanup
+        # also runs after a partially failed update.
         RESTORE_NEEDED="true"
 
         kubectl -n "$NAMESPACE" set env \
@@ -281,33 +391,51 @@ set_cache_state() {
 }
 
 # ============================================================
-# ONE EXPERIMENTAL RUN
+# RUN ONE BENCHMARK CONDITION
 # ============================================================
 
 run_benchmark() {
     local label="$1"
-    local output_dir="$RESULTS_DIR/$label"
+    local desired="$2"
+
+    local output_dir="$ROUND_DIR/$label"
 
     mkdir -p "$output_dir"
 
     echo ""
-    echo "============================================"
-    echo "BENCHMARK: $label"
-    echo "============================================"
+    echo "=========================================="
+    echo "Round $ROUND — $label"
+    echo "=========================================="
 
-    check_token_lifetime
-    verify_reporting
+    # Check token before changing the deployment.
+    check_token_lifetime 90
 
-    # Warm up the Reporting Service and relevant data path.
+    set_cache_state "$desired"
+
+    # Check again after rollout, before measuring.
+    check_token_lifetime 75
+
+    # Warm up the actual reporting path.
     for attempt in {1..5}; do
         verify_reporting
     done
 
+    # Verify the same business and report totals
+    # immediately before running k6.
+    verify_reporting
+
+    # Capture metrics from the current Pod.
     curl -fsS --max-time 15 \
         "$METRICS_URL" \
         -o "$output_dir/before.prom"
 
-    # Preserve the existing k6 scenario and its thresholds.
+    # Save the Pod identity for verification.
+    kubectl -n "$NAMESPACE" get pods \
+        -l app.kubernetes.io/name=reporting-service \
+        -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' \
+        > "$output_dir/pod-before.txt"
+
+    # Run the identical k6 workload for both modes.
     ACCESS_TOKEN="$ACCESS_TOKEN" \
     BUSINESS_ID="$BUSINESS_ID" \
     AS_OF_DATE="$AS_OF_DATE" \
@@ -320,7 +448,22 @@ run_benchmark() {
         "$METRICS_URL" \
         -o "$output_dir/after.prom"
 
-    # Ignore error-response latency as a performance result.
+    kubectl -n "$NAMESPACE" get pods \
+        -l app.kubernetes.io/name=reporting-service \
+        -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' \
+        > "$output_dir/pod-after.txt"
+
+    # Process-local counters are not comparable if
+    # the Reporting Service Pod changes mid-run.
+    if ! cmp -s \
+        "$output_dir/pod-before.txt" \
+        "$output_dir/pod-after.txt"; then
+
+        echo "Reporting Pod changed during benchmark." >&2
+        return 1
+    fi
+
+    # Reject failed requests, checks, or iterations.
     jq -e '
         .metrics.http_req_failed.value == 0
         and .metrics.checks.fails == 0
@@ -328,34 +471,46 @@ run_benchmark() {
         and .metrics.http_reqs.count > 0
     ' "$output_dir/k6-summary.json" > /dev/null
 
-    echo "Valid benchmark completed: $label"
+    echo "Benchmark completed successfully: $label"
 }
 
 # ============================================================
-# RUN CACHE ON / OFF
+# EXPERIMENT EXECUTION
 # ============================================================
 
-echo ""
-echo "Verifying JWT and reporting endpoint..."
-
-# Reserve sufficient lifetime for two k6 runs,
-# Kubernetes rollout, and application warm-up.
-MIN_JWT_SECONDS=300 check_token_lifetime
-
+# Require a reasonably fresh token before starting
+# a two-condition experiment.
+check_token_lifetime 240
 verify_reporting
 
+if [[ "$ROUND" == "2" ]]; then
+    FIRST_STATE="false"
+    SECOND_STATE="true"
+else
+    FIRST_STATE="true"
+    SECOND_STATE="false"
+fi
+
+if [[ "$FIRST_STATE" == "true" ]]; then
+    FIRST_LABEL="redis-on"
+    SECOND_LABEL="redis-off"
+else
+    FIRST_LABEL="redis-off"
+    SECOND_LABEL="redis-on"
+fi
+
 echo ""
-echo "Beginning Redis cache comparison."
+echo "Experiment order:"
+echo "1. $FIRST_LABEL"
+echo "2. $SECOND_LABEL"
 
-set_cache_state "true"
-run_benchmark "redis-on"
-
-set_cache_state "false"
-run_benchmark "redis-off"
+run_benchmark "$FIRST_LABEL" "$FIRST_STATE"
+run_benchmark "$SECOND_LABEL" "$SECOND_STATE"
 
 echo ""
-echo "Both benchmark runs completed."
-echo "Results directory: $RESULTS_DIR"
+echo "=========================================="
+echo "Round $ROUND completed successfully."
+echo "Results: $ROUND_DIR"
+echo "=========================================="
 
-# The EXIT trap stops forwarding and restores the
-# original Kubernetes cache state.
+# The EXIT trap restores the original Kubernetes state.
