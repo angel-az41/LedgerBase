@@ -28,3 +28,15 @@ dist/
 
 # Local infrastructure credentials
 .secrets/
+
+# LedgerBase performance benchmark execution artifacts
+/benchmarks/results/*
+!/benchmarks/results/.gitkeep
+
+# Python-generated files
+__pycache__/
+*.pyc
+
+# Local benchmark results and dataset progress
+/benchmarks/results/*
+!/benchmarks/results/.gitkeep
