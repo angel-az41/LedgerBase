@@ -41,6 +41,7 @@ on:
     branches:
       - main
       - "feature/**"
+      - "chore/**"
 
   # Allow manual execution from GitHub Actions.
   workflow_dispatch:
@@ -307,6 +308,49 @@ jobs:
         uses: actions/checkout@v7
 
       # ------------------------------------------------------
+      # GITHUB ACTIONS WORKFLOW VALIDATION
+      # ------------------------------------------------------
+      #
+      # Validate all GitHub Actions workflow files.
+      # Verify the downloaded Actionlint archive checksum.
+
+      - name: Install Actionlint
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ACTIONLINT_VERSION="1.7.12"
+          ACTIONLINT_SHA256="8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+
+          mkdir -p "$RUNNER_TEMP/actionlint"
+
+          curl --fail --location --show-error --silent \
+            --retry 5 \
+            --retry-all-errors \
+            --retry-delay 3 \
+            --connect-timeout 15 \
+            --max-time 60 \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+            -o "$RUNNER_TEMP/actionlint.tar.gz"
+
+          echo "${ACTIONLINT_SHA256}  $RUNNER_TEMP/actionlint.tar.gz" \
+            | sha256sum --check
+
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" \
+            -C "$RUNNER_TEMP/actionlint" \
+            actionlint
+
+          chmod +x "$RUNNER_TEMP/actionlint/actionlint"
+
+          echo "$RUNNER_TEMP/actionlint" >> "$GITHUB_PATH"
+
+      - name: Validate GitHub Actions workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          actionlint -color=false
+
+      # ------------------------------------------------------
       # GRAFANA DASHBOARD JSON
       # ------------------------------------------------------
 
@@ -358,7 +402,77 @@ jobs:
 
           print(f"Validated {len(files)} YAML files.")
           PY
-      
+
+      # ------------------------------------------------------
+      # KUBERNETES RESOURCE SCHEMA VALIDATION
+      # ------------------------------------------------------
+      #
+      # Validate Kubernetes resource structures against
+      # versioned Kubernetes OpenAPI-derived schemas.
+      #
+      # Unlike YAML syntax validation, Kubeconform checks
+      # resource fields and their expected data types.
+      #
+      # Only validate deployable manifests in k8s/base/.
+      # The kind cluster configuration is not a standard
+      # Kubernetes API resource.
+      #
+      # This is offline cluster-independent validation
+      # but requires downloading the schema definitions.
+
+      - name: Install Kubeconform
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Pin the validator version for reproducible CI.
+          KUBECONFORM_VERSION="v0.8.0"
+
+          # SHA-256 of the official v0.8.0 Linux AMD64 archive.
+          KUBECONFORM_SHA256="9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883"
+
+          mkdir -p "$RUNNER_TEMP/kubeconform"
+
+          curl --fail --location --show-error --silent \
+            --retry 5 \
+            --retry-all-errors \
+            --retry-delay 3 \
+            --connect-timeout 15 \
+            --max-time 60 \
+            "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+            -o "$RUNNER_TEMP/kubeconform.tar.gz"
+
+          # Reject corrupted or unexpected release artifacts.
+          echo "${KUBECONFORM_SHA256}  $RUNNER_TEMP/kubeconform.tar.gz" \
+            | sha256sum --check
+
+          tar -xzf "$RUNNER_TEMP/kubeconform.tar.gz" \
+            -C "$RUNNER_TEMP/kubeconform" \
+            kubeconform
+
+          chmod +x "$RUNNER_TEMP/kubeconform/kubeconform"
+
+          echo "$RUNNER_TEMP/kubeconform" >> "$GITHUB_PATH"
+
+      - name: Validate Kubernetes resource schemas
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Match the local kind cluster's Kubernetes version.
+          #
+          # Strict validation rejects unsupported fields.
+          # Missing schemas and invalid resources fail CI.
+          #
+          # Do not use -ignore-missing-schemas because
+          # silently skipping resources would weaken CI.
+
+          kubeconform \
+            -strict \
+            -summary \
+            -kubernetes-version 1.37.0 \
+            k8s/base/*.yaml
+
       # ------------------------------------------------------
       # RELEASE DEPLOYMENT SCRIPT VALIDATION
       # ------------------------------------------------------
@@ -370,7 +484,23 @@ jobs:
       - name: Validate local deployment script
         run: |
           bash -n scripts/deploy-kind-from-ghcr.sh
-  
+
+      # ------------------------------------------------------
+      # PERFORMANCE BENCHMARK SCRIPT VALIDATION
+      # ------------------------------------------------------
+      #
+      # Validate benchmark tooling without running load tests.
+      # Actual benchmarks require a deployed Kubernetes
+      # environment and authenticated application access.
+
+      - name: Validate performance benchmark scripts
+        run: |
+          bash -n benchmarks/scripts/compare_cache.sh
+
+          python3 -m py_compile \
+            benchmarks/data/generate_dataset.py \
+            benchmarks/scripts/analyze_results.py
+
   # ==========================================================
   # DOCKER IMAGE BUILD AND GHCR PUBLISHING
   # ==========================================================

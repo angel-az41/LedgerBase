@@ -155,8 +155,6 @@ spec:
 
       automountServiceAccountToken: false
 
-      terminationGracePeriodSeconds: 60
-
       # ======================================================
       # STARTUP SCRIPT AND CREDENTIAL VOLUMES
       # ======================================================
