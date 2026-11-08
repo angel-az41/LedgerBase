@@ -325,7 +325,11 @@ jobs:
           mkdir -p "$RUNNER_TEMP/actionlint"
 
           curl --fail --location --show-error --silent \
-            --retry 3 \
+            --retry 5 \
+            --retry-all-errors \
+            --retry-delay 3 \
+            --connect-timeout 15 \
+            --max-time 60 \
             "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
             -o "$RUNNER_TEMP/actionlint.tar.gz"
 
@@ -430,7 +434,11 @@ jobs:
           mkdir -p "$RUNNER_TEMP/kubeconform"
 
           curl --fail --location --show-error --silent \
-            --retry 3 \
+            --retry 5 \
+            --retry-all-errors \
+            --retry-delay 3 \
+            --connect-timeout 15 \
+            --max-time 60 \
             "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
             -o "$RUNNER_TEMP/kubeconform.tar.gz"
 
@@ -464,7 +472,7 @@ jobs:
             -summary \
             -kubernetes-version 1.37.0 \
             k8s/base/*.yaml
-      
+
       # ------------------------------------------------------
       # RELEASE DEPLOYMENT SCRIPT VALIDATION
       # ------------------------------------------------------
@@ -492,7 +500,7 @@ jobs:
           python3 -m py_compile \
             benchmarks/data/generate_dataset.py \
             benchmarks/scripts/analyze_results.py
-  
+
   # ==========================================================
   # DOCKER IMAGE BUILD AND GHCR PUBLISHING
   # ==========================================================
