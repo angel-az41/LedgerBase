@@ -1,43 +1,41 @@
 # LedgerBase
 
-LedgerBase is a full-stack financial accounting platform built with
-**Java, Spring Boot, React, TypeScript, MyBatis, and PostgreSQL**.
+**Distributed Financial Accounting Platform | Java 25 · Spring Boot · PostgreSQL 17 · React · Redis · Kafka · Kubernetes**
 
-The project focuses on reliable financial transaction processing,
-double-entry bookkeeping, general ledger management, and
-database-backed financial reporting.
+LedgerBase is a backend-focused, full-stack financial accounting application that supports double-entry bookkeeping, general ledger management, draft-to-posted journal workflows, and financial reporting. It combines a React/TypeScript accounting workspace with Spring Cloud microservices and PostgreSQL-backed financial integrity controls.
 
-LedgerBase is designed as a backend-focused full-stack portfolio
-project demonstrating:
+The engineering platform demonstrates:
 
-- RESTful API development with Spring Boot.
-- Layered backend architecture and business logic.
-- Relational database design with PostgreSQL.
-- Transactional financial data processing.
-- Double-entry bookkeeping and accounting integrity.
-- Database migrations with Flyway.
-- React and TypeScript frontend development.
-- End-to-end accounting workflow validation.
+- **Microservices:** Spring Cloud Gateway routes accounting operations to Accounting Core and Trial Balance requests to an independent Reporting Service.
+- **Security:** JWT authentication, session validation, and business-scoped OWNER/VIEWER role-based access control (RBAC).
+- **Data consistency:** PostgreSQL ACID transactions, integrity constraints, protected posted records, and Flyway migrations.
+- **Read/write separation:** PostgreSQL 17 primary with WAL streaming read replica for Trial Balance reporting.
+- **Caching:** Six-node Redis Cluster (three primaries and three replicas) with business-, date-, and revision-aware Trial Balance cache keys.
+- **Asynchronous events:** Kafka transactional outbox and PostgreSQL idempotent consumer inbox using at-least-once delivery semantics.
+- **Infrastructure:** Docker, local kind Kubernetes deployment, GitHub Actions CI, Prometheus, and Grafana.
 
-The application is currently under active development.
+### Verified engineering results
+
+| Verification | Result |
+|---|---:|
+| Mean response latency reduction with Redis enabled | **36.61%** |
+| p95 response latency reduction with Redis enabled | **18.77%** |
+| Measured PostgreSQL replica connection acquisition reduction | **95.29%** |
+| Final Kubernetes hardening PR checks | **16/16 passed** |
+| Browser accounting workflow checks | **7/7 passed** |
+| PostgreSQL outbox events marked `PUBLISHED` | **1,007 / 1,007** |
+
+The performance figures come from a **controlled local k6 benchmark**, not live production traffic. Connection acquisitions are not a direct measurement of total database load. LedgerBase is a portfolio application, **not production-certified accounting software**.
 
 ---
 
 ## Screenshots & Demo
 
-LedgerBase provides a React-based accounting workspace
-for managing financial records, processing journal entries,
-and generating financial statements.
-
-The screenshots below use the fictional demonstration
-business **ABC Consulting LLC** and its October 2026
-accounting transactions.
+LedgerBase provides a React-based accounting workspace for managing financial records, posting journal entries, and generating financial statements. The screenshots use the fictional business **ABC Consulting LLC** and its October 2026 accounting transactions.
 
 ### Financial Dashboard
 
-The Overview dashboard displays financial performance,
-accounting health indicators, and recent journal activity
-using data retrieved from the backend.
+The Overview dashboard displays financial performance, accounting health indicators, and recent journal activity using backend-derived data.
 
 ![LedgerBase Financial Dashboard](docs/screenshots/01-dashboard.png)
 
@@ -46,12 +44,11 @@ using data retrieved from the backend.
 | Chart of Accounts | Journal Transactions |
 |---|---|
 | ![Chart of Accounts](docs/screenshots/02-chart-of-accounts.png) | ![Journal Transactions](docs/screenshots/03-transactions.png) |
-| Account management, reporting classifications, hierarchy, and CSV/XLSX import/export. | Business-specific journal references, transaction statuses, and double-entry posting workflows. |
+| Account hierarchy, classifications, and CSV/XLSX import/export. | Business-specific references, draft/posted statuses, and double-entry workflows. |
 
 ### Financial Reporting
 
-LedgerBase generates a Trial Balance, Income Statement,
-and Balance Sheet from posted ledger entries.
+LedgerBase generates a Trial Balance, Income Statement, and Balance Sheet from posted ledger entries.
 
 <details>
 <summary><strong>View Financial Report Screenshots</strong></summary>
@@ -72,27 +69,13 @@ and Balance Sheet from posted ledger entries.
 
 ### Accounting Demonstration
 
-The ABC Consulting LLC scenario includes eight posted
-journal entries covering capital contributions, expenses,
-revenue recognition, receivables, payables, customer
-advances, and fixed-asset purchases.
-
-The documented demonstration verifies:
-
-- Equal Trial Balance debit and credit totals.
-- Revenue and expense recognition.
-- Net Income of $4,800.00.
-- Balanced total assets of $32,800.00.
-- Balance Sheet reconciliation with a $0.00 difference.
+The ABC Consulting LLC scenario documents eight posted journal entries covering capital contributions, expenses, revenue recognition, receivables, payables, customer advances, and fixed-asset purchases. It verifies $4,800.00 net income, $32,800.00 total assets, and a $0.00 Balance Sheet reconciliation difference.
 
 **[View the Complete Accounting Demonstration](docs/accounting-demo.md)**
 
-The demonstration data is stored in the local development
-database and is not automatically seeded when cloning
-the repository.
+The demonstration data lives in a local development database; cloning the repository does not automatically seed these entries.
 
 ---
-
 
 ## Tech Stack
 
@@ -100,576 +83,193 @@ the repository.
 |---|---|
 | Frontend | React, TypeScript, Vite, Axios |
 | Backend | Java 25, Spring Boot, Spring Cloud Gateway, REST APIs |
-| Database Access | MyBatis, Spring JDBC |
-| Primary Database | PostgreSQL 17 |
-| Database Replication | PostgreSQL WAL Streaming Replication |
-| Database Migrations | Flyway |
-| Distributed Caching | Redis Cluster, Spring Data Redis, Lettuce |
-| Asynchronous Messaging | Apache Kafka, Transactional Outbox, Idempotent Consumer |
-| Authentication and Authorization | JWT, Business-Scoped RBAC |
-| Infrastructure & Orchestration | Docker, Docker Compose, Kubernetes (kind) |
-| Monitoring & Observability | Prometheus, Grafana, Spring Boot Actuator, Micrometer |
-| Build Tools | Maven, npm |
-| Testing | JUnit, Mockito, Spring Boot Integration Tests |
-| Version Control | Git, GitHub |
+| Database access | MyBatis, Spring JDBC |
+| Primary database | PostgreSQL 17 |
+| Replication | PostgreSQL WAL streaming replication |
+| Schema migrations | Flyway |
+| Caching | Redis Cluster, Spring Data Redis, Lettuce |
+| Messaging | Apache Kafka, transactional outbox, idempotent inbox |
+| Security | JWT, session validation, business-scoped RBAC |
+| Containers and orchestration | Docker, Docker Compose, Kubernetes (kind), Docker Buildx |
+| CI | GitHub Actions, automated tests/builds, Kubernetes manifest validation |
+| Observability | Prometheus, Grafana, Spring Boot Actuator, Micrometer |
+| Build and testing | Maven, npm, JUnit, Mockito, Spring Boot integration tests, k6 benchmarks |
 
 ---
 
 ## Architecture
 
-For a detailed explanation of the application layers,
-accounting workflows, and database architecture, see
-the [System Architecture Guide](docs/architecture.md).
-
-LedgerBase follows a layered full-stack architecture.
+For the detailed design, see the [System Architecture Guide](docs/architecture.md).
 
 ```text
-                 React + TypeScript
-                         |
-                         v
-                Spring Cloud Gateway
-                       :8081
-                         |
-             +-----------+-----------+
-             |                       |
-             v                       v
-      Accounting Core         Reporting Service
-          :8080                    :8082
-             |                       |
-             v                       +----> Redis Cluster
-      PostgreSQL Primary                  (6 nodes)
-             |                       |
-             |                       v
-             +--------------> PostgreSQL Replica
-             |                       (read-only)
-             |
-             v
-      Transactional Outbox
-             |
-             v
-       Kafka Publisher
-             |
-             v
-        Apache Kafka
-             |
-             v
-       Kafka Consumer
-             |
-             v
-      PostgreSQL Inbox
+React + TypeScript (Nginx in Kubernetes)
+                  |
+                  v
+         Spring Cloud Gateway
+                :8081
+                  |
+       +----------+----------+
+       |                     |
+       v                     v
+ Accounting Core       Reporting Service
+     :8080                  :8082
+       |                     | \
+       |                     |  +--> Redis Cluster (6 nodes)
+       |                     v
+       |             PostgreSQL Read Replica
+       |                     ^
+       v                     |
+ PostgreSQL Primary ---------+
+       |
+       v
+ Transactional Outbox
+       |
+       v
+ Kafka Publisher --> Kafka Broker --> Kafka Consumer
+                                        |
+                                        v
+                                 PostgreSQL Inbox
 ```
 
-The application uses Spring Cloud Gateway as its API entry point.
-
-Most accounting API requests are routed to Accounting Core.
-Trial Balance read requests are handled by the independent
-Reporting Service, which uses a PostgreSQL streaming replica
-and Redis Cluster caching.
-
-Accounting Core remains responsible for authoritative
-financial transaction processing.
-
-Committed financial events are persisted through a PostgreSQL
-transactional outbox, published asynchronously to Apache Kafka,
-and consumed using a durable, idempotent PostgreSQL inbox.
-
-The Reporting Service also validates authentication and
-business access through Accounting Core.
+**Accounting Core** is authoritative for financial writes, transaction posting, and account integrity. **Reporting Service** handles Trial Balance queries using the read replica and Redis cache. Reporting Service also validates authentication and business access through Accounting Core.
 
 ### Frontend
 
-The React frontend provides user interfaces for managing
-financial data and interacting with the accounting system.
+The React workspace supports business selection, account management, journal creation and review, posting confirmation, report presentation, and loading/error/success states. It uses REST APIs through Spring Cloud Gateway and displays backend-computed financial values rather than performing floating-point accounting calculations in the browser.
 
-It handles:
+### Backend and database
 
-- Business selection.
-- User input and form validation.
-- Chart of Accounts management.
-- Journal entry creation and review.
-- Transaction posting workflows.
-- Financial statement presentation.
-- Loading, error, and success states.
-
-The frontend communicates with the Spring Boot backend
-through REST APIs.
-
-### Backend
-
-The Spring Boot backend implements accounting business
-logic and validates financial operations.
-
-Responsibilities include:
-
-- Processing REST API requests.
-- Validating journal entries.
-- Managing transaction lifecycle states.
-- Enforcing double-entry bookkeeping rules.
-- Coordinating database transactions.
-- Retrieving general ledger and reporting data.
-- Applying accounting and business-level constraints.
-
-### Database
-
-PostgreSQL stores the application's financial records.
-
-The database supports:
-
-- Relational integrity and foreign key constraints.
-- Business-scoped financial data.
-- Financial transaction and ledger entry records.
-- Database-level protection of posted transactions.
-- Business-specific journal numbering.
-- Audit records.
-- Accounting and reporting structures.
-
-Flyway manages versioned database schema migrations.
-
-MyBatis maps Java backend operations to SQL statements.
+Spring Boot services enforce journal balance, account eligibility, business ownership, transaction lifecycle rules, and posted-record immutability. PostgreSQL stores financial records with business-scoped relationships, foreign keys, auditing, business-specific journal numbering, and transactional integrity. Flyway manages versioned schema changes; MyBatis maps Java operations to SQL.
 
 ---
 
 ## Kafka Transactional Outbox and Idempotent Consumer
 
-LedgerBase uses Apache Kafka to support asynchronous
-financial event processing without coupling financial
-posting to broker availability.
+Kafka supports asynchronous financial event processing without making successful ledger posting dependent on immediate broker availability.
 
-### Architecture
+### Event flow
 
-1. Accounting Core posts a financial transaction.
-2. PostgreSQL atomically persists the posting,
-   audit record, reporting revision, and outbox event.
-3. The outbox publisher claims committed events using
-   `FOR UPDATE SKIP LOCKED`.
-4. The publisher sends events to Apache Kafka.
-5. A successful Kafka acknowledgment causes the event
-   to be marked `PUBLISHED` in PostgreSQL.
-6. The Kafka consumer validates incoming events and
-   records processing receipts in a PostgreSQL inbox.
-7. The consumer acknowledges Kafka only after the
-   database processing transaction commits.
+1. Accounting Core validates and posts a balanced draft transaction.
+2. A PostgreSQL transaction atomically persists the posting, audit information, reporting revision, and outbox event.
+3. The outbox publisher claims committed events with `FOR UPDATE SKIP LOCKED`.
+4. It publishes `TransactionPosted` events to Kafka.
+5. After Kafka acknowledges publication, the publisher marks the outbox event `PUBLISHED`.
+6. The consumer validates the event and records a processing receipt in PostgreSQL.
+7. The consumer acknowledges Kafka after the inbox transaction commits.
 
-### Local Kafka Setup
+### Delivery and idempotency
 
-Start the broker alongside the existing infrastructure:
+Delivery is **at least once**, not globally exactly once. Failed publication attempts are retried with backoff; expired claims can be recovered. The inbox uses a unique `(consumer_name, event_id)` constraint to avoid duplicate database processing by the same logical consumer. The consumer does not repost financial transactions or modify authoritative ledger balances.
+
+Automated tests cover posting/outbox atomicity, rollback on outbox insertion failure, duplicate prevention, publisher acknowledgments and retries, expired-claim recovery, consumer deduplication, processing failure behavior, and rejection of events referencing draft transactions. Manual testing also verified retries when Kafka was unavailable and publication after recovery.
+
+### Local Kafka setup (Docker Compose)
 
 ```bash
-docker compose -f docker-compose.yml \
-  -f docker-compose.kafka.yml \
-  up -d kafka
+docker compose -f docker-compose.yml -f docker-compose.kafka.yml up -d kafka
 ```
 
-Create the financial event topic if it does not exist:
+If the financial event topic does not exist, create it:
 
 ```bash
 docker exec ledgerbase-kafka \
   /opt/kafka/bin/kafka-topics.sh \
   --bootstrap-server localhost:19092 \
-  --create \
-  --if-not-exists \
+  --create --if-not-exists \
   --topic ledgerbase.transaction-posted.v1 \
-  --partitions 3 \
-  --replication-factor 1
+  --partitions 3 --replication-factor 1
 ```
 
-Start Accounting Core with Kafka publishing and
-consumption enabled:
+For the local Maven-run Accounting Core, enable the Kafka outbox profile when its infrastructure and configuration are available:
 
 ```bash
 mvn -f backend/pom.xml spring-boot:run \
   -Dspring-boot.run.profiles=kafka-outbox
 ```
 
-Kafka publishing and consumption are opt-in and
-disabled during normal backend test runs.
+Kafka publishing/consumption is opt-in in local application profiles and disabled for normal backend test runs.
 
-### Delivery and Idempotency
+### Runtime verification — November 9, 2026
 
-LedgerBase implements at-least-once event delivery.
+- PostgreSQL reported **1,007 outbox events** with status `PUBLISHED`, each with a non-null publication timestamp.
+- The `ledgerbase.transaction-posted.v1` topic contained retained `TransactionPosted` events.
+- The browser smoke-test transaction (`transaction_id = 1007`) had outbox status `PUBLISHED`, `attempt_count = 1`, and a matching `PROCESSED` consumer inbox record.
+- The corresponding database timestamps were approximately **47 ms apart**. This is a timestamp difference, **not** an independently benchmarked end-to-end Kafka latency.
 
-The PostgreSQL outbox preserves events if Kafka
-becomes unavailable. Failed publication attempts
-are retried using exponential backoff.
+### Development limitations
 
-Outbox claims expire so abandoned events can be
-reclaimed after publisher failures.
-
-Kafka may deliver the same event more than once.
-The consumer uses a PostgreSQL inbox with a unique
-`(consumer_name, event_id)` key to prevent duplicate
-database processing for the same logical consumer.
-
-The consumer does not repost financial transactions
-or modify authoritative ledger balances.
-
-### Reliability Testing
-
-The backend test suite covers:
-
-- Atomic financial posting and outbox recording.
-- Duplicate outbox event prevention.
-- Financial posting rollback on outbox insertion failure.
-- Kafka publisher acknowledgment and retry handling.
-- Expired publisher claim recovery.
-- Consumer event-ID deduplication.
-- Consumer acknowledgment on successful processing.
-- Unacknowledged messages when processing fails.
-- Rejection of events referencing DRAFT transactions.
-
-Manual integration testing additionally verified
-Kafka broker outage retries and automatic publication
-after the broker recovered.
-
-### Development Limitations
-
-The local Kafka environment uses one KRaft broker,
-replication factor 1, and PLAINTEXT listeners.
-
-It is not a production high-availability deployment.
-
-Kafka delivery is at least once, not globally
-exactly once. Producer idempotence does not remove
-the need for consumer deduplication.
-
-The consumer's retry configuration may block a
-partition when a message cannot be processed.
-Production deployment would require additional
-authentication, transport security, monitoring,
-failure classification, and dead-letter handling.
-
-The `earliest` offset reset policy applies when
-the consumer group has no committed offsets.
-Existing groups resume from their committed offsets.
+The local broker uses single-node KRaft, replication factor 1, and PLAINTEXT listeners. Production deployment would require broker redundancy, authentication and TLS, operational alerting, appropriate handling of permanently failing messages, and disaster recovery. The consumer retry policy can block a partition on an unprocessable record. Kafka's `earliest` offset reset applies when a consumer group has no previously committed offsets.
 
 ---
 
 ## Implemented Features
 
-### 1. Business and Accounting Structure
+### 1. Business and accounting structure
 
-LedgerBase supports business-scoped financial records.
-
-Accounting data is associated with a specific business,
-allowing the application to maintain separate financial
-records for different businesses.
-
-Implemented accounting structures include:
-
-- Businesses and related financial data.
-- Fiscal years.
-- Accounting periods.
-- General ledger accounts.
-- Financial transactions.
-- Ledger entries.
-- Reporting classifications.
-
-LedgerBase implements JWT-based authentication and 
-business-scoped role-based access control to enforce 
-authorized financial operations. Additional security 
-hardening is required for production deployment.
+Business-scoped financial data includes businesses, fiscal years, accounting periods, general ledger accounts, transactions, debit/credit ledger entries, and reporting classifications. JWT and business-scoped OWNER/VIEWER RBAC restrict authorized operations.
 
 ### 2. Chart of Accounts
 
-Users can manage a business's general ledger accounts.
-
-Features include:
-
-- Create general ledger accounts.
-- Assign customizable account codes.
-- Classify accounts as Asset, Liability, Equity,
-  Revenue, or Expense.
-- Organize accounts using accounting reporting groups.
-- View, search, and filter accounts.
-- Update supported account information.
-- Deactivate accounts while retaining financial history.
+- Create accounts with business-specific account codes and classify them as Asset, Liability, Equity, Revenue, or Expense.
+- Organize accounts into reporting groups and parent–child hierarchies; grouping accounts may be non-postable.
+- Search, filter, update supported fields, and deactivate accounts while preserving financial history.
 - Display account statistics and operation feedback.
 
-Account classifications support financial reporting
-and the aggregation of ledger balances.
+### 3. Double-entry transaction processing
 
-### 3. Double-Entry Transaction Processing
-
-LedgerBase supports journal-based financial transaction
-processing.
-
-Features include:
-
-- Create draft journal entries.
-- Record multiple debit and credit lines.
-- Validate that total debits equal total credits.
-- Validate account eligibility and business ownership.
-- Retrieve and review transaction details.
-- Post balanced draft transactions.
-- Display transaction lifecycle states.
-- Prevent modification of protected posted records.
-- Record audit information for supported operations.
-
-Transactions follow a lifecycle:
+- Create draft journal entries with multiple debit/credit lines.
+- Validate equal debit and credit totals, account eligibility, and business ownership.
+- Review transaction details and post valid drafts.
+- Enforce immutable posted records with backend rules and database safeguards.
+- Record supported operation audit information.
 
 ```text
-        CREATE JOURNAL ENTRY
-                 |
-                 v
-               DRAFT
-                 |
-                 | Review and validate
-                 v
-           POST TRANSACTION
-                 |
-                 v
-               POSTED
-                 |
-                 v
-       INCLUDED IN FINANCIAL REPORTS
+CREATE JOURNAL ENTRY --> DRAFT --> VALIDATE --> POSTED --> FINANCIAL REPORTS
 ```
 
-Posted financial records are protected by backend
-accounting rules and database-level safeguards.
+### 4. Business-specific journal references
 
-### 4. Business-Specific Journal References
+Journal references are independently numbered per business (for example, Business A `JE-0001`, `JE-0002`; Business B `JE-0001`). PostgreSQL assigns references at creation; internal transaction IDs remain distinct from human-readable references. The React UI shows references in registers, detail panels, and notifications.
 
-LedgerBase assigns human-readable journal references
-within each business.
+### 5. Financial reporting
 
-Examples:
+- **Trial Balance:** aggregates posted entries and checks debit/credit equality.
+- **Income Statement:** aggregates revenue and expenses by reporting period and computes net income or loss.
+- **Balance Sheet:** aggregates assets, liabilities, equity, and unclosed earnings; checks `Assets = Liabilities + Equity`.
+
+Draft entries are excluded from posted financial balances.
+
+### 6. React accounting interface
+
+Business selection, account register, journal transaction register, search/status filters, journal form with debit/credit validation, transaction detail view, posting confirmation, financial reports, and contextual loading/error/success feedback. Values originate from backend APIs, not invented frontend balances.
+
+### 7. Accounting data integrity
+
+Application validation and PostgreSQL constraints protect double-entry balance, transaction lifecycle, foreign keys, business ownership, immutable posted records, transactional operations, auditing, and journal reference assignment.
+
+### 8. Chart of Accounts CSV/XLSX import and export
+
+- Export business account definitions in `.csv` or `.xlsx` with classifications, groups, and hierarchy.
+- Upload CSV/XLSX, parse rows, and preview validation results before committing.
+- Report row-specific errors, prevent duplicate codes, and resolve parent relationships independent of input ordering.
+- Import accounts transactionally, rolling back on failure, then refresh the account register.
+- Only new account creation is supported by import; existing codes, including inactive ones, cannot be reused. Updating existing rows or skipping duplicates remains future work.
 
 ```text
-Business A
-  JE-0001
-  JE-0002
-  JE-0003
-
-Business B
-  JE-0001
-  JE-0002
+Select File --> Parse --> Validate --> Preview --> Confirm --> Transactional Insert --> Refresh
 ```
 
-Each business maintains an independent journal sequence.
+### 9. Financial overview dashboard
 
-The system distinguishes between:
-
-- Internal transaction IDs used by PostgreSQL and APIs.
-- Business-specific references displayed to users.
-
-Journal references are assigned by PostgreSQL when
-transactions are created.
-
-The React interface displays the references in the
-transaction register, detail panels, and notifications.
-
-### 5. Financial Reporting
-
-LedgerBase generates financial reports from posted
-accounting data.
-
-Implemented reports include:
-
-**Trial Balance**
-
-- Displays account debit and credit balances.
-- Aggregates posted general ledger entries.
-- Verifies that total debits equal total credits.
-
-**Income Statement**
-
-- Aggregates revenue and expense accounts.
-- Calculates total revenue and expenses.
-- Calculates net income or loss.
-- Supports reporting periods.
-
-**Balance Sheet**
-
-- Classifies assets, liabilities, and equity.
-- Aggregates posted account balances.
-- Includes unclosed earnings.
-- Validates the accounting equation.
-
-The fundamental accounting equation is:
-
-```text
-Assets = Liabilities + Equity
-```
-
-Financial reports are based on applicable posted
-ledger entries rather than unposted drafts.
-
-### 6. React Accounting Interface
-
-The React and TypeScript frontend provides interfaces
-for the implemented accounting workflows.
-
-Features include:
-
-- Business selection.
-- Chart of Accounts management.
-- Transaction register.
-- Transaction search and status filters.
-- Journal entry creation form.
-- Debit and credit balance validation.
-- Transaction detail review.
-- Posting confirmation workflow.
-- Financial reporting pages.
-- Loading and error handling.
-- Success notifications.
-
-The interface uses actual backend and database data
-rather than hardcoded financial balances.
-
-### 7. Accounting Data Integrity
-
-Financial integrity is a central design goal.
-
-LedgerBase uses application-level validation and
-PostgreSQL constraints to protect accounting records.
-
-Implemented safeguards include:
-
-- Double-entry balance validation.
-- Transaction lifecycle validation.
-- Business-scoped data relationships.
-- Database constraints and foreign keys.
-- Protected posted financial records.
-- Transactional database operations.
-- Audit records for supported financial operations.
-- Business-specific journal number assignment.
-
-These controls support the reliability of the
-general ledger and financial reporting workflows.
-
-### 8. Chart of Accounts Import and Export
-
-LedgerBase supports importing and exporting general ledger
-account definitions in CSV and Microsoft Excel formats.
-
-**Supported formats**
-
-- CSV (`.csv`)
-- Microsoft Excel (`.xlsx`)
-
-**Export functionality**
-
-- Export a selected business's Chart of Accounts.
-- Download account definitions in CSV or Excel format.
-- Preserve account codes, names, classifications,
-  reporting groups, and account hierarchy information.
-- Generate export files from authoritative PostgreSQL data.
-
-**Import functionality**
-
-- Upload CSV or Excel account files.
-- Parse account definitions and validate input data.
-- Preview parsed rows before committing changes.
-- Display row-level validation errors.
-- Prevent duplicate account codes within a business.
-- Resolve parent-child relationships regardless of
-  the order of accounts in the uploaded file.
-- Support posting and non-posting grouping accounts.
-- Import validated records within a database transaction.
-- Roll back the transaction if an import operation fails.
-- Refresh the Chart of Accounts after a successful import.
-
-**Import workflow**
-
-```text
-Select CSV/XLSX File
-         |
-         v
-Parse Account Data
-         |
-         v
-Validate Accounts
-         |
-         v
-Display Import Preview
-         |
-         v
-Review Validation Results
-         |
-         v
-Confirm Import
-         |
-         v
-Transactional Database Insert
-         |
-         v
-Refresh Chart of Accounts
-```
-
-The import preview does not create database records.
-
-Account import currently supports creating new accounts.
-Existing account codes cannot be reused, including those
-belonging to inactive accounts.
-
-Updating existing accounts and skipping duplicates during
-import are reserved for future enhancements.
-
-
-### 9. Financial Overview Dashboard
-
-LedgerBase provides a financial dashboard for monitoring
-accounting performance, journal activity, and reporting
-integrity for the selected business.
-
-**Financial metrics**
-
-- Total Assets as of the selected reporting date.
-- Total Liabilities as of the selected reporting date.
-- Fiscal-year-to-date Net Income.
-- Reporting period information derived from configured
-  fiscal years.
-
-All financial values are calculated using existing
-Spring Boot reporting services and PostgreSQL data.
-
-The React frontend displays these results without
-performing floating-point financial calculations.
-
-**Journal activity**
-
-- Total journal count.
-- Posted journal count.
-- Draft journal count.
-- Five most recently created journal entries.
-- Business-specific journal references.
-- Journal descriptions, accounting dates, and statuses.
-
-Draft journal entries are excluded from posted
-financial balances.
-
-**Accounting health indicators**
-
-The dashboard displays the results of existing
-backend financial reporting checks:
-
-- Balance Sheet reconciliation.
-- Balance Sheet reporting classification completeness.
-- Income Statement reporting classification completeness.
-
-Financial reporting warnings remain visible when
-accounting checks require attention.
-
-**User experience**
-
-- Business-specific dashboard information.
-- Refreshable financial metrics and journal activity.
-- Independent loading and error states.
-- Quick navigation to Chart of Accounts and Transactions.
-- Responsive enterprise accounting interface.
-
+The dashboard displays backend-derived total assets, liabilities, fiscal-year-to-date net income, reporting period, total/posted/draft journal counts, and five recent journals. It also surfaces Balance Sheet reconciliation and financial reporting classification warnings. Drafts do not contribute to posted balances.
 
 ---
 
 ## Accounting Demo
 
-LedgerBase includes a documented accounting demonstration
-using a fictional company called **ABC Consulting LLC**.
+The fictional ABC Consulting LLC walkthrough covers eight October 2026 journal entries:
 
-The demonstration covers eight journal entries across
-October 2026.
-
-| Reference | Accounting Scenario |
+| Reference | Accounting scenario |
 |---|---|
 | JE-0001 | Initial owner capital contribution |
 | JE-0002 | Office rent payment |
@@ -680,47 +280,54 @@ October 2026.
 | JE-0007 | Customer advance and unearned revenue |
 | JE-0008 | Office equipment purchase |
 
-The walkthrough tests:
+### Verified demo results
 
-- Capital contributions.
-- Operating expenses.
-- Accrual-based revenue recognition.
-- Accounts Receivable collection.
-- Accounts Payable recognition and settlement.
-- Unearned revenue.
-- Capitalization of non-current assets.
-- Financial statement reconciliation.
-
-### Verified Demo Results
-
-The completed local demonstration produced:
-
-| Financial Metric | Result |
+| Financial metric | Result |
 |---|---:|
-| Posted Journal Entries | 8 |
-| Trial Balance Debits | $36,000.00 |
-| Trial Balance Credits | $36,000.00 |
-| Total Revenue | $8,000.00 |
-| Total Expenses | $3,200.00 |
-| Net Income | $4,800.00 |
-| Total Assets | $32,800.00 |
-| Total Liabilities | $3,000.00 |
-| Total Equity | $29,800.00 |
-| Balance Sheet Difference | $0.00 |
+| Posted journal entries | 8 |
+| Trial Balance debits | $36,000.00 |
+| Trial Balance credits | $36,000.00 |
+| Total revenue | $8,000.00 |
+| Total expenses | $3,200.00 |
+| Net income | $4,800.00 |
+| Total assets | $32,800.00 |
+| Total liabilities | $3,000.00 |
+| Total equity | $29,800.00 |
+| Balance Sheet difference | $0.00 |
 
-All eight entries were verified as POSTED and balanced
-in the local PostgreSQL development database.
+All eight entries were checked as posted and balanced in the local development database. See the [Accounting Demo Guide](docs/accounting-demo.md) for the manual reproduction steps. **The demo is documented, not automatically seeded on clone.**
 
-**[View the Complete Accounting Demo](docs/accounting-demo.md)**
+---
 
-The guide describes how to reproduce the scenario manually
-in a configured development environment.
+## Performance Benchmarking
 
-It is not an automated database seed.
+Redis Cluster caches Trial Balance results while PostgreSQL remains the authoritative source of accounting data. Cache keys include the business, report date, and reporting revision, avoiding reuse of prior-revision reports after relevant ledger changes.
 
-The demonstrated transactions currently exist in the
-local development database and are not automatically
-created when cloning the repository.
+### Benchmark design
+
+- A reproducible local dataset of **1,000 posted transactions** and **2,000 ledger entries**.
+- **Three paired k6 runs** comparing Redis caching enabled and disabled.
+- Equivalent reporting workloads in the two configurations.
+
+### Measured outcomes
+
+| Metric | Measured reduction with caching enabled |
+|---|---:|
+| Mean response latency | **36.61%** |
+| p95 response latency | **18.77%** |
+| PostgreSQL replica connection acquisitions | **95.29%** |
+
+Results apply to this controlled workload and environment; they do not establish production throughput, overall database load reduction, or high-availability performance. Refer to the repository's benchmark scripts and retained benchmark output for reproduction and measurement details.
+
+### Cache correctness smoke test — November 9, 2026
+
+The authenticated Trial Balance API returned HTTP 200 for business 1 at `asOfDate=2026-11-08`. Redis contained the revision-aware key:
+
+```text
+ledgerbase:report:trial-balance:v1:{business-1}:2026-11-08:rev-4
+```
+
+The entry had a positive TTL (**195 seconds remaining** when inspected). After repeating the same report request twice, the matching Redis primary's `keyspace_hits` counter increased **61 → 63**, while `keyspace_misses` remained **3**. This corroborates cache reuse during the test; Redis counters are node-wide and are not isolated per API request.
 
 ---
 
@@ -729,47 +336,33 @@ created when cloning the repository.
 ```text
 LedgerBase/
 ├── backend/
-│   ├── src/
-│   │   ├── main/
-│   │   │   ├── java/
-│   │   │   └── resources/
-│   │   │       ├── db/migration/
-│   │   │       └── mapper/
-│   │   └── test/
+│   ├── src/main/java/
+│   ├── src/main/resources/db/migration/
+│   ├── src/main/resources/mapper/
+│   ├── src/test/
 │   ├── mvnw
 │   └── pom.xml
-│
 ├── frontend/
 │   ├── src/
-│   │   ├── api/
-│   │   ├── components/
-│   │   ├── pages/
-│   │   └── utils/
+│   ├── Dockerfile
+│   ├── nginx.conf
 │   └── package.json
-│
 ├── reporting-service/
 ├── gateway/
 ├── k8s/
 │   ├── base/
 │   └── kind/
-│
 ├── docs/
 │   ├── accounting-demo.md
 │   ├── architecture.md
-│   └── kubernetes-deployment.md
-│
+│   ├── kubernetes-deployment.md
+│   └── screenshots/
+├── .github/workflows/
 ├── docker-compose.yml
 └── README.md
 ```
 
-The backend contains Spring Boot controllers, services,
-models, data-access components, and integration tests.
-
-The frontend contains React components, pages,
-API clients, and supporting utilities.
-
-The docs directory contains project demonstrations
-and supporting documentation.
+The repository also contains supporting Compose configurations, infrastructure scripts, benchmark tooling, and monitoring configuration.
 
 ---
 
@@ -777,155 +370,53 @@ and supporting documentation.
 
 ### Prerequisites
 
-Install:
-
-- Java 25
-- Node.js and npm
+- Java 25 (for running the Spring Boot applications locally)
+- Node.js and npm (for frontend development)
 - Docker Desktop with Docker Compose
 - Git
+- For Kubernetes deployment: `kubectl`, `kind`, and the requirements in the [Kubernetes Deployment Guide](docs/kubernetes-deployment.md)
 
-The backend includes the Maven Wrapper, so a separate
-global Maven installation is not required.
+A Maven Wrapper is included, so a global Maven installation is not required.
 
-### 1. Clone the Repository
+### 1. Clone the repository
 
 ```bash
 git clone https://github.com/angel-az41/LedgerBase.git
 cd LedgerBase
 ```
 
-### 2. Configure Environment Variables
+### 2. Configure the local environment
 
-LedgerBase uses environment variables to configure the
-local PostgreSQL database connection.
-
-The repository includes a `.env.example` file containing
-the required configuration template.
-
-The actual `.env` file is excluded from Git to prevent
-database credentials from being committed.
-
-**Create your local environment configuration**
-
-From the project root:
+If `.env` does not already exist, create it from the example and replace placeholder credentials:
 
 ```bash
 cp .env.example .env
 ```
 
-**Important:** Run this command only during initial setup.
-If you already have a working `.env` file, keep it rather
-than overwriting your existing database configuration.
+Do not overwrite an existing working `.env`. The default Docker Compose database is PostgreSQL 17, database `ledgerbase`, user `ledgerbase`, host port `5434`, container port `5432`, with the password supplied through `POSTGRES_PASSWORD`.
 
-Open `.env` and replace the example password with a
-strong password of your choice:
+The Compose PostgreSQL service and the Spring Boot database configuration must use matching credentials. **Changing `.env` after the persistent PostgreSQL volume is initialized does not automatically change the database user's password.** Do not delete the data volume simply to change a password. Never commit `.env` or real secrets to Git.
 
-```dotenv
-POSTGRES_PASSWORD=your-local-database-password
-```
-
-Do not use the example placeholder as your actual password.
-
-**How environment configuration works**
-
-LedgerBase uses the `POSTGRES_PASSWORD` environment
-variable in two places:
-
-1. `docker-compose.yml` configures the PostgreSQL
-   database container.
-2. `backend/src/main/resources/application.yaml`
-   configures the Spring Boot database connection.
-
-Both services must use the same database password.
-
-**Local database configuration**
-
-| Setting | Value |
-|---|---|
-| Database engine | PostgreSQL 17 |
-| Database name | `ledgerbase` |
-| Database user | `ledgerbase` |
-| Host | `localhost` |
-| Host port | `5434` |
-| Container port | `5432` |
-| Password | Configured using `POSTGRES_PASSWORD` |
-
-The database connection details above describe the
-default LedgerBase local development environment.
-
-**Important: Docker volume persistence**
-
-PostgreSQL stores its data in a persistent Docker volume.
-
-Once the database has been initialized, changing
-`POSTGRES_PASSWORD` in `.env` does not automatically
-change the existing PostgreSQL user's password.
-
-Use the original password for an existing database,
-or update its credentials explicitly.
-
-Do not delete the database volume merely to change
-a password, as doing so can remove development data.
-
-**Security notes**
-
-- Never commit `.env` to Git.
-- Never put real credentials in `.env.example`.
-- Do not share database passwords in screenshots or logs.
-- Production deployments require separate secrets
-  management and security configuration.
-
-### 3. Start PostgreSQL
-
-From the LedgerBase project root:
+### 3. Start PostgreSQL for local development
 
 ```bash
 docker compose up -d
-```
-
-The local development environment uses PostgreSQL
-in Docker.
-
-The configured host database port is:
-
-```text
-5434
-```
-
-Check the container:
-
-```bash
 docker compose ps
 ```
 
-### 4. Start the Backend Services
+The Compose development database is distinct from the PostgreSQL primary/replica deployed inside Kubernetes. Follow the Kubernetes guide rather than mixing the two procedures.
 
-LedgerBase uses three Spring Boot applications:
+### 4. Start the backend services locally
 
-| Service | Port | Responsibility |
-|---|---|---|
-| Accounting Core | 8080 | Financial operations, JWT/RBAC, PostgreSQL writes, Kafka event processing |
-| Reporting Service | 8082 | Trial Balance reporting, PostgreSQL replica reads, Redis caching |
-| Spring Cloud Gateway | 8081 | API routing between frontend and backend services |
+| Service | Default development port | Responsibility |
+|---|---:|---|
+| Accounting Core | 8080 | Financial writes, JWT/RBAC, PostgreSQL transactions, Kafka event processing |
+| Reporting Service | 8082 | Trial Balance, replica read queries, Redis caching |
+| Spring Cloud Gateway | 8081 | Public API routing |
 
-Start Accounting Core, Reporting Service, and Spring Cloud
-Gateway in separate terminal sessions using their respective
-Maven configurations.
+Start the services in separate terminal sessions using their respective Maven configuration, **after** configuring any required PostgreSQL replica, Redis, and Kafka dependencies for the selected application profiles. Flyway applies the configured schema migrations. See [System Architecture](docs/architecture.md) for the service responsibilities and [Kubernetes Deployment](docs/kubernetes-deployment.md) for the full containerized stack.
 
-Ensure their required infrastructure services are available
-before starting the applications.
-
-Flyway manages database schema migrations during the
-appropriate service startup process.
-
-The React frontend sends API requests through Spring Cloud
-Gateway on port 8081.
-
-### 5. Start the Frontend
-
-Open a separate terminal.
-
-From the LedgerBase project root:
+### 5. Start the frontend locally
 
 ```bash
 cd frontend
@@ -933,156 +424,63 @@ npm install
 npm run dev
 ```
 
-Open the application at:
+Open `http://localhost:5173`. In development, Vite proxies `/api` requests to Spring Cloud Gateway on port `8081`.
 
-```text
-http://localhost:5173
-```
+### 6. Explore the accounting workflows
 
-During local development, Vite proxies API requests
-to the Spring Cloud Gateway on port 8081.
-
-### 6. Explore LedgerBase
-
-Once the services are running, use the application
-to explore its accounting workflows.
-
-Suggested sequence:
-
-1. Select an available development business.
-2. Review its Chart of Accounts.
-3. Create a balanced draft journal entry.
-4. Inspect the journal details.
-5. Post the transaction.
-6. Review the Trial Balance.
-7. Review the Income Statement.
-8. Review the Balance Sheet.
-
-For a more complete accounting demonstration,
-follow:
-
-[Accounting Demo Guide](docs/accounting-demo.md)
-
-A fresh environment may require initial development
-business and account setup before these workflows
-can be demonstrated.
+Sign in with a configured development account, select a business, review accounts, create and post a balanced draft, then inspect Trial Balance, Income Statement, and Balance Sheet. A fresh environment may require initial business and account setup. For a reproducible manual accounting scenario, follow the [Accounting Demo Guide](docs/accounting-demo.md).
 
 ---
 
 ## Local Kubernetes Deployment
 
-LedgerBase runs as a multi-service financial accounting
-platform on a local kind Kubernetes cluster.
+LedgerBase is deployable to a **single-node local kind cluster** with Accounting Core, Reporting Service, Gateway, React/Nginx, PostgreSQL primary and read replica, Redis Cluster, Kafka, Prometheus, and Grafana.
 
-The deployment includes:
+### Local access
 
-- Spring Cloud Gateway and Accounting Core.
-- Independent Reporting Service.
-- PostgreSQL 17 with WAL streaming replication.
-- Six-node Redis Cluster with revision-aware caching.
-- Apache Kafka with transactional outbox and idempotent consumer.
-- Prometheus and Grafana monitoring.
-- React and TypeScript frontend served by Nginx.
-
-### Local Access
-
-| Service | Address |
+| Service | Local address |
 |---|---|
-| LedgerBase | http://localhost:3001 |
+| LedgerBase frontend | http://localhost:3001 |
 | Prometheus | http://localhost:19090 |
 | Grafana | http://localhost:13000 |
 
-Prometheus and Grafana require local Kubernetes port forwarding.
+Prometheus and Grafana require the port-forwarding steps described in the [Kubernetes Deployment Guide](docs/kubernetes-deployment.md). Local port mappings depend on the documented kind cluster configuration.
 
-### Verified Deployment
+### Verified runtime — November 9, 2026
 
-The local Kubernetes deployment was validated on November 6, 2026.
+- **6/6 Deployments** available and **4/4 StatefulSets** ready.
+- **6/6 Redis Pods** running; all running Pods reported **zero restarts**.
+- React/Nginx frontend responded **HTTP 200** at `http://localhost:3001`.
+- PostgreSQL WAL replication reconnected after a primary rollout; the physical replication slot was active and WAL streaming resumed.
+- Kafka outbox publication and matching consumer inbox processing passed for transaction 1007.
+- Redis Cluster had its hash slots assigned; a revision-aware cached Trial Balance entry existed with a positive TTL, and two repeat report requests were associated with two additional cache hits.
 
-All six Deployments and four StatefulSets were ready,
-four initialization Jobs completed, and eleven PVCs were bound.
+### Accounting browser smoke test
 
-PostgreSQL replication, Redis Cluster caching, Kafka event
-processing, JWT protection, and Prometheus/Grafana monitoring
-were successfully verified.
+All **7/7** checks passed: authentication, Dashboard and Chart of Accounts access, balanced draft creation, posting, posted-record immutability, Trial Balance reconciliation, and Income Statement/Balance Sheet loading.
 
-### Deployment Documentation
+### Local reliability and security safeguards
 
-See the [Kubernetes Deployment Guide](docs/kubernetes-deployment.md)
-for the architecture, prerequisites, installation instructions,
-verification commands, and troubleshooting.
+Kubernetes manifests disable automatic service-account-token mounting on the PostgreSQL primary and use dedicated readiness/liveness endpoints for Reporting Service. GitHub Actions validates manifests and builds/test artifacts; the frontend Dockerfile uses Buildx's native `BUILDPLATFORM` for compilation while retaining AMD64/ARM64 Nginx runtime support.
 
-> Note: This is a single-node local Kubernetes deployment
-> intended for development and portfolio demonstration,
-> not a production high-availability environment.
+See the [Kubernetes Deployment Guide](docs/kubernetes-deployment.md) for provisioning, verification, monitoring, and troubleshooting. **The kind deployment demonstrates orchestration and integration, not production-grade high availability.**
 
 ---
 
-## Testing
+## Testing and Continuous Integration
 
-### Backend Tests
+### Backend tests
 
-LedgerBase includes automated integration tests covering
-REST APIs, accounting operations, database constraints,
-transaction rollback, and financial reporting.
-
-**Test database isolation**
-
-Two PostgreSQL databases are used during development:
+Automated tests cover REST APIs, accounting operations, rollback and constraints, financial reporting, and asynchronous event reliability. Development and integration testing use separate PostgreSQL databases:
 
 | Database | Purpose |
 |---|---|
-| `ledgerbase` | Local development and demo records |
+| `ledgerbase` | Local development/demo records |
 | `ledgerbase_test` | Automated integration tests |
 
-The test profile is defined in:
+Check `backend/src/test/resources/application-test.yaml` to confirm the `test` profile uses `ledgerbase_test`. Integration tests may modify or delete data in the test database; **never aim them at the demo database**.
 
-`backend/src/test/resources/application-test.yaml`
-
-Integration tests use the Spring Boot `test` profile
-to connect to the separate test database.
-
-This prevents normal integration-test operations from
-modifying the development application's accounting data
-when the test configuration is correctly applied.
-
-**Run the backend test suite**
-
-Ensure PostgreSQL is running.
-
-From the project root:
-
-```bash
-set -a
-source .env
-set +a
-
-cd backend
-./mvnw clean verify
-```
-
-The Maven verification process compiles the application
-and runs the configured automated tests.
-
-**Important considerations**
-
-- The `ledgerbase_test` database must exist before
-  integration tests execute.
-- Ensure the test profile points to `ledgerbase_test`
-  before running integration tests.
-- Integration tests may create, update, or delete
-  records in the test database.
-- Never configure the test profile to use the
-  development database.
-- A fresh PostgreSQL installation may require
-  creating `ledgerbase_test` before testing.
-
-
-**Initialize the test database**
-
-A fresh PostgreSQL container creates the main `ledgerbase`
-database but does not automatically create `ledgerbase_test`.
-
-After starting PostgreSQL, create the test database:
+For a fresh Compose PostgreSQL installation, initialize the test database if it does not exist:
 
 ```bash
 docker exec ledgerbase-postgres \
@@ -1090,154 +488,72 @@ docker exec ledgerbase-postgres \
   -c "CREATE DATABASE ledgerbase_test;"
 ```
 
-Run this command only once. If the test database already
-exists, skip this step.
+After confirming the test database and credentials:
 
-Spring Boot's test profile connects to `ledgerbase_test`.
-Flyway manages the schema migrations for the configured
-test database.
+```bash
+set -a
+source .env
+set +a
+cd backend
+./mvnw clean verify
+```
 
-
-### Frontend Production Build
-
-From the project root:
+### Frontend production build
 
 ```bash
 cd frontend
 npm run build
 ```
 
-This validates TypeScript compilation and generates
-a Vite production build.
+### GitHub Actions CI
 
-### Manual End-to-End Validation
+CI runs automated backend/service tests, frontend production builds, Kubernetes/Grafana and manifest validation, and multi-architecture Docker image builds. The final Kubernetes hardening PR passed **16/16 checks** across its push and pull-request workflows.
 
-The ABC Consulting LLC demonstration was used to
-validate financial behavior across:
+The Docker frontend build compiles React/Vite on the builder's native CPU architecture and packages the static output into architecture-specific Nginx images. This resolved a previously timed-out QEMU-emulated ARM64 npm install without disabling ARM64 support.
 
-```text
-React UI
-    |
-    v
-Spring Boot REST APIs
-    |
-    v
-MyBatis / PostgreSQL
-    |
-    v
-Posted Ledger Entries
-    |
-    v
-Financial Reports
-```
+**CI is implemented; fully automated production deployment is not claimed.**
 
-The documented end-to-end checks include:
+### Manual end-to-end validation
 
-- Journal reference assignment.
-- Draft creation and posting.
-- Balanced ledger entries.
-- Accounts Receivable collection.
-- Accounts Payable settlement.
-- Unearned revenue treatment.
-- Fixed-asset capitalization.
-- Trial Balance reconciliation.
-- Income Statement calculations.
-- Balance Sheet calculations.
-
-See [Accounting Demo](docs/accounting-demo.md).
+The ABC Consulting LLC demonstration checks business journal references, posting lifecycle, balance integrity, receivables, payables, unearned revenue, fixed-asset accounting, and financial statements. The November 9 kind smoke test additionally verified the authenticated UI workflow, Kafka publication/consumption, and Redis Trial Balance cache reuse.
 
 ---
 
 ## Planned Enhancements
 
-LedgerBase is being developed incrementally.
+The following are future possibilities, not current release functionality:
 
-Potential next features include:
+### Accounting and data migration
 
-### Additional Financial Data Import and Migration
+- Import external journal transactions and customer/vendor records.
+- Support opening-balance migration and reconciliation tools.
+- Add validated updates and skip-existing modes to account imports.
+- Add invoices, bills, payment allocation, reversals, depreciation, and richer financial reporting.
 
-Chart of Accounts CSV/XLSX import and export are already
-implemented.
+### Distributed systems and operations
 
-Potential future extensions include:
-
-- Import journal entries from external accounting systems.
-- Import customer and vendor records.
-- Support opening financial balance migration.
-- Add an explicit skip-existing account import mode.
-- Support carefully validated updates to existing accounts.
-- Provide additional migration and reconciliation tools.
-
-### Additional Accounting Workflows
-
-- Customer invoice and payment reconciliation.
-- Vendor bill management and payment allocation.
-- Transaction reversal workflows.
-- Fixed-asset depreciation.
-- Additional financial reporting capabilities.
-
-### Distributed Systems and Infrastructure
-
-LedgerBase implements Spring Cloud microservices,
-PostgreSQL read replication, Redis Cluster caching,
-Kafka-based asynchronous financial event processing,
-and local Kubernetes deployment with Prometheus/Grafana
-monitoring.
-
-Potential future engineering extensions include:
-
-- Automated CI/CD pipelines.
-- Distributed tracing and operational alerting.
-- Additional concurrency and failure-recovery testing.
-- Production-grade Kafka security and dead-letter handling.
-- Multi-node Kubernetes deployment and autoscaling.
-- Production infrastructure hardening and disaster recovery.
+- Automated deployment pipelines (CD) beyond the existing CI validation.
+- Distributed tracing, actionable alerts, and extended concurrency/failure recovery coverage.
+- Secure Kafka communications, dead-letter handling, and operational runbooks.
+- Multi-node Kubernetes deployment, autoscaling, automated backups, and disaster recovery.
 
 ---
 
-## Development Status
+## Development Status and Release Scope
 
-LedgerBase is an actively developed full-stack
-financial accounting application.
+LedgerBase has completed its core accounting workflows, microservice separation, PostgreSQL replication, Redis caching, Kafka event processing, local Kubernetes deployment, monitoring, automated CI validation, controlled performance benchmarking, and final end-to-end smoke test.
 
-The current implemented foundation includes:
+The project is in **final documentation and release preparation**. The original accounting application milestone was released as `v1.0.0` on October 20, 2026; subsequent distributed infrastructure work is being prepared for a new release checkpoint.
 
-- PostgreSQL database schema and migrations.
-- General ledger account management.
-- Double-entry transaction processing.
-- Draft and posted journal workflows.
-- Business-specific journal references.
-- Fiscal year and accounting period structures.
-- Trial Balance reporting.
-- Income Statement reporting.
-- Balance Sheet reporting.
-- React interfaces for accounting workflows.
-- Backend integration testing.
-- End-to-end accounting demonstration.
+### Important limitations
 
-The ABC Consulting LLC scenario validates the
-accounting behavior of eight posted journal entries
-and their corresponding financial statements.
+LedgerBase is a development and portfolio application, not production-certified accounting software. Production deployment would require, among other controls:
 
+- Production-grade secret management, key rotation, and infrastructure TLS/authentication.
+- Multi-broker Kafka availability and secure message transport.
+- Database backup, restore verification, disaster recovery, and documented RPO/RTO objectives.
+- High availability across multiple Kubernetes nodes and operational failure testing.
+- Production monitoring/alerting, tracing, and permanent Kafka failure handling.
+- Security review, compliance assessment, and additional financial-system controls.
 
-### Important Limitations
-
-LedgerBase is a development and portfolio application,
-not production-certified financial accounting software.
-
-The platform implements JWT authentication, business-scoped
-role-based authorization, PostgreSQL transactional integrity,
-distributed caching, and asynchronous event processing.
-
-However, additional production safeguards are required:
-
-- Production-grade secret management and credential rotation.
-- TLS and authentication for internal infrastructure services.
-- Highly available Kafka broker deployment.
-- Production database backup and disaster recovery procedures.
-- Comprehensive monitoring, tracing, and alerting.
-- Operational handling of permanently failing Kafka messages.
-- Additional security testing and financial compliance controls.
-
-The local Kafka deployment uses a single broker and PLAINTEXT
-listeners and is intended only for trusted development.
+The local Kafka deployment uses a single broker with PLAINTEXT listeners, and the kind cluster is single-node. Neither setup is intended to provide production high availability.
