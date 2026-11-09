@@ -27,10 +27,12 @@
 #
 # CACHE:
 #
-# Redis caching is disabled for this initial deployment.
-# The Redis Cluster will be configured separately.
-#
-# Docker Compose configuration is not modified.
+# - Trial Balance caching uses the six-node Redis Cluster.
+# - Redis nodes are discovered through Kubernetes DNS.
+# - Redis authentication uses a Kubernetes Secret.
+# - Redis health is excluded from the aggregate Actuator
+#   health status to avoid coupling service health to
+#   transient cache availability.
 
 
 # ============================================================
@@ -176,12 +178,14 @@ spec:
             # REDIS CACHE CONFIGURATION
             # ------------------------------------------------
             #
-            # Redis Cluster has not been deployed yet.
+            # Enable Trial Balance caching through Redis Cluster.
             #
-            # Disable report caching and Redis health
-            # checks for this initial deployment.
+            # Redis connectivity is configured below using
+            # Kubernetes DNS and Secret-backed credentials.
             #
-            # Reporting calculations use PostgreSQL.
+            # Disable Redis's aggregate Actuator health check
+            # so transient cache outages do not directly
+            # mark the application unhealthy.
 
             - name: LEDGERBASE_TRIAL_BALANCE_CACHE_ENABLED
               value: "true"
@@ -307,19 +311,15 @@ spec:
           # READINESS PROBE
           # ==================================================
           #
-          # Reporting Service already allows unauthenticated
-          # access to GET /actuator/health.
+          # Use Spring Boot's dedicated Kubernetes readiness
+          # endpoint, verified to return HTTP 200 when ready.
           #
-          # Its configured health response includes
-          # database availability while Redis health
-          # checks are disabled.
-          #
-          # The Pod should receive traffic only after
-          # its health endpoint reports success.
+          # Kubernetes routes traffic to the Pod only when
+          # the application reports that it can serve requests.
 
           readinessProbe:
             httpGet:
-              path: /actuator/health
+              path: /actuator/health/readiness
               port: http
 
             periodSeconds: 10
@@ -330,14 +330,17 @@ spec:
           # LIVENESS PROBE
           # ==================================================
           #
-          # Check whether the Java HTTP server is alive.
+          # Use Spring Boot's dedicated liveness endpoint.
           #
-          # A temporary replica outage should affect
-          # readiness rather than repeatedly restarting
-          # the reporting process.
+          # Application liveness is checked independently
+          # from external PostgreSQL or Redis availability.
+          #
+          # Avoid restarting the process solely because
+          # a downstream dependency is temporarily unavailable.
 
           livenessProbe:
-            tcpSocket:
+            httpGet:
+              path: /actuator/health/liveness
               port: http
 
             periodSeconds: 15

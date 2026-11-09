@@ -9,18 +9,34 @@
 # BUILD STRATEGY:
 #
 # - Node.js installs dependencies and builds the app.
+# - Buildx runs Node.js on the builder's native architecture.
 # - Nginx serves the generated static assets.
 # - Spring Cloud Gateway handles backend API routing.
+#
+# MULTI-ARCHITECTURE SUPPORT:
+#
+# - The Node.js build stage uses BUILDPLATFORM to avoid
+#   slow QEMU emulation during npm installation.
+# - The Nginx runtime stage uses the target architecture.
+# - Buildx can produce linux/amd64 and linux/arm64 images.
 #
 # The final image does not contain Node.js or the
 # frontend development dependencies.
 
 
 # ============================================================
-# BUILD STAGE
+# BUILD STAGE — NATIVE BUILD PLATFORM
 # ============================================================
 
-FROM node:22-alpine AS build
+# Run dependency installation and frontend compilation
+# on the Docker builder's native CPU architecture.
+#
+# React/Vite produces platform-independent static assets.
+# No Node.js binaries are copied into the runtime stage.
+#
+# This avoids ARM64-emulated npm ci on AMD64 CI runners.
+
+FROM --platform=$BUILDPLATFORM node:22-alpine AS build
 
 WORKDIR /app
 
@@ -39,8 +55,14 @@ RUN npm run build
 
 
 # ============================================================
-# RUNTIME STAGE
+# RUNTIME STAGE — TARGET PLATFORM
 # ============================================================
+
+# Buildx selects the correct Nginx image architecture
+# for each requested target platform.
+#
+# Do not force BUILDPLATFORM here: the runtime image
+# must match the target architecture.
 
 FROM nginx:stable-alpine AS runtime
 

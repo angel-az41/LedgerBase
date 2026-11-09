@@ -145,6 +145,28 @@ spec:
     
     spec:
 
+      # ======================================================
+      # DISABLE AUTOMATIC SERVICE ACCOUNT TOKEN MOUNT
+      # ======================================================
+      #
+      # PostgreSQL does not need to communicate with the
+      # Kubernetes API server.
+      #
+      # Disable automatic mounting of API credentials
+      # to reduce unnecessary access inside the Pod.
+      #
+      # This does not affect Kubernetes Secrets mounted
+      # separately or passed through environment variables.
+
+      automountServiceAccountToken: false
+
+      # ======================================================
+      # GRACEFUL DATABASE SHUTDOWN
+      # ======================================================
+      #
+      # Allow PostgreSQL time to shut down cleanly
+      # before Kubernetes forcibly terminates the Pod.
+
       terminationGracePeriodSeconds: 60
 
       # ======================================================
