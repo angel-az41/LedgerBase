@@ -1,8 +1,10 @@
 # LedgerBase — Local Kubernetes Deployment Guide
 
 > **Scope:** Reproducible development and portfolio deployment with Docker Desktop, kind, Kubernetes, Java 25/Spring Boot, PostgreSQL 17, Redis Cluster, Kafka KRaft, Prometheus, and Grafana.
+
 >
-> **Validated:** November 6, 2026 · `kind-ledgerbase-local` · namespace `ledgerbase`.
+> **Validated:** November 6–9, 2026 · `kind-ledgerbase-local` · namespace `ledgerbase`.
+
 >
 > **Important:** This is a single-node local Kubernetes cluster, not a production high-availability deployment.
 
@@ -46,7 +48,6 @@ PostgreSQL Primary                  |    (3 primaries, 3 replicas)
                  |
                  v
            PostgreSQL Primary
-
 Monitoring:
 Accounting Core ------+
 Reporting Service ----+--> Prometheus --> Grafana
@@ -189,6 +190,7 @@ kubectl get configmap \
 - Use Secret references in Deployment environment variables.
 - Preserve the Kafka Cluster ID when reusing its existing persistent volume.
 - Avoid printing sensitive Secret values in terminal screenshots.
+- The PostgreSQL primary Pod sets `automountServiceAccountToken: false` to avoid unnecessarily mounting Kubernetes API credentials.
 
 For a completely new environment, create credentials through a secure provisioning procedure before starting the dependent services.
 
@@ -565,6 +567,13 @@ kubectl rollout status \
 
 The Reporting Service reads PostgreSQL's replica and uses revision-aware Redis caching.
 
+For workload health, Kubernetes uses dedicated Spring Boot Actuator probes:
+
+- Readiness: `/actuator/health/readiness`
+- Liveness: `/actuator/health/liveness`
+
+This prevents optional cache connectivity from being treated as an unconditional Pod health dependency.
+
 The verified Kubernetes settings include:
 
 ```yaml
@@ -701,7 +710,7 @@ kubectl get deployments,statefulsets,jobs,pvc \
   -n ledgerbase
 ```
 
-Validated on November 6, 2026:
+Validated across November 6–9, 2026 (the Pod and workload readiness checks were repeated November 9):
 
 | Resource | Result |
 |---|---|
@@ -789,22 +798,31 @@ cluster_slots_ok:16384
 cluster_known_nodes:6
 ```
 
-Trial Balance caching uses revision-aware keys such as:
+Trial Balance caching uses business-scoped, reporting-date-specific, revision-aware keys. The November 9 test observed this key on a Redis primary:
 
 ```text
-ledgerbase:report:trial-balance:v1:{business-1}:2026-11-05:rev-3
+ledgerbase:report:trial-balance:v1:{business-1}:2026-11-08:rev-4
 ```
 
-A cached result is associated with a particular business, reporting date, and revision.
+A `TTL` check returned 195 seconds remaining, confirming an expiring cached entry. Following two repeated report requests with the same date, Redis primary `redis-cluster-4` reported:
 
-Previously verified behaviors:
+| Counter | Before | After | Change |
+|---|---:|---:|---:|
+| `keyspace_hits` | 61 | 63 | +2 |
+| `keyspace_misses` | 3 | 3 | 0 |
 
-- Cache entry creation.
-- Cache hits.
-- Five-minute TTL.
-- Revision-aware cache invalidation.
-- JWT protection.
-- PostgreSQL fallback when Redis is unreachable.
+The browser's corresponding authenticated Trial Balance API request returned HTTP 200 and displayed a balanced report. The matching key and correlated counter changes provide strong evidence of a Redis cache hit in this local test; these node-wide counters are not per-request tracing.
+
+To repeat a non-destructive check, run:
+
+```bash
+kubectl exec -n ledgerbase redis-cluster-4 -- \
+  redis-cli info stats | grep -E 'keyspace_hits:|keyspace_misses:'
+```
+
+Redis Pod roles and hash-slot assignments may change on cluster topology changes; identify the current primary for the relevant key instead of assuming Pod 4 is permanently its owner.
+
+Earlier verification also covered revision-aware cache freshness and PostgreSQL fallback when Redis was unavailable.
 
 ### 6.5 Kafka Topic and Consumer Group
 
@@ -828,36 +846,44 @@ kubectl exec -n ledgerbase kafka-0 -- \
   --group ledgerbase-transaction-posted-inbox-v1
 ```
 
-Validated result:
+The consumer-group command reports current offsets and lag; do not treat earlier example offsets as a fixed expected value.
 
-```text
-CURRENT-OFFSET: 2
-LOG-END-OFFSET: 2
-LAG: 0
-```
+**November 9 transactional outbox and inbox verification:**
 
-The end-to-end pipeline was verified:
+- All 1,007 rows in `outbox_events` were marked `PUBLISHED` with non-null publication timestamps.
+- A Kafka console consumer observed transaction-posted events on `ledgerbase.transaction-posted.v1`.
+- The application-created test transaction `1007` had a matching processed inbox receipt.
+- That outbox row showed `attempt_count = 1` and the consumer receipt showed `PROCESSED`.
+
+The recorded database publication and processing timestamps for transaction 1007 were `04:10:05.916754 UTC` and `04:10:05.963380 UTC` respectively. The approximately 47 ms difference is not a controlled end-to-end latency benchmark.
+
+The message flow is:
 
 ```text
 Posted Transaction
-       |
-       v
-PostgreSQL Outbox
-       |
-       v
-Kafka Publisher
-       |
-       v
-Kafka Topic
-       |
-       v
-Kafka Consumer
-       |
-       v
-PostgreSQL Inbox
+      |
+      v
+PostgreSQL Outbox -> Kafka Publisher -> Kafka Topic
+                                           |
+                                           v
+                                    Kafka Consumer
+                                           |
+                                           v
+                                  PostgreSQL Inbox
 ```
 
-Duplicate replay testing also confirmed that the consumer skipped an already-processed event without creating a second inbox record.
+An idle timeout from the console consumer after it has read existing messages is not itself evidence of a failed application consumer. Earlier duplicate-replay testing verified the consumer's deduplication behavior; this smoke test independently verified a published event and processed inbox record.
+
+Read-only database queries for independent verification:
+
+```bash
+kubectl exec -n ledgerbase postgres-0 -- \
+  gosu postgres psql -U ledgerbase -d ledgerbase \
+  -c "SELECT status, COUNT(*), COUNT(*) FILTER (WHERE published_at IS NOT NULL) AS stamped FROM outbox_events GROUP BY status;"
+kubectl exec -n ledgerbase postgres-0 -- \
+  gosu postgres psql -U ledgerbase -d ledgerbase \
+  -c "SELECT o.transaction_id, o.status, o.attempt_count, i.processed_at FROM outbox_events o LEFT JOIN kafka_consumer_inbox i ON i.event_id=o.event_id WHERE o.transaction_id=1007;"
+```
 
 ### 6.6 Prometheus
 
@@ -944,7 +970,7 @@ kubectl get pods -n ledgerbase
 Inspect details:
 
 ```bash
-kubectl describe pod <pod-name> -n ledgerbase
+kubectl describe pod \<pod-name> -n ledgerbase
 ```
 
 Check application logs:
@@ -1107,40 +1133,27 @@ Limitations include:
 - No demonstrated production autoscaling or multi-node failure recovery.
 - Internal application metrics exposed without additional monitoring authentication.
 
-## 10. Final GitHub Verification
+## 10. CI and Release Verification
 
-Before merging `feature/kubernetes-deployment`:
+GitHub Actions validates the repository through automated checks including Java/backend tests, frontend builds, Kubernetes resource validation, and multi-platform Docker image builds.
 
-1. Run the existing Java unit and integration tests using the appropriate test environment.
-2. Run the React frontend build.
-3. Validate all Kubernetes YAML manifests.
-4. Validate Grafana dashboard JSON.
-5. Run the final Kubernetes smoke tests.
-6. Verify no credentials or sensitive local files are staged.
-7. Capture architecture and monitoring screenshots.
-8. Commit and push the documentation.
-9. Open the GitHub pull request.
+The November 8–9 Kubernetes security/reliability hardening change passed **16/16 CI checks** across the pull-request and main-branch push runs. CI validation included action and Kubernetes manifest linting as well as checks for build/benchmark scripts. The frontend Docker build runs the Node/Vite build on the builder's native architecture while retaining target-specific Nginx runtime images for multi-architecture output.
 
-Validate the dashboard JSON:
+Before a documentation/release PR is merged:
 
-```bash
-python3 -m json.tool \
-  k8s/base/grafana-dashboard.json \
-  > /dev/null
-```
+1. Confirm the branch includes only intentional tracked changes and no credentials.
+2. Run `git diff --check` and review the complete Markdown diffs.
+3. Verify README links, code fences, deployment commands, and documented results.
+4. Confirm GitHub Actions checks pass on the pull request and after merging into `main`.
+5. Prepare versioned release notes stating local-environment limitations clearly.
 
-Validate manifests against the existing cluster:
+Validate Grafana dashboard JSON without modifying the cluster:
 
 ```bash
-for file in k8s/base/*.yaml; do
-  kubectl apply \
-    --dry-run=server \
-    -f "$file" \
-    > /dev/null || exit 1
-done
+python3 -m json.tool k8s/base/grafana-dashboard.json > /dev/null
 ```
 
-Some existing Jobs or persistent resources may require additional inspection if immutable fields have changed. Do not delete persistent resources merely to make validation pass.
+The existing CI workflows are the authoritative reference for their precise test and manifest-validation coverage. Avoid using ad-hoc server-side `kubectl apply` validation against live, persistent resources during a documentation-only change.
 
 ## 11. Local Endpoints
 
@@ -1159,19 +1172,22 @@ Some existing Jobs or persistent resources may require additional inspection if 
 
 ## 12. Verification Summary
 
-**Validated November 6, 2026**
+**Initial deployment validation: November 6, 2026. Final smoke tests: November 8–9, 2026.**
 
-- 6/6 Kubernetes Deployments available.
-- 4/4 StatefulSets ready.
-- 4/4 initialization Jobs completed.
-- 11/11 PVCs bound.
-- Frontend database health returned HTTP 200.
-- Unauthenticated protected API request returned HTTP 401.
-- PostgreSQL replica streaming asynchronously.
-- Redis Cluster healthy with all 16,384 slots.
-- Kafka consumer lag zero.
-- Kafka duplicate-event processing skipped correctly.
-- Prometheus successfully scraped all three application services.
-- Grafana displayed operational metrics and application performance charts.
+| Area | Verified result |
+|---|---|
+| Kubernetes | 6/6 Deployments and 4/4 StatefulSets ready; running Pods had zero restarts at the final check |
+| Initialization and storage | Four initialization Jobs complete and eleven PVCs bound in the earlier deployment verification |
+| Frontend | HTTP 200 from `http://localhost:3001` |
+| Accounting UI | Seven of seven browser workflow tests passed, including posting, immutability, and financial reports |
+| PostgreSQL | WAL streaming replica reconnected and physical replication slot active after security changes |
+| Kafka outbox | 1,007 published events with publication timestamps |
+| Kafka inbox | `TransactionPosted` for transaction 1007 matched a processed inbox record |
+| Redis | Six connected nodes, 3 primary/3 replica topology, 16,384 slots, and an expiring Trial Balance cache key |
+| Cache behavior | Two additional keyspace hits with unchanged misses during repeated report requests |
+| Reporting probes | Dedicated Spring Boot readiness and liveness Actuator endpoints deployed |
+| Security | PostgreSQL primary disabled automatic ServiceAccount token mounting |
+| CI | 16/16 successful PR and push checks for the final Kubernetes hardening change |
+| Observability | Prometheus scraping and Grafana dashboards validated during the earlier Kubernetes deployment review |
 
-LedgerBase's complete local Kubernetes application and monitoring stack was operational during the final verification.
+These checks establish a working local Kubernetes application and the key financial/distributed processing paths. They do not certify high availability, production security, resilience under arbitrary failure, or disaster recovery.
